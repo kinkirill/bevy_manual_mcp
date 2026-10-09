@@ -1,17 +1,23 @@
 name: release
 
-# Publishing flow for a new Bevy minor (e.g. 0.20.0):
-#   1. bump "version" and server.json to the Bevy minor
-#   2. git tag v0.20.0 && git push origin v0.20.0
+# Publishing flow for a new Bevy minor (e.g. 0.21.0):
+#   1. bump "version" in package.json and server.json to the Bevy minor
+#   2. git tag v0.21.0 && git push origin v0.21.0
 #   3. this job mirrors rustdoc, builds the index, attaches the prebuilt
 #      bundle to the GitHub Release, and publishes to npm.
 #
-# The index bundle is what makes `npx bevy-mcp` fast for everyone else: without
-# it, first run has to mirror docs (~15 min) and build (~15 min).
+# npm auth uses TRUSTED PUBLISHING (OIDC) - no NPM_TOKEN secret. npm is retiring
+# tokens that bypass 2FA: as of July 2026 they can no longer manage packages,
+# and they are slated to lose direct publish around January 2027. OIDC issues a
+# short-lived, workflow-scoped token per run instead, and adds provenance.
 #
-# Required repository secrets:
-#   NPM_TOKEN   npm automation token with publish rights for `bevy-mcp`
-# GITHUB_TOKEN is provided automatically.
+# One-time setup on npmjs.com (after the package exists):
+#   Package settings -> Trusted Publisher -> GitHub Actions
+#     Organization or user: kinkirill
+#     Repository:           bevy_manual_mcp
+#     Workflow filename:    release.yml
+#     Allowed actions:      enable "npm publish" (and optionally dist-tag)
+# Requires npm CLI >= 11.5.1, which the Node 24 runner provides.
 
 on:
   push:
@@ -24,6 +30,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # required for npm trusted publishing (OIDC)
 
 jobs:
   release:
@@ -33,13 +40,16 @@ jobs:
       VERSION: ${{ github.event.inputs.version || github.ref_name }}
       NODE_OPTIONS: --max-old-space-size=4096
       BEVY_MCP_OFFLINE: "1"
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      # No dependency cache in release builds: a poisoned cache is a supply
+      # chain risk, and this job runs rarely enough that it does not matter.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
       - run: npm ci
       - run: npm test
@@ -85,8 +95,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to npm
-        if: env.NPM_TOKEN != ''
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          npm publish --access public
+      # Auth comes from the OIDC token, not a secret. `--provenance` is implied
+      # by trusted publishing; it is harmless to be explicit.
+      - name: Publish to npm (trusted publishing)
+        run: npm publish --access public --provenance

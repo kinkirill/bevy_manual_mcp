@@ -49,7 +49,7 @@ has to mirror docs (~15 min) and build (~15 min).
    - builds the index,
    - packages `bevy-index-0.21.0.tar.gz`,
    - attaches it to the `v0.21.0` GitHub Release,
-   - publishes to npm (when `NPM_TOKEN` is set).
+   - publishes to npm via trusted publishing (OIDC) — no token secret.
 
    You can rebuild by hand with `workflow_dispatch` if a step fails.
 
@@ -81,12 +81,53 @@ gh release create v0.21.0 dist/bevy-index-0.21.0.tar.gz \
   --notes "Prebuilt Bevy 0.21 search index for bevy-mcp."
 ```
 
-## Repository secrets
+## Publishing to npm (trusted publishing)
+
+npm is retiring tokens that bypass 2FA, so this project does **not** use an
+`NPM_TOKEN`. As of July 2026 such tokens can no longer manage packages, and they
+are slated to lose direct publish around January 2027. Instead the release job
+authenticates with GitHub's **OIDC** token, which npm exchanges for a short-lived,
+workflow-scoped credential and records as provenance.
+
+### One-time: the first publish is manual
+
+A trusted publisher can only be configured on a package that already exists, so
+the very first release is published by hand:
+
+```bash
+npm login
+cd bevy_manual_mcp
+npm publish --access public
+```
+
+This needs 2FA. npm **no longer allows adding a TOTP authenticator app** (new
+TOTP enrolment is rejected with *"Adding a new TOTP 2FA is no longer supported"*),
+so add a **security key** at <https://npmjs.com/settings/kinkirill/tfa>. You do
+not need a USB key: the flow accepts a platform authenticator, i.e. your laptop's
+fingerprint reader, Windows Hello, Touch ID, or your phone's face/fingerprint.
+
+### Then: authorise this repo
+
+On npmjs.com → your package → **Settings → Trusted Publisher → GitHub Actions**:
+
+| Field | Value |
+|---|---|
+| Organization or user | `kinkirill` |
+| Repository | `bevy_manual_mcp` |
+| Workflow filename | `release.yml` (filename only, with extension) |
+| Environment name | *(leave empty)* |
+| Allowed actions | enable **npm publish** (and `npm dist-tag` if you want it) |
+
+After that, a tag push publishes without any secret. Trusted publishing needs npm
+CLI ≥ 11.5.1, which the Node 24 runner provides — do not downgrade the runner's
+Node version.
+
+### Repository secrets
 
 | Secret | Used by | Notes |
 |---|---|---|
-| `NPM_TOKEN` | `release.yml` (npm publish) | npm automation token. If unset, the npm step is skipped and only the release asset is produced. |
 | `GITHUB_TOKEN` | `release.yml` (release asset) | provided automatically; `contents: write` is requested in the workflow. |
+| `NPM_TOKEN` | — | intentionally unused; see above. |
 
 ## Registering a release with MCP directories
 
