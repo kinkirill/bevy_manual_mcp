@@ -571,11 +571,21 @@ server.registerTool(
       versions: z
         .string()
         .optional()
-        .describe('Comma-separated versions to compare, e.g. "0.19.1,0.18.1". Defaults to all indexed.'),
+        .describe(
+          'Comma-separated versions to compare, e.g. "0.19.1,0.20.0". Defaults to the ' +
+            "active version and its nearest neighbour when several are indexed.",
+        ),
     },
   },
   async ({ symbol, versions }) => {
-    const all = multi.versions();
+    // Everything we can actually answer for: the versions held in this process
+    // (active + BEVY_EXTRA_VERSIONS) plus everything persisted in the registry.
+    // Consulting only multi.versions() made this tool claim "only one version
+    // is indexed" while bevy_indexed_versions happily listed the registry.
+    const all = [...new Set([...multi.versions(), ...registry.versions()])].sort(
+      cmpVersionForOrder,
+    );
+
     if (all.length < 2) {
       return {
         content: [
@@ -583,18 +593,31 @@ server.registerTool(
             type: "text",
             text:
               `Only one Bevy version is indexed (${all[0] ?? "none"}), so there is nothing to ` +
-              `compare.\n\nTo compare versions, provide more doc directories:\n` +
-              `  BEVY_EXTRA_VERSIONS="0.18.1=/path/to/0.18.1/target/doc" node index.js\n\n` +
-              `Then call this tool again with e.g. versions: "${all[0] ?? "0.19.1"},0.18.1".`,
+              `compare.\n\nAdd another with:\n` +
+              `  bevy-mcp fetch-index <version>\n` +
+              `or point at a local doc tree:\n` +
+              `  BEVY_EXTRA_VERSIONS="0.18.1=/path/to/0.18.1/target/doc" node index.js`,
           },
         ],
         structuredContent: { symbol, comparable: false, indexed: all },
       };
     }
 
+    // Defaulting to *every* indexed version would load each index into memory,
+    // which gets expensive once several are installed. Default to the pair an
+    // upgrade actually asks about: the active version and its nearest
+    // neighbour (preferring the one below it).
+    const defaultPair = () => {
+      if (all.length <= 2) return all;
+      const i = all.indexOf(String(config.bevyVersion));
+      if (i === -1) return all.slice(-2);
+      const other = i > 0 ? all[i - 1] : all[i + 1];
+      return [other, all[i]].filter(Boolean).sort(cmpVersionForOrder);
+    };
+
     const want = versions
       ? versions.split(",").map((v) => v.trim()).filter(Boolean)
-      : all;
+      : defaultPair();
     const unknown = want.filter((v) => !multi.has(v) && !registry.has(v));
     if (unknown.length && versions) {
       return {
@@ -624,15 +647,19 @@ server.registerTool(
               })
         : (await registry.get(v)).lookupSymbol(symbol);
 
-      // A bare name like `add_systems` resolves to App, SubApp, AppExtStates,
-      // and their variants. Compare the most specific (shortest) path so the
-      // diff is stable instead of dependent on insertion order.
+      // Prefer the defining module over a `prelude` re-export. The prelude page
+      // has a short path, so the old "shortest path wins" rule made most types
+      // look like they lived in `bevy::prelude`, which hid real module moves
+      // (e.g. `Sphere` going from `bevy_math` to `bevy_shape` in 0.20).
+      const pathOf = (h) => h.record.full_path || "";
+      const preludeRank = (h) => (pathOf(h).includes("::prelude::") ? 1 : 0);
       const best = hits
         .slice()
-        .sort(
-          (a, b) =>
-            (a.record.full_path || "").length - (b.record.full_path || "").length,
-        )[0];
+        .sort((a, b) => {
+          const byPrelude = preludeRank(a) - preludeRank(b);
+          if (byPrelude !== 0) return byPrelude;
+          return pathOf(a).length - pathOf(b).length;
+        })[0];
       perVersion.push({ version: v, record: best?.record || null });
     }
 

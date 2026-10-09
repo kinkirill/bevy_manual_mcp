@@ -45,12 +45,20 @@ function header(index) {
 export function formatVersionDiff({ symbol, perVersion }) {
   const lines = [`# ${symbol} across Bevy versions`, ``];
   const sigs = new Set();
+  const paths = new Set();
+  const missing = [];
 
   for (const { version, record } of perVersion) {
     lines.push(`## Bevy ${version}`, ``);
     if (!record) {
       lines.push(`_Not present in the ${version} API index._`, ``);
+      missing.push(version);
       continue;
+    }
+    const path = record.full_path || record.module || "";
+    if (path) {
+      lines.push(`\`${path}\``, ``);
+      paths.add(path);
     }
     lines.push("```rust", record.signature || "(no signature recorded)", "```", ``);
     sigs.add(record.signature || "");
@@ -63,9 +71,20 @@ export function formatVersionDiff({ symbol, perVersion }) {
         `forms). Any code written against one version may not compile against ` +
         `another. Call bevy_migration for the full list of changes.`,
     );
+  } else if (missing.length) {
+    lines.push(
+      `**The signature is identical where it exists, but the symbol is absent from ` +
+        `${missing.join(", ")}.** Code using it there will not compile.`,
+    );
+  } else if (paths.size > 1) {
+    lines.push(
+      `**The signature is unchanged, but the item MOVED between modules.** A \`use\` of ` +
+        `the old path will not resolve - update the import even though the call site ` +
+        `itself still looks the same.`,
+    );
   } else {
     lines.push(
-      `**This symbol's signature is identical across all indexed versions.** ` +
+      `**This symbol's signature and location are identical across these versions.** ` +
         `Upgrading within this range does not require changing this call site.`,
     );
   }
