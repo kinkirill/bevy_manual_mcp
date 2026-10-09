@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bevy-mcp — an MCP server that gives agents version-accurate Bevy knowledge.
+ * bevy-mcp - an MCP server that gives agents version-accurate Bevy knowledge.
  *
  * Transport is stdio, so every diagnostic goes to stderr. Anything written to
  * stdout would corrupt the JSON-RPC stream.
@@ -72,7 +72,7 @@ if (!config.bevyVersion) {
   log("   Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
 }
 if (!config.docDir) {
-  log("WARNING: no cargo rustdoc found — API search will be limited to the book/examples.");
+  log("WARNING: no cargo rustdoc found - API search will be limited to the book/examples.");
   log("   Run `cargo doc -p bevy` inside your Bevy project (can take several minutes).");
   log("   Or run `npm run fetch-docs` to mirror docs.rs instead.");
 }
@@ -185,7 +185,7 @@ const filtersOf = (args) => ({
 });
 
 // ---------------------------------------------------------------------------
-// bevy_search — the general entry point
+// bevy_search - the general entry point
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_search",
@@ -197,7 +197,7 @@ server.registerTool(
       `Use this for ANY question about how to do something in Bevy. Pass an exact symbol ` +
       `(e.g. "App::add_systems", "Query") to get its real signature; pass a concept ` +
       `(e.g. "system ordering", "2d camera") to get prose and examples. ` +
-      `Call this before writing Bevy code — never rely on memory for signatures.`,
+      `Call this before writing Bevy code - never rely on memory for signatures.`,
     inputSchema: {
       query: z
         .string()
@@ -231,7 +231,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_api — exact symbol lookup, the workhorse for correct signatures
+// bevy_api - exact symbol lookup, the workhorse for correct signatures
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_api",
@@ -352,7 +352,7 @@ server.registerTool(
 
     const primary = hits[0];
     const parts = [
-      `## Bevy ${labelVersion ?? "UNKNOWN"} — \`${primary.record.full_path}\``,
+      `## Bevy ${labelVersion ?? "UNKNOWN"} - \`${primary.record.full_path}\``,
       ...(res.note ? [res.note.trim(), ""] : []),
       ...(defaultVia
         ? [
@@ -381,14 +381,14 @@ server.registerTool(
     if (hits.length > 1) {
       parts.push("", "## Other symbols matching your query", "");
       for (const h of hits.slice(1)) {
-        parts.push(`- \`${h.record.full_path}\` — ${h.record.signature || h.record.kind}`);
+        parts.push(`- \`${h.record.full_path}\` - ${h.record.signature || h.record.kind}`);
       }
     }
 
     if (related.length) {
       parts.push("", `## Other methods on \`${primary.record.owner}\``, "");
       for (const r of related.slice(0, 25)) {
-        parts.push(`- \`${r.name}\` — ${r.signature || "(no signature)"}`);
+        parts.push(`- \`${r.name}\` - ${r.signature || "(no signature)"}`);
       }
     }
 
@@ -413,7 +413,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_examples — real runnable code
+// bevy_examples - real runnable code
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_examples",
@@ -463,7 +463,7 @@ server.registerTool(
         {
           type: "text",
           text:
-            `## ${VERSION_NOTE} — examples for "${task}"\n\n` +
+            `## ${VERSION_NOTE} - examples for "${task}"\n\n` +
             results.map(({ record }) => formatRecord(record, { docsChars: 4000 })).join("\n\n---\n\n"),
         },
       ],
@@ -473,7 +473,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_migration — breaking changes between versions
+// bevy_migration - breaking changes between versions
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_migration",
@@ -551,7 +551,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_api_diff — did this API change between versions?
+// bevy_api_diff - did this API change between versions?
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_api_diff",
@@ -670,7 +670,7 @@ server.registerTool(
       formatVersionDiff({ symbol, perVersion: ordered }) +
       (bump && bump.breaksApi && distinct.size === 1
         ? `\n\n_Note: ${lo} → ${hi} is a breaking release overall, but this particular ` +
-          `symbol's signature is unchanged. Other APIs around it probably did change — ` +
+          `symbol's signature is unchanged. Other APIs around it probably did change - ` +
           `check bevy_migration before assuming your whole project is safe._\n`
         : "");
 
@@ -770,7 +770,7 @@ for (const t of resourceLayer.templates()) {
 }
 
 // ---------------------------------------------------------------------------
-// bevy_check_version — self-renewal: is my index stale?
+// bevy_check_version - self-renewal: is my index stale?
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_check_version",
@@ -875,7 +875,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_indexed_versions — what can this server answer for?
+// bevy_indexed_versions - what can this server answer for?
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_indexed_versions",
@@ -946,7 +946,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// bevy_index_status — self-diagnosis
+// bevy_index_status - self-diagnosis
 // ---------------------------------------------------------------------------
 server.registerTool(
   "bevy_index_status",
@@ -954,7 +954,7 @@ server.registerTool(
     title: "Check what the Bevy index contains",
     description:
       "Reports which Bevy version is indexed, how many records exist, and which source directories " +
-      "were found. Call this first if search results look wrong, empty, or from the wrong version — " +
+      "were found. Call this first if search results look wrong, empty, or from the wrong version - " +
       "it is the fastest way to find out whether the API index is missing entirely.",
     inputSchema: {},
   },
@@ -982,7 +982,7 @@ server.registerTool(
 // ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
 await server.connect(transport);
-log(`ready — ${SERVER_INFO.name} ${SERVER_INFO.version}, bevy ${config.bevyVersion ?? "?"}`);
+log(`ready - ${SERVER_INFO.name} ${SERVER_INFO.version}, bevy ${config.bevyVersion ?? "?"}`);
 
 /**
  * Self-renewal notice.

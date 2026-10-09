@@ -1,7 +1,7 @@
 # dependencies
 node_modules/
 
-# built search index (large, version-specific) — distributed via GitHub Releases
+# built search index (large, version-specific) - distributed via GitHub Releases
 data/
 
 # rustdoc mirrors are fetched on demand, never committed

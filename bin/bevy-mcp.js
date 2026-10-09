@@ -27,7 +27,7 @@ const ROOT = path.resolve(HERE, "..");
 
 const [, , cmd, ...rest] = process.argv;
 
-const USAGE = `bevy-mcp — version-accurate Bevy knowledge for AI agents
+const USAGE = `bevy-mcp - version-accurate Bevy knowledge for AI agents
 
 Usage:
   bevy-mcp                 start the MCP server (stdio)
@@ -69,11 +69,11 @@ async function status() {
   console.log(`bevy-mcp status`);
   console.log(`  project root : ${config.projectRoot}`);
   console.log(`  bevy version : ${config.bevyVersion ?? "UNKNOWN"}  (${config.versionSource ?? "not detected"})`);
-  console.log(`  docs dir     : ${config.docDir ?? "(none — index can still be used)"}`);
-  console.log(`  website dir  : ${config.websiteDir ?? "(none — book/migration prose unavailable)"}`);
+  console.log(`  docs dir     : ${config.docDir ?? "(none - index can still be used)"}`);
+  console.log(`  website dir  : ${config.websiteDir ?? "(none - book/migration prose unavailable)"}`);
   console.log(`  examples dir : ${config.examplesDir ?? "(none)"}`);
   console.log(`  data dir     : ${config.dataDir}`);
-  console.log(`  index built  : ${built ? `yes (${indexDir})` : "no — run `bevy-mcp fetch-index`"}`);
+  console.log(`  index built  : ${built ? `yes (${indexDir})` : "no - run `bevy-mcp fetch-index`"}`);
   if (config.versionNote) console.log(`  note         : ${config.versionNote}`);
   return built ? 0 : 1;
 }

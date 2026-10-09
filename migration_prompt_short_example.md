@@ -14,8 +14,8 @@ this is the condensed version.
    UI component access, call `bevy_search` with at least two different keywords
    first, and `bevy_api` for the exact signature of each symbol you use.
 3. **Flag version differences.** If the user's code targets 0.19.1 but the index
-   or examples show a changed signature for 0.20 — for example in `Schedules`,
-   rendering, or command arguments — surface a warning:
+   or examples show a changed signature for 0.20 - for example in `Schedules`,
+   rendering, or command arguments - surface a warning:
 
    > ⚠️ API change detected moving to 0.20 in `<element>`: `<difference>`
    > *Source: `<MCP tool + file/symbol>`*

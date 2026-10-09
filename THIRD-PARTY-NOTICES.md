@@ -9,7 +9,7 @@ projects. Their notices are reproduced below.
 ## Bevy website content (`vendor/bevy-website/`)
 
 The Markdown and Rust source files under `vendor/bevy-website/` are a trimmed
-copy of <https://github.com/bevyengine/bevy-website> — the Bevy Book, migration
+copy of <https://github.com/bevyengine/bevy-website> - the Bevy Book, migration
 guides, release notes and learning-code-examples. Only `.md` and `.rs` files are
 kept; all media assets are omitted.
 
@@ -47,7 +47,7 @@ The search index distributed through this project's GitHub Releases is derived
 from rustdoc HTML published on <https://docs.rs/bevy> and from the Bevy engine
 source. Bevy is dual-licensed under your choice of either:
 
-- MIT License — Copyright (c) 2020 Bevy Engine
+- MIT License - Copyright (c) 2020 Bevy Engine
 - Apache License, Version 2.0 (<http://www.apache.org/licenses/LICENSE-2.0>)
 
 The index contains derived API metadata (paths, signatures, documentation

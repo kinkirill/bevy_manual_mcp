@@ -1009,7 +1009,7 @@ assert!(cloned.reflect_partial_eq(reflect).unwrap_or_default());
 ```
 
 To account for this, the [`FromReflect`] trait can be used to convert any `dyn Reflect` trait object
-back into its concrete type— whether it is actually that type or a dynamic representation of it.
+back into its concrete type- whether it is actually that type or a dynamic representation of it.
 And it can even be called dynamically using the [`ReflectFromReflect`] type data.
 
 Before 0.11, users had to be manually derive `FromReflect` for every type that needed it,

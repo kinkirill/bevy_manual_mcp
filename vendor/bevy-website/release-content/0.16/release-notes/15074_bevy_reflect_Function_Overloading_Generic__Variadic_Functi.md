@@ -2,7 +2,7 @@
 <!-- https://github.com/bevyengine/bevy/pull/15074 -->
 
 **Bevy 0.15** added support for reflecting functions to `bevy_reflect`, Bevy's type reflection crate.
-This allows Rust functions to be called dynamically with a list of arguments generated at runtime—and safely!
+This allows Rust functions to be called dynamically with a list of arguments generated at runtime-and safely!
 
 ```rust
 fn add(a: i32, b: i32) -> i32 {

@@ -1,4 +1,4 @@
-<!-- A Curve trait for general interoperation — Part I -->
+<!-- A Curve trait for general interoperation - Part I -->
 <!-- https://github.com/bevyengine/bevy/pull/14630 -->
 
 The new [`Curve<T>`] trait provides a shared interface for curves, describing how values of type `T` change as we vary a `f32` parameter `t` over some domain.

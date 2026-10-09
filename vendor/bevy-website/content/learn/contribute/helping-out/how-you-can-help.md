@@ -45,7 +45,7 @@ Bevy's active initiatives are organized into *temporary working groups*: public,
 
 You should consider joining a working group if you're interested in contributing, but don't know where to start or what to work on. Choosing one and asking how to help can be a fantastic way to get up to speed and be immediately useful.
 
-There are no special requirements to participate in a working group — no applications, formal membership list, or even leadership. Anyone can help, and you should expect to compromise and work together with others to bring your shared vision to life. Working groups are *spaces*, not clubs.
+There are no special requirements to participate in a working group - no applications, formal membership list, or even leadership. Anyone can help, and you should expect to compromise and work together with others to bring your shared vision to life. Working groups are *spaces*, not clubs.
 
 {% callout() %}
 Anyone can start a working group! Check out [Working Groups](@/learn/contribute/project-information/working-groups.md) for more information about the process and requirements.

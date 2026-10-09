@@ -747,7 +747,7 @@ FontSource::Family("FiraMono".into())
 FontSource::Monospace
 ```
 
-The generic variants — `Serif`, `SansSerif`, `Cursive`, `Fantasy`, `Monospace`, and several UI-specific ones (`SystemUi`, `Emoji`, `Math`, and others) — resolve to configurable defaults. Override them via `FontCx`:
+The generic variants - `Serif`, `SansSerif`, `Cursive`, `Fantasy`, `Monospace`, and several UI-specific ones (`SystemUi`, `Emoji`, `Math`, and others) - resolve to configurable defaults. Override them via `FontCx`:
 
 ```rust
 fn configure_fonts(mut font_cx: ResMut<FontCx>) {
@@ -782,7 +782,7 @@ TextFont {
 `font_size` is now a [`FontSize`] enum rather than a bare `f32`:
 
 ```rust
-TextFont::from_font_size(FontSize::Px(24.0))   // fixed pixels — unchanged behavior
+TextFont::from_font_size(FontSize::Px(24.0))   // fixed pixels - unchanged behavior
 TextFont::from_font_size(FontSize::Vh(5.0))    // 5% of viewport height
 TextFont::from_font_size(FontSize::Rem(1.5))   // relative to the RemSize resource
 ```
@@ -927,7 +927,7 @@ commands.spawn((
 
 {{ heading_metadata(authors=["@atlv24", "@kfc35"] prs=[22761, 23350, 23349, 23433, 23458, 23444, 23459, 23461, 23463, 22714, 22759, 16481, 24131]) }}
 
-GPU errors previously had no recovery path — a driver crash, an out-of-memory condition, or a device loss would silently hang or crash the app.
+GPU errors previously had no recovery path - a driver crash, an out-of-memory condition, or a device loss would silently hang or crash the app.
 This was particularly frustrating in long-lived applications (like art installations)
 or on devices with frequent failures, such as VR headsets.
 Bevy now surfaces these as typed errors and lets you decide what to do with each one:
@@ -947,7 +947,7 @@ app.insert_resource(RenderErrorHandler(
 
 `DeviceLost` is the case most games will want to handle: it covers GPU driver crashes, thermal shutdowns, and hardware being physically disconnected.
 `RenderErrorPolicy::Recover` reinitializes the renderer and keeps the app running.
-`StopRendering` halts rendering but leaves the rest of the app alive — useful if you want to show an error screen or save state before exiting.
+`StopRendering` halts rendering but leaves the rest of the app alive - useful if you want to show an error screen or save state before exiting.
 `Ignore` silently swallows the error, which is the existing behavior for validation errors. Panicking remains appropriate for `Internal` errors, which indicate bugs.
 
 Be sure to test your error recovery carefully in your games; we've seen hardware-specific cases of flickering during repeated failures (as might be caused by an out-of-memory problem), which are a serious accessibility risk for people with photosensitive epilepsy.
@@ -1051,7 +1051,7 @@ In earlier Bevy versions, animated characters and creatures would sometimes vani
 This happened because Bevy used the skeleton's resting position to decide which meshes were on-screen, rather than their actual animated pose.
 A character raising their arms could have those arms literally outside the bounding box Bevy used for culling.
 
-Skinned meshes now compute their bounds from actual joint positions each frame, fixing disappearing meshes like those reported in [#4971](https://github.com/bevyengine/bevy/issues/4971). If you load skinned meshes from glTFs, this is automatic — no changes needed.
+Skinned meshes now compute their bounds from actual joint positions each frame, fixing disappearing meshes like those reported in [#4971](https://github.com/bevyengine/bevy/issues/4971). If you load skinned meshes from glTFs, this is automatic - no changes needed.
 
 For hand-crafted skinned meshes, call `Mesh::generate_skinned_mesh_bounds` and add `DynamicSkinnedMeshBounds` to the entity:
 
@@ -1077,7 +1077,7 @@ entity.insert((
 ) }}
 
 Bevy previously rendered cubemap reflections as though the environment were infinitely far away.
-For outdoor scenes this was often fine, but for indoor scenes and dense environments the result looked wrong —
+For outdoor scenes this was often fine, but for indoor scenes and dense environments the result looked wrong -
 reflections didn't line up with the actual geometry around the viewer.
 
 The standard fix is parallax correction: each reflection probe gets its own bounding box, and a raytrace against that box determines the correct sampling direction for the cubemap.
@@ -1168,10 +1168,10 @@ commands.spawn(DiagnosticsOverlay::new("Diagnostics", vec![DiagnosticsOverlayIte
 {{ heading_metadata(authors=["@Jenya705"] prs=[21984, 24181]) }}
 
 [SIMD] is a critical tool for performance optimization, but using it in Bevy has always been harder than it needed to be.
-Table components in Bevy are already laid out flat in memory — all [`Transform`] components are stored as values in a contiguous table, exactly what SIMD wants.
+Table components in Bevy are already laid out flat in memory - all [`Transform`] components are stored as values in a contiguous table, exactly what SIMD wants.
 The [`Query`] iterator just wasn't exposing that structure: it handed you one entity's component at a time, and the compiler had no way to know the underlying data was a contiguous array.
 
-[`contiguous_iter`] and [`contiguous_iter_mut`] hand you the whole table slice at once. LLVM can see the contiguous array and auto-vectorize — or you can reach for explicit SIMD yourself.
+[`contiguous_iter`] and [`contiguous_iter_mut`] hand you the whole table slice at once. LLVM can see the contiguous array and auto-vectorize - or you can reach for explicit SIMD yourself.
 
 On a bulk `position += velocity` update over 10,000 entities, this gives some serious speedups:
 
@@ -1246,7 +1246,7 @@ We recommend embedding the originating [`Entity`] into the command if you want t
 Sometimes you just want to slap a label on something while debugging.
 Text gizmos are for exactly that: a zero-setup way to draw world-space text anywhere in your scene using a built-in stroke font.
 
-Unlike Bevy's [`Text2D`] — the right choice for damage numbers, nameplates, and in-game labels — text gizmos are *strictly* for dev tools and debugging.
+Unlike Bevy's [`Text2D`] - the right choice for damage numbers, nameplates, and in-game labels - text gizmos are *strictly* for dev tools and debugging.
 The font is fixed and only supports ASCII.
 
 Use [`Gizmos::text`] and `text_2d` to quickly draw text:
@@ -1326,7 +1326,7 @@ let saved_asset = builder.build(&main_asset);
 ```
 
 `SavedAsset` borrows rather than owns its assets.
-That means you can build and save in the same async block — no need to transfer ownership first.
+That means you can build and save in the same async block - no need to transfer ownership first.
 
 ### 2. Calling `save_using_saver`
 
@@ -1348,7 +1348,7 @@ You'll also need to implement `AssetSaver` for `MyAssetSaver` to define the seri
 
 {{ heading_metadata(authors=["@Trashtalk217", "@cart", "@SpecificProtagonist"] prs=[20934, 22910, 22911, 22919, 22930, 23616, 23716, 24077, 24164]) }}
 
-Resources and components have always been separate concepts in Bevy's ECS. While the simple `Res<Time>` sugar is nice, the only real distinction is cardinality — a resource is a component of which at most one exists at any time.
+Resources and components have always been separate concepts in Bevy's ECS. While the simple `Res<Time>` sugar is nice, the only real distinction is cardinality - a resource is a component of which at most one exists at any time.
 
 That separation has been a persistent source of friction.
 Many of our tools for components (like hooks, observers, and relations) simply weren't available for resources,
@@ -1381,7 +1381,7 @@ Bevy has historically required a [`World`] reference to allocate entity IDs. Thi
 
 <video controls loop><source src="transform_gizmo.mp4" type="video/mp4"/></video>
 
-A transform gizmo — the click-and-drag handles for translating, rotating, and scaling objects in a 3D viewport — is one of the first things anyone reaches for when building a level editor. Bevy now has one built in, for your use today and our own use in the future.
+A transform gizmo - the click-and-drag handles for translating, rotating, and scaling objects in a 3D viewport - is one of the first things anyone reaches for when building a level editor. Bevy now has one built in, for your use today and our own use in the future.
 
 Add [`TransformGizmoPlugin`], mark a camera with [`TransformGizmoCamera`], and tag entities with [`TransformGizmoFocus`]:
 
@@ -1427,9 +1427,9 @@ fn setup(mut commands: Commands) {
 }
 ```
 
-Grid appearance — colors, fade distance, line scale — is controlled by [`InfiniteGridSettings`], which can be placed on the grid entity or on a specific camera to override it per-view. You can see how this works in the new [`infinite_grid.rs`](https://github.com/bevyengine/bevy/blob/v0.19.0/examples/dev_tools/infinite_grid.rs) example.
+Grid appearance - colors, fade distance, line scale - is controlled by [`InfiniteGridSettings`], which can be placed on the grid entity or on a specific camera to override it per-view. You can see how this works in the new [`infinite_grid.rs`](https://github.com/bevyengine/bevy/blob/v0.19.0/examples/dev_tools/infinite_grid.rs) example.
 
-This is an upstreamed version of the [`bevy_infinite_grid` crate], created and maintained by Foresight Spatial Labs — thank you for building it and generously contributing it to Bevy!
+This is an upstreamed version of the [`bevy_infinite_grid` crate], created and maintained by Foresight Spatial Labs - thank you for building it and generously contributing it to Bevy!
 
 [`bevy_infinite_grid` crate]: https://github.com/fslabs/bevy_infinite_grid
 
@@ -1489,7 +1489,7 @@ This works with `add_observer`, entity `.observe()`, and the `Observer` builder 
 {{ heading_metadata(authors=["@andriyDev"] prs=[23329]) }}
 
 Asset handles can now be round-tripped successfully during serialization and deserialization.
-This is particularly important for world assets — the serialization format written through [`DynamicWorld::serialize`], previously called scenes.
+This is particularly important for world assets - the serialization format written through [`DynamicWorld::serialize`], previously called scenes.
 
 This wasn't a matter of just slapping on some derives, because handles aren't raw data: they're a pointer to the actual loaded asset.
 As a result, there was no clear way to either persist or reconstruct one.
@@ -1521,9 +1521,9 @@ struct MyAsset {
 {{ heading_metadata(authors=["@mrchantey"] prs=[22269]) }}
 
 By default, Bevy rejects relationship components that point to the entity they live on. If you insert one, Bevy will log a warning and remove it.
-This default exists for good reason: structural relationships like [`ChildOf`] form hierarchies that Bevy traverses recursively — a self-referential [`ChildOf`] would produce an infinite loop.
+This default exists for good reason: structural relationships like [`ChildOf`] form hierarchies that Bevy traverses recursively - a self-referential [`ChildOf`] would produce an infinite loop.
 
-But many relationships are purely semantic. `Likes(self)`, `EmployedBy(self)`, `Healing(self)` — these don't imply any traversal, and self-reference is perfectly valid. You can now opt in with `allow_self_referential`:
+But many relationships are purely semantic. `Likes(self)`, `EmployedBy(self)`, `Healing(self)` - these don't imply any traversal, and self-reference is perfectly valid. You can now opt in with `allow_self_referential`:
 
 ```rust
 #[derive(Component)]

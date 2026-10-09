@@ -5,7 +5,7 @@ Bevy 0.15 adds many improvements and convenience methods for working with `TypeI
 #### Generic Parameter Info
 
 The first addition is the ability to get information about a type's generic parameters.
-This not includes the parameter's type, but also its name and—if it's a const parameter—its default value.
+This not includes the parameter's type, but also its name and-if it's a const parameter-its default value.
 
 ```rust
 #[derive(Reflect)]
@@ -22,7 +22,7 @@ assert!(!t.is_const());
 #### Nested `TypeInfo`
 
 Pretty much every type in Rust is made up of other types.
-Structs, maps, lists—they all contain other types.
+Structs, maps, lists-they all contain other types.
 
 In previous versions of Bevy, `TypeInfo` granted you limited access to type information of
 these nested types. It mostly just provided the type's [`TypeId`] and [`TypePath`].

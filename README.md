@@ -3,7 +3,7 @@
 I built this MCP because Bevy is a fast-moving project that changes with every
 release. Its documentation is large and scattered, so finding an answer that
 actually matches *your* version often means digging through rustdoc, the Book,
-migration guides and older forum threads — and still landing on something
+migration guides and older forum threads - and still landing on something
 written for a different release. This server removes that friction: instead of
 searching and guessing, you ask your agent a question and it answers from
 knowledge pinned to the exact Bevy version your project is using.
@@ -16,11 +16,11 @@ of question it exists for:
 `Sphere::new(radius)`. And the answer includes where that type lives *in your
 version*: `bevy::math::primitives::Sphere` in 0.19, but `bevy::shape::Sphere` in
 0.20, after the primitives were split into their own crate. Same question,
-different answer — and importing the stale path simply fails to compile.
+different answer - and importing the stale path simply fails to compile.
 
 An MCP server that gives your agents **version-accurate** Bevy knowledge: the
 real API signatures from rustdoc, the Bevy Book, migration guides, release notes
-and runnable examples — all pinned to the Bevy version your project actually
+and runnable examples - all pinned to the Bevy version your project actually
 uses.
 
 The problem it solves: LLMs have stale, hallucinated Bevy APIs. Bevy breaks
@@ -67,7 +67,7 @@ Bevy version is read from `Cargo.lock`:
 }
 ```
 
-If you cloned instead, point the client at the checkout — no npm involvement:
+If you cloned instead, point the client at the checkout - no npm involvement:
 
 ```json
 {
@@ -78,11 +78,11 @@ If you cloned instead, point the client at the checkout — no npm involvement:
 ```
 
 The prebuilt index turns the first run into a ~67 MB download instead of a local
-rustdoc build — see [Distribution and versioning](#distribution-and-versioning).
+rustdoc build - see [Distribution and versioning](#distribution-and-versioning).
 
 ### Configure it
 
-`bevy-mcp.config.json` is the whole setup — no environment variables needed. The
+`bevy-mcp.config.json` is the whole setup - no environment variables needed. The
 minimal version points at your game and lets the server find the docs itself:
 
 ```json
@@ -107,7 +107,7 @@ mirror docs from docs.rs instead, pin the version and doc dir explicitly:
 
 `index.js` is a **stdio MCP server**, not a daemon and not a web service. Your
 MCP client (Claude, opencode, Zed, pi, …) spawns it as a child process and talks
-JSON-RPC over stdin/stdout. You do not "start it inside a project" — you register
+JSON-RPC over stdin/stdout. You do not "start it inside a project" - you register
 it with a client, and point the *config* at your project.
 
 You can still run it by hand to check it boots (logs go to stderr; stdout is
@@ -117,7 +117,7 @@ reserved for the protocol):
 node index.js
 # [bevy-mcp] config: loaded .../bevy-mcp.config.json
 # [bevy-mcp] version 0.20.0: loaded persisted index in 2602ms
-# [bevy-mcp] ready — bevy-mcp 0.20.0, bevy 0.20.0
+# [bevy-mcp] ready - bevy-mcp 0.20.0, bevy 0.20.0
 ```
 
 The first run either downloads the prebuilt index or builds it from rustdoc
@@ -128,7 +128,7 @@ couple of seconds.
 
 ## Getting API docs
 
-### Recommended — install the prebuilt index
+### Recommended - install the prebuilt index
 
 The index for a released Bevy minor is identical for everyone, so it is built
 once and published as a GitHub Release asset (~67 MB compressed). This is the
@@ -141,9 +141,9 @@ bevy-mcp fetch-index 0.20.0    # omit the version to read Cargo.lock
 It unpacks into `data/versions/0.20.0/` (or `$BEVY_MCP_DATA_DIR`). To rebuild it
 from scratch instead, keep reading.
 
-### Building it yourself — mirror from docs.rs
+### Building it yourself - mirror from docs.rs
 
-**Use the docs.rs mirror** — it is the source this server is tuned for.
+**Use the docs.rs mirror** - it is the source this server is tuned for.
 
 ```bash
 node scripts/fetch-docs.mjs 0.20.0
@@ -160,9 +160,9 @@ items to `bevy_app`, `bevy_ecs`, … and to filter out dependency boilerplate. T
 download is resumable: re-run after a rate-limit and it fetches only what is
 missing.
 
-### `cargo doc` — only with `--no-deps`, and with caveats
+### `cargo doc` - only with `--no-deps`, and with caveats
 
-`cargo doc -p bevy` documents Bevy **and its entire dependency tree** — roughly
+`cargo doc -p bevy` documents Bevy **and its entire dependency tree** - roughly
 280 crates and 65,000 pages of `libc`, `ash`, `wayland`, `alsa`, … Pointing the
 server at that output floods the index with dependency APIs, so don't.
 
@@ -193,7 +193,7 @@ To keep the first run cheap, the pieces are distributed separately:
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
 
 The index holds API metadata, documentation strings, migration guides and
-examples — not engine source. Maintainers: see [PUBLISHING.md](PUBLISHING.md)
+examples - not engine source. Maintainers: see [PUBLISHING.md](PUBLISHING.md)
 for the release ritual.
 
 ---
@@ -240,7 +240,7 @@ claude mcp add bevy -- node /absolute/path/to/bevy-manual-mcp/index.js
 
 ### opencode
 
-`~/.config/opencode/opencode.jsonc` — note the key is `mcp` (not `mcpServers`)
+`~/.config/opencode/opencode.jsonc` - note the key is `mcp` (not `mcpServers`)
 and `command` is an **array**:
 
 ```json
@@ -300,7 +300,7 @@ scripts, and `deferred` loads them via tool search.
 
 ### VS Code / GitHub Copilot
 
-`.vscode/mcp.json` — note the top-level key is `servers`:
+`.vscode/mcp.json` - note the top-level key is `servers`:
 
 ```json
 {
@@ -402,7 +402,7 @@ unset (server warns loudly, since an unknown version defeats the point).
 | Tool | Use it for |
 |---|---|
 | `bevy_api` | Exact symbol lookup → real signature, docs, and the documented `Default` value. **Start here for API questions.** |
-| `bevy_api_diff` | The same symbol in each indexed version — did it actually change? |
+| `bevy_api_diff` | The same symbol in each indexed version - did it actually change? |
 | `bevy_search` | Hybrid search across API, book, migration guides, examples. Concepts and tasks. |
 | `bevy_examples` | Runnable example code for a concrete task (2d, ui, input, audio…), led by the example's `setup`/`main` body. |
 | `bevy_migration` | Breaking changes between two versions. |
@@ -439,7 +439,7 @@ because Bevy is pre-1.0 and its minor digit is the breaking-change axis:
 
 So a patch release never triggers a pointless rewrite, while a minor release
 blocks on migration notes first. At startup the server also logs a one-line
-notice to stderr if the project is behind — deliberately not on stdout, which
+notice to stderr if the project is behind - deliberately not on stdout, which
 carries the MCP protocol stream.
 
 ### Comparing versions
@@ -456,7 +456,7 @@ comparison, because rustdoc wraps them differently between builds and a
 line-break difference is not an API change.
 
 Asking about a version that is **not** indexed returns an error rather than
-silently answering from another version — substituting a different version's
+silently answering from another version - substituting a different version's
 API is exactly the confusion pinning exists to prevent.
 
 ---
@@ -494,14 +494,14 @@ rather than silent.
 
 **4. Name matches outrank prose matches.** FlexSearch scores any occurrence in
 the indexed text, so a query word matching a symbol's *name* is weighted well
-above the same word buried in a doc example — and an intent verb ("spawn
+above the same word buried in a doc example - and an intent verb ("spawn
 camera") is treated as the question, not its subject. That is why
 `bevy_search "spawn camera"` leads with `Camera` instead of a struct whose
 docblock happens to contain a `spawn_camera` snippet.
 
 **5. Defaults are part of the answer.** Trait-impl methods from std traits are
-dropped as boilerplate, but a type's *documented* `impl Default` — which often
-states the actual default value, orientation or units — is captured onto the
+dropped as boilerplate, but a type's *documented* `impl Default` - which often
+states the actual default value, orientation or units - is captured onto the
 type record and surfaced by `bevy_api`. `Type::default` resolves to the type
 rather than to the unrelated free `default()` function. This is deliberate:
 models guess defaults wrong, and a wrong default is as damaging as a wrong

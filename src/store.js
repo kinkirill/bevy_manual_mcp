@@ -539,7 +539,7 @@ export class BevyIndex {
       // "forward" (FlexSearch's default) indexes every prefix of every word
       // ("system" -> s, sy, sys, ...) which is only useful for autocomplete and
       // scales super-linearly: measured ~10 min+ for 265k records. "strict"
-      // indexes whole terms only — ~4x faster and ~2.5x smaller — and we do not
+      // indexes whole terms only - ~4x faster and ~2.5x smaller - and we do not
       // lose prefix behaviour because the exact symbol table (lookupSymbol)
       // already handles `Query`/`QueryData`-style lookups separately.
       tokenize: "strict",
@@ -552,7 +552,7 @@ export class BevyIndex {
     // in a resolved promise. The previous `Promise.all(targets.map(...))` built
     // two full-length arrays at once (265k payload objects + 265k promises),
     // i.e. a complete second copy of the corpus in flight on top of
-    // `this.records` and the growing index — that was the OOM trigger. A plain
+    // `this.records` and the growing index - that was the OOM trigger. A plain
     // loop keeps peak memory to one payload at a time.
     for (const r of targets) {
       this.text.add(this._flexPayload(r));

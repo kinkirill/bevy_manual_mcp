@@ -17,7 +17,7 @@ If you find a PR that you don't feel comfortable reviewing, but you can think of
 
 ## How to review a Pull Request
 
-If you're new to GitHub, there's a lot of great information on the official [Pull Request Review documentation](https://docs.github.com/en/github/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews). If you're happy with the work and feel you're reasonably qualified to assess quality in this particular area, leave your Approved review on the *PR*. Again, anyone can and should leave review— no special permissions are required!
+If you're new to GitHub, there's a lot of great information on the official [Pull Request Review documentation](https://docs.github.com/en/github/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews). If you're happy with the work and feel you're reasonably qualified to assess quality in this particular area, leave your Approved review on the *PR*. Again, anyone can and should leave review- no special permissions are required!
 
 ## Giving feedback
 
@@ -71,4 +71,3 @@ Maintainers abide by the following rules when merging pull requests:
 {% callout() %}
 To read more on Maintainers, check out our section on them in our [The Bevy Organization](@/learn/contribute/project-information/bevy-organization.md#maintainer) page.
 {% end %}
-

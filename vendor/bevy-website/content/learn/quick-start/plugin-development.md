@@ -117,12 +117,12 @@ Additionally, it can be helpful to list:
 
 There are some [extra fields](https://doc.rust-lang.org/cargo/reference/manifest.html) that you can add to your `Cargo.toml` manifest in the `[package]` section:
 
-- [`description`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-description-field) — A description of the plugin
-- [`repository`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-repository-field) — URL of the plugin source repository
-- [`license`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields) — The plugin license
-- [`keywords`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-keywords-field) — Keywords for the plugin. `"bevy"` at least is a good idea here
-- [`categories`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-categories-field) — Categories of the plugin. See [the full list on crates.io](https://crates.io/categories).
-- [`exclude`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-exclude-and-include-fields) — Files to exclude from the released package. Excluding the `assets` folder that you may have is a good idea, as well as any large files that are not needed by the plugin.
+- [`description`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-description-field) - A description of the plugin
+- [`repository`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-repository-field) - URL of the plugin source repository
+- [`license`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields) - The plugin license
+- [`keywords`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-keywords-field) - Keywords for the plugin. `"bevy"` at least is a good idea here
+- [`categories`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-categories-field) - Categories of the plugin. See [the full list on crates.io](https://crates.io/categories).
+- [`exclude`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-exclude-and-include-fields) - Files to exclude from the released package. Excluding the `assets` folder that you may have is a good idea, as well as any large files that are not needed by the plugin.
 
 Once a crate is published to [crates.io](https://crates.io), there are two badges that you can add to your `README.md` for easy links:
 

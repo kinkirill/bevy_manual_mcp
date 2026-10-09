@@ -1171,7 +1171,7 @@ let layout = render_device.create_bind_group_layout(
 <div class="release-feature-authors">authors: @DasLixou</div>
 
 Bevy uses Rust's type system extensively when defining labels, letting developers lean on tooling to catch typos and ease refactors.
-But this didn't apply to Bevy's render graph. In the render graph, hard-coded—and potentially overlapping—strings were used to define nodes and sub-graphs.
+But this didn't apply to Bevy's render graph. In the render graph, hard-coded-and potentially overlapping-strings were used to define nodes and sub-graphs.
 
 ```rust
 // Before 0.13

@@ -35,7 +35,7 @@ function iconFor(r) {
 
 function header(index) {
   const v = index.meta?.bevy_version;
-  return v ? `Bevy ${v}` : "Bevy (version UNKNOWN — set BEVY_VERSION)";
+  return v ? `Bevy ${v}` : "Bevy (version UNKNOWN - set BEVY_VERSION)";
 }
 
 /**
@@ -97,7 +97,7 @@ export function formatRecord(r, { docsChars = 700 } = {}) {
 
   if (r.draft) {
     parts.push(
-      `> ⚠️ This page is marked hidden/draft upstream — treat as incomplete.`,
+      `> ⚠️ This page is marked hidden/draft upstream - treat as incomplete.`,
     );
   }
 
@@ -209,7 +209,7 @@ function setupSnippet(code, max = 2800) {
 /** Full markdown rendering of a list of results. */
 export function formatResults(index, results, query, opts = {}) {
   const label = opts.label || index.meta?.bevy_version;
-  const lines = [`## Bevy ${label ?? "UNKNOWN"} — results for "${query}"`];
+  const lines = [`## Bevy ${label ?? "UNKNOWN"} - results for "${query}"`];
 
   if (!results.length) {
     lines.push(
@@ -336,9 +336,9 @@ export function formatStatus(index, config) {
   }
 
   lines.push("", "## Paths", "");
-  lines.push(`- cargo doc: ${m.doc_dir ?? "**not found** — run \`cargo doc\` in your Bevy project\`"}`);
+  lines.push(`- cargo doc: ${m.doc_dir ?? "**not found** - run \`cargo doc\` in your Bevy project\`"}`);
   lines.push(`- bevy-website: ${m.website_dir ?? "**not found**"}`);
-  lines.push(`- engine examples: ${m.examples_dir ?? "**not found** — clone the bevy repo for \`examples/\`"}`);
+  lines.push(`- engine examples: ${m.examples_dir ?? "**not found** - clone the bevy repo for \`examples/\`"}`);
   if (m.built_at) lines.push("", `Built ${m.built_at} in ${m.build_ms}ms.`);
   return lines.join("\n");
 }

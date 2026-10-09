@@ -68,7 +68,7 @@ Post PRs that you need reviews on in your group's forum thread, ask for advice, 
 Controversial PRs are still `X-Controversial`, but with a sign-off-in-principle, things should go more smoothly.
 
 If work peters out and the initiative dies, Maintainers can wind down Working Groups (in consultation with SMEs and the Working Group itself).
-This is normal and expected— projects fail for all sorts of reasons!
+This is normal and expected- projects fail for all sorts of reasons!
 However, it's important to both keep the number of Working Groups relatively small and ensure they're active, since
 they serve a vital role in onboarding new contributors.
 

@@ -100,7 +100,7 @@ For games specifically, integration tests present some serious problems:
 2. Most games require user input to advance.
 3. Failure conditions can be subtle, often involving human judgment or visual processing, and rigidly encoding desired states can lead to fragile tests that need to be constantly rewritten.
 
-On small teams, these hurdles often aren't worth overcoming — unit tests and manual testing may be all you need.
+On small teams, these hurdles often aren't worth overcoming - unit tests and manual testing may be all you need.
 
 ## Speeding up Manual Testing
 
@@ -627,7 +627,7 @@ To make visual regression work in practice:
 
 - **Fix your timestep.** Use `bevy_ci_testing`'s `frame_time` option or [`TimeUpdateStrategy::ManualDuration`] so animations always land on the same frame.
 - **Set random seeds:** If there is *any* randomness in your game or scene, set a fixed random seed every time.
-- **Use static scenes.** Capture after everything has settled — no active animations, no asset loading weirdness, no randomness.
+- **Use static scenes.** Capture after everything has settled - no active animations, no asset loading weirdness, no randomness.
 - **Set a difference threshold.** Anti-aliasing and floating-point rounding differ across platforms. Allow some pixel deviation rather than demanding exact matches.
 - **Compare per-platform.** Each GPU, and each software renderer will produce slightly different output. Don't compare Linux screenshots against macOS ones.
 

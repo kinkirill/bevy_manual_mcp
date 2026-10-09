@@ -1,7 +1,7 @@
 # Publishing bevy-mcp
 
 This is the maintainer's checklist. It assumes you have write access to
-`kinkirill/bevy_manual_mcp`. **Distribution is GitHub-first** — the repository
+`kinkirill/bevy_manual_mcp`. **Distribution is GitHub-first** - the repository
 and its Release assets are the whole channel, so no npm account is required.
 
 ## The mental model
@@ -94,7 +94,7 @@ npm is **not** part of the normal flow. Distribution is GitHub-first, and
 below is only if you later decide you also want a registry listing.
 
 If you do, prefer **trusted publishing (OIDC)** over a token. npm is retiring
-tokens that bypass 2FA — since July 2026 they cannot manage packages, and they
+tokens that bypass 2FA - since July 2026 they cannot manage packages, and they
 are slated to lose direct publish around January 2027.
 
 1. **First publish is manual** (a trusted publisher can only be configured on a
@@ -103,14 +103,14 @@ are slated to lose direct publish around January 2027.
    npm login
    npm publish --access public
    ```
-   npm no longer accepts **new TOTP enrolment** — the CLI rejects it with
-   *"Adding a new TOTP 2FA is no longer supported"* — so a security key is
+   npm no longer accepts **new TOTP enrolment** - the CLI rejects it with
+   *"Adding a new TOTP 2FA is no longer supported"* - so a security key is
    required. A phone passkey works, but the cross-device prompt is browser
    dependent; if it will not complete, generate a short-lived **bypass-2FA
    granular token** from the phone (where the passkey resolves locally) and use
    `npm publish --//registry.npmjs.org/:_authToken=<token>`.
 
-2. **Authorise this repo** — npmjs.com → package → **Settings → Trusted
+2. **Authorise this repo** - npmjs.com → package → **Settings → Trusted
    Publisher → GitHub Actions**:
 
    | Field | Value |
@@ -121,7 +121,7 @@ are slated to lose direct publish around January 2027.
    | Environment name | *(leave empty)* |
    | Allowed actions | enable **npm publish** |
 
-3. **Enable it in CI** — create the repository variable `PUBLISH_NPM=true`
+3. **Enable it in CI** - create the repository variable `PUBLISH_NPM=true`
    (Settings → Secrets and variables → Actions → Variables). The release job's
    npm step is gated on it, so tag pushes never fail on npm auth while it is
    unset.
@@ -137,18 +137,18 @@ are slated to lose direct publish around January 2027.
 
 After a release exists, list the server so people can find it:
 
-- **GitHub topics** — add `mcp`, `model-context-protocol`, `bevy` to the repo so
+- **GitHub topics** - add `mcp`, `model-context-protocol`, `bevy` to the repo so
   it shows up in GitHub search.
-- **Smithery**, **mcp.so**, **Glama**, **PulseMCP**, **awesome-mcp-servers** —
+- **Smithery**, **mcp.so**, **Glama**, **PulseMCP**, **awesome-mcp-servers** -
   submit the GitHub URL. These accept a GitHub repo without an npm package.
-- **Official MCP registry** — `server.json` currently declares an npm package, so
+- **Official MCP registry** - `server.json` currently declares an npm package, so
   it only validates after a publish to npm. Until then, either leave it alone or
   point it at the repository.
 
 ## Versioning rules
 
 - Tags `vX.Y.*` answer for Bevy `X.Y.*`.
-- Bump the patch (`0.20.0 → 0.20.1`) only for changes to the **tooling** — parser
+- Bump the patch (`0.20.0 → 0.20.1`) only for changes to the **tooling** - parser
   fixes, new tools. The index is unchanged, so users need not upgrade.
 - Never target a pre-release of Bevy; `bevy_check_version` and the docs.rs mirror
   both expect a stable `X.Y.Z`.

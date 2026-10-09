@@ -20,7 +20,7 @@ app
 ```
 
 In the code above, `Data<Blob>` depends on `Blob` which depends on `Vec<u8>`,
-which means that all three types need to be manually registered—
+which means that all three types need to be manually registered-
 even if we only care about `Data<Blob>`.
 
 This is both tedious and error-prone, especially when these type dependencies are only

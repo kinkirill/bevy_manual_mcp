@@ -3,7 +3,7 @@
  * Refresh the vendored bevy-website prose.
  *
  * The repository ships a trimmed copy of bevy-website (Markdown and Rust source
- * only — no media) so that the Book, migration guides, release notes and
+ * only - no media) so that the Book, migration guides, release notes and
  * learning-code-examples work with no network access. This script re-creates
  * that copy from upstream, for when the guides are updated.
  *
@@ -82,7 +82,7 @@ function main() {
   const outDir = path.resolve(args.out || path.join(ROOT, "vendor", "bevy-website"));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-website-"));
 
-  console.log(`Fetching bevy-website (${args.ref}) — prose only, no media`);
+  console.log(`Fetching bevy-website (${args.ref}) - prose only, no media`);
   try {
     git(
       [

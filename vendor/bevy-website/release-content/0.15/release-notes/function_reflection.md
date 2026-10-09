@@ -51,7 +51,7 @@ match result {
 
 #### Closure Reflection
 
-This feature doesn't just work for regular functions—it works on closures too!
+This feature doesn't just work for regular functions-it works on closures too!
 
 For closures that capture their environment immutably, we can continue using `DynamicFunction`
 and `IntoFunction`. For closures that capture their environment mutably, there's
@@ -150,7 +150,7 @@ along with registration methods on [`App`].
 
 #### The `Function` Trait
 
-A new reflection trait—appropriately called [`Function`]—has been added to correspond to functions.
+A new reflection trait-appropriately called [`Function`]-has been added to correspond to functions.
 
 Due to limitations in Rust, we're unable to implement this trait for all functions,
 but it does make it possible to pass around a `DynamicFunction` as a [`PartialReflect`] trait object.
@@ -221,4 +221,3 @@ number of arguments and argument types.
 [`PartialReflect`]: https://docs.rs/bevy_reflect/0.15/bevy_reflect/trait.PartialReflect.html
 [lack of variadics]: https://poignardazur.github.io/2024/05/25/report-on-rustnl-variadics/
 [issues with coherence]: https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#coherence-leak-check
-

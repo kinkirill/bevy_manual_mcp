@@ -9,7 +9,7 @@ commands.spawn(Readback::buffer(buffer.clone())).observe(
 );
 ```
 
-Normally, manually retrieving data from the GPU involves a lot of boilerplate and careful management of GPU resources. You have to deal with synchronization, ensure the GPU has finished processing, and handle copying data between memory spaces—which isn’t straightforward!
+Normally, manually retrieving data from the GPU involves a lot of boilerplate and careful management of GPU resources. You have to deal with synchronization, ensure the GPU has finished processing, and handle copying data between memory spaces-which isn’t straightforward!
 
 The new `Readback` component streamlines this process. When spawned into the main world, `Readback` will queue a `Handle<Image>` or `Handle<ShaderStorageBuffer>` to be asynchronously read and copied back from the GPU to CPU in a future frame where it will trigger a `ReadbackComplete` event containing the raw bytes of the resource.
 

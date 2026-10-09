@@ -61,13 +61,13 @@ try {
     tpl.resourceTemplates.every((t) => t.name && t.title && t.description),
   );
 
-  console.log("\nresources/read — index");
+  console.log("\nresources/read - index");
   const idx = await client.readResource({ uri: "bevy://index/versions" });
   const idxText = idx.contents[0].text;
   check("index lists an active version", /Active.*\*\*/.test(idxText));
   check("index shows a URI example", idxText.includes("bevy://api/"));
 
-  console.log("\nresources/read — a single item");
+  console.log("\nresources/read - a single item");
   const v = /\*\*(0\.\d+\.\d+[^\s*]*)\*\*/.exec(idxText)?.[1];
   check("extracted a version from the index", !!v, `version=${v}`);
   if (v) {
@@ -86,7 +86,7 @@ try {
     }
   }
 
-  console.log("\nresources/read — error semantics");
+  console.log("\nresources/read - error semantics");
   try {
     await client.readResource({
       uri: `bevy://api/${encodeURIComponent(v || "0.19.1")}/${encodeURIComponent("no::such::Item")}`,

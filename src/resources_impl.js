@@ -94,9 +94,9 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
           "",
           "Read an item with:",
           `- \`${apiUri("<version>", "<full::path>")}\``,
-          `- \`${ownerUri("<version>", "<TypeName>")}\` — everything on one type`,
-          `- \`${crateUri("<version>", "bevy_render")}\` — a whole sub-crate`,
-          `- \`${kindUri("<version>", "method")}\` — every method`,
+          `- \`${ownerUri("<version>", "<TypeName>")}\` - everything on one type`,
+          `- \`${crateUri("<version>", "bevy_render")}\` - a whole sub-crate`,
+          `- \`${kindUri("<version>", "method")}\` - every method`,
         ].join("\n"),
       );
     }
@@ -143,14 +143,14 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
         const page = paginate(matches, q, cursor);
 
         const listing = [
-          `# Bevy ${q.version} — ${q.type}: ${q[q.type]}`,
+          `# Bevy ${q.version} - ${q.type}: ${q[q.type]}`,
           "",
           `_${page.total} item(s), showing ${page.items.length}. ` +
             `Paged; re-read with \`cursor\` to continue._`,
           "",
           ...page.items.map((r) => {
             const u = apiUri(q.version, r.full_path);
-            const sig = r.signature ? ` — \`${r.signature.replace(/\s+/g, " ").slice(0, 110)}\`` : "";
+            const sig = r.signature ? ` - \`${r.signature.replace(/\s+/g, " ").slice(0, 110)}\`` : "";
             return `- [\`${r.kind}\`] **${r.name}**${sig}\n  \`${u}\``;
           }),
         ].join("\n");

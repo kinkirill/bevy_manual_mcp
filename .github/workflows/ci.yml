@@ -3,6 +3,13 @@ name: ci
 on:
   push:
     branches: [main]
+    # Prose and licence changes cannot break the tests. Skipping them keeps the
+    # check meaningful and makes doc pushes instant. pull_request is left
+    # unfiltered on purpose so a PR always reports a status.
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
   pull_request:
 
 jobs:

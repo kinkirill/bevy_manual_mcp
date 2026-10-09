@@ -64,7 +64,7 @@ function main() {
   const entry = registry.versions?.[sanitized];
   if (!entry) {
     console.error(
-      `No registry entry for ${version} in ${dataDir}/registry.json — build it first.`,
+      `No registry entry for ${version} in ${dataDir}/registry.json - build it first.`,
     );
     process.exit(1);
   }

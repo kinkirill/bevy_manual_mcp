@@ -85,7 +85,7 @@ A few conventions go a long way:
   - Name features after what they enable (e.g. `serialize`, `bevy_ui`), not what they depend on.
   - Keep your default features minimal.
   - Document your features in your `Cargo.toml` using comments above each feature.
-- **Consider `no_std` support.** If your crate is primarily logic — math, data structures, ECS patterns — it may not need the standard library at all. This makes your crate usable in more environments, including embedded platforms and WebAssembly without a full runtime.
+- **Consider `no_std` support.** If your crate is primarily logic - math, data structures, ECS patterns - it may not need the standard library at all. This makes your crate usable in more environments, including embedded platforms and WebAssembly without a full runtime.
   - This is easiest to set up at the start of a project; retrofitting it later is harder but isn't impossible.
   - Add `#![no_std]` to your `lib.rs`, with a `std` feature flag to enable anything that requires it
   - In the majority of cases, you can just use `core` or `alloc` directly instead
@@ -178,7 +178,7 @@ jobs:
       - run: cargo doc --all-features --no-deps
 ```
 
-This checks formatting, runs Clippy lints, runs your tests, and verifies your documentation compiles — all in one workflow.
+This checks formatting, runs Clippy lints, runs your tests, and verifies your documentation compiles - all in one workflow.
 
 We have a few additional setup suggestions:
 
@@ -221,7 +221,7 @@ keywords = ["bevy", "gamedev"]
 categories = ["game-development"]
 ```
 
-The `bevy_` prefix is a strong convention in the ecosystem — it makes your crate discoverable and immediately signals that it's a Bevy library.
+The `bevy_` prefix is a strong convention in the ecosystem - it makes your crate discoverable and immediately signals that it's a Bevy library.
 
 When you're ready, publish with:
 
@@ -242,7 +242,7 @@ Getting your crate in front of users:
 - **Share on social media.** Posts on Reddit ([r/bevy](https://reddit.com/r/bevy), [r/rust](https://reddit.com/r/rust), [r/rust_gamedev](https://reddit.com/r/rust_gamedev)), Mastodon, and Bluesky with the `#BevyEngine` tag can reach a wide audience.
 
 Make sure that your README, crate docs and your posts on social media clearly explain what your work is and why someone might want to use it.
-Don't underestimate the value of a pretty screenshot or GIF — polish is a strong indicator of a maintainer who's put the time in to make something worth using.
+Don't underestimate the value of a pretty screenshot or GIF - polish is a strong indicator of a maintainer who's put the time in to make something worth using.
 
 ## Maintaining Your Crate
 
@@ -287,7 +287,7 @@ Here are our most important tips on being a good open source maintainer:
 - **Set expectations about your availability.** If you maintain the crate in your spare time, say so. Contributors appreciate honesty about response times, and are surprisingly understanding if you're open about your limitations.
 - **Review PRs thoughtfully.** Explain *why* you're requesting changes, not just *what* to change. Good reviews teach contributors your crate's conventions and make future PRs better.
 - **Encourage reviews from the community.** Your users and contributors have useful perspectives on potential changes. You should welcome their interest and expertise. Bevy does this to great effect!
-- **Ask for help when you need it.** Maintaining an open source crate can be overwhelming, especially alone. The Bevy community is friendly and experienced — don't hesitate to ask for advice, reviews, or help in the [Bevy Discord](https://discord.gg/bevy). If you're struggling with maintainer burnout, it's okay to say so and ask for volunteers to step up.
+- **Ask for help when you need it.** Maintaining an open source crate can be overwhelming, especially alone. The Bevy community is friendly and experienced - don't hesitate to ask for advice, reviews, or help in the [Bevy Discord](https://discord.gg/bevy). If you're struggling with maintainer burnout, it's okay to say so and ask for volunteers to step up.
 
 ### Keeping a Changelog
 
@@ -295,7 +295,7 @@ As your crate evolves, help your users keep up.
 
 - **Keep a CHANGELOG.md** following the [Keep a Changelog](https://keepachangelog.com/) format. Organize changes under Added, Changed, Deprecated, Removed, and Fixed headings for each release. This gives users a quick way to see what's new and what might affect them.
 - **Call out breaking changes prominently.** When a release includes breaking changes, list them clearly at the top of the release notes with guidance on how to migrate.
-- **For larger breaking changes, write a migration guide.** This doesn't have to be elaborate — a few lines showing the before and after are often enough:
+- **For larger breaking changes, write a migration guide.** This doesn't have to be elaborate - a few lines showing the before and after are often enough:
 
   ```rust
   // Before (0.2)

@@ -158,7 +158,7 @@ async function main() {
     fs.existsSync(path.join(versionDir, "records.ndjson")) &&
     fs.existsSync(path.join(versionDir, "text-index.json"));
 
-  console.log(`bevy-mcp fetch-index — bevy ${version}`);
+  console.log(`bevy-mcp fetch-index - bevy ${version}`);
   console.log(`  data dir: ${dataDir}`);
 
   if (already && !args.force) {
