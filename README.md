@@ -31,7 +31,7 @@ uses.
 The problem it solves: LLMs have stale, hallucinated Bevy APIs. Bevy breaks
 compatibility every release, so a confident answer given from memory is often
 wrong for the version you are actually on. This server makes the model look the
-answer up instead, and makes it impossible to silently answer from the wrong
+answer up instead, and makes it much less possible to silently answer from the wrong
 version's docs.
 
 **Docs:** [Getting the API docs](GETTING-API-DOCS.md) ·
