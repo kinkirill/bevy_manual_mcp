@@ -430,6 +430,19 @@ bevy_check_version { }
 
 ---
 
+## Example prompts
+
+System prompts that put the tools to use. Drop one into your agent's
+instructions, or take it as a starting point:
+
+| File | Purpose |
+|---|---|
+| [`default_prompt_example.md`](default_prompt_example.md) | Answer Bevy questions accurately for the user's version. |
+| [`migration_prompt_example.md`](migration_prompt_example.md) | Full process for a major-version upgrade. |
+| [`migration_prompt_short_example.md`](migration_prompt_short_example.md) | Condensed version of the above. |
+
+---
+
 ## Self-renewal and version awareness
 
 The server checks crates.io for new releases (cached 6h, `BEVY_MCP_OFFLINE=1`
