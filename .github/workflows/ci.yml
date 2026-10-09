@@ -11,6 +11,7 @@ on:
       - "LICENSE"
       - ".gitignore"
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
