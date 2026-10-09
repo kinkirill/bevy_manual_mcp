@@ -4,9 +4,19 @@ I built this MCP because Bevy is a fast-moving project that changes with every
 release. Its documentation is large and scattered, so finding an answer that
 actually matches *your* version often means digging through rustdoc, the Book,
 migration guides and older forum threads — and still landing on something
-written for a different release. This server is meant to remove that friction:
-instead of searching and guessing, you ask your model, and it answers from
+written for a different release. This server removes that friction: instead of
+searching and guessing, you ask your agent a question and it answers from
 knowledge pinned to the exact Bevy version your project is using.
+
+It is **a reference to ask questions of**, not a code-writing assistant. The kind
+of question it exists for:
+
+> “How do I create a 3D sphere with a given radius?”
+
+`Sphere::new(radius)`. And the answer includes where that type lives *in your
+version*: `bevy::math::primitives::Sphere` in 0.19, but `bevy::shape::Sphere` in
+0.20, after the primitives were split into their own crate. Same question,
+different answer — and importing the stale path simply fails to compile.
 
 An MCP server that gives your agents **version-accurate** Bevy knowledge: the
 real API signatures from rustdoc, the Bevy Book, migration guides, release notes
@@ -14,9 +24,10 @@ and runnable examples — all pinned to the Bevy version your project actually
 uses.
 
 The problem it solves: LLMs have stale, hallucinated Bevy APIs. Bevy breaks
-compatibility every release, so "write me a Bevy system" from memory will often
-be wrong. This server makes the model look things up instead, and makes it
-impossible to silently answer with the wrong version's signature.
+compatibility every release, so a confident answer given from memory is often
+wrong for the version you are actually on. This server makes the model look the
+answer up instead, and makes it impossible to silently answer from the wrong
+version's docs.
 
 ---
 
