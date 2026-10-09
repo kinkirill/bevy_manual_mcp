@@ -8,8 +8,8 @@ written for a different release. This server removes that friction: instead of
 searching and guessing, you ask your agent a question and it answers from
 knowledge pinned to the exact Bevy version your project is using.
 
-It is **a reference to ask questions of**, not a code-writing assistant. The kind
-of question it exists for:
+It is primarily **a reference to ask questions of**. The kind of question it
+exists for:
 
 > “How do I create a 3D sphere with a given radius?”
 
@@ -17,6 +17,11 @@ of question it exists for:
 version*: `bevy::math::primitives::Sphere` in 0.19, but `bevy::shape::Sphere` in
 0.20, after the primitives were split into their own crate. Same question,
 different answer - and importing the stale path simply fails to compile.
+
+You can also point a coding agent at it, and it will stop inventing signatures
+for your version - a genuine side benefit. But that is not what it is for: the
+point is that when you ask Bevy something, the answer you get is the one that
+matches your `Cargo.lock`.
 
 An MCP server that gives your agents **version-accurate** Bevy knowledge: the
 real API signatures from rustdoc, the Bevy Book, migration guides, release notes
