@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kinkirill/bevy-mcp",
+  "title": "Bevy MCP",
+  "description": "Version-accurate Bevy API docs, Book, migration guides and examples for AI agents.",
+  "version": "0.20.0",
+  "websiteUrl": "https://github.com/kinkirill/bevy_manual_mcp",
+  "repository": {
+    "url": "https://github.com/kinkirill/bevy_manual_mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "bevy-mcp",
+      "version": "0.20.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "BEVY_PROJECT_ROOT",
+          "description": "Path to the Cargo project used to detect the Bevy version.",
+          "format": "filepath"
+        },
+        {
+          "name": "BEVY_VERSION",
+          "description": "Explicit Bevy version override, e.g. 0.20.0 (otherwise read from Cargo.lock)."
+        },
+        {
+          "name": "BEVY_DOC_DIR",
+          "description": "cargo target/doc directory, or a fetch-docs.mjs mirror.",
+          "format": "filepath"
+        },
+        {
+          "name": "BEVY_MCP_DATA_DIR",
+          "description": "Where the persistent search index is stored.",
+          "format": "filepath"
+        },
+        {
+          "name": "BEVY_MCP_OFFLINE",
+          "description": "Set to 1 to disable the crates.io update check."
+        }
+      ]
+    }
+  ]
+}

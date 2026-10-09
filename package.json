@@ -1,0 +1,59 @@
+{
+  "name": "bevy-mcp",
+  "version": "0.20.0",
+  "description": "MCP server giving agents version-accurate Bevy API docs, guides, examples and migration notes",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "bevy-mcp": "bin/bevy-mcp.js"
+  },
+  "files": [
+    "index.js",
+    "bin/",
+    "src/",
+    "scripts/",
+    "vendor/",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
+    "server.json"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "fetch-index": "node scripts/fetch-index.mjs",
+    "fetch-docs": "node scripts/fetch-docs.mjs",
+    "fetch-website": "node scripts/fetch-website.mjs",
+    "publish-index": "node scripts/publish-index.mjs",
+    "build-index": "node scripts/build-index.mjs",
+    "reindex": "node scripts/build-index.mjs --force",
+    "test": "node test/run-tests.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "bevy",
+    "rust",
+    "gamedev",
+    "documentation",
+    "ai"
+  ],
+  "license": "MIT",
+  "author": "kinkirill",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kinkirill/bevy_manual_mcp.git"
+  },
+  "homepage": "https://github.com/kinkirill/bevy_manual_mcp#readme",
+  "bugs": {
+    "url": "https://github.com/kinkirill/bevy_manual_mcp/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "cheerio": "^1.2.0",
+    "flexsearch": "^0.8.212",
+    "zod": "^4.6.5"
+  }
+}

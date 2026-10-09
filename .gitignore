@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# built search index (large, version-specific) — distributed via GitHub Releases
+data/
+
+# rustdoc mirrors are fetched on demand, never committed
+bevy-docs-*/
+vendor/bevy-docs-*/
+
+# the full upstream website checkout (prose lives in vendor/bevy-website/)
+/bevy-website/
+
+# index bundles produced by scripts/publish-index.mjs
+/dist/
+
+# local, machine-specific configuration
+bevy-mcp.config.json
+
+# runtime artefacts
+*.log
+.DS_Store
+.cache/

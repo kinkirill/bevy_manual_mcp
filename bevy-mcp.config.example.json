@@ -1,0 +1,12 @@
+{
+  "projectRoot": "/path/to/your/bevy/game",
+  "bevyVersion": "0.20.0",
+  "docDir": "~/.cache/bevy-mcp/bevy-0.20.0",
+  "websiteDir": "./vendor/bevy-website",
+  "bevySrcDir": "~/.cache/bevy-mcp/bevy-0.20.0",
+  "mirrorDir": "~/.cache/bevy-mcp/0.20.0",
+  "dataDir": "./data",
+  "offline": false,
+  "maxResults": 8,
+  "debug": false
+}
