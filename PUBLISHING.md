@@ -1,24 +1,28 @@
 # Publishing bevy-mcp
 
 This is the maintainer's checklist. It assumes you have write access to
-`kinkirill/bevy_manual_mcp` and publish rights for the `bevy-mcp` npm package.
+`kinkirill/bevy_manual_mcp`. **Distribution is GitHub-first** — the repository
+and its Release assets are the whole channel, so no npm account is required.
 
 ## The mental model
 
 Version-accuracy is the whole product, so the project ships **one release per
-Bevy minor**. `bevy-mcp@0.20.x` answers for any Bevy `0.20.y`, because Bevy's
+Bevy minor**. The `v0.20.x` release answers for any Bevy `0.20.y`, because Bevy's
 patch releases never change the public API.
 
 Three layers, three homes, on purpose:
 
 | Layer | Where it lives | Why |
 |---|---|---|
-| Code + vendored prose (`.md`/`.rs`) | git repo + npm | small, changes when you change it |
-| Built search index (~74 MB gzip) | GitHub Release asset | 250 MB raw, identical for every user |
+| Code + vendored prose (`.md`/`.rs`) | git repo | small, changes when you change it |
+| Built search index (~67 MB gzip) | GitHub Release asset | 250 MB raw, identical for every user |
 | rustdoc mirror (1.6 GB) | `scripts/fetch-docs.mjs`, on demand | only needed to rebuild the index |
 
-The release asset is what makes `npx bevy-mcp` pleasant. Without it, a first run
-has to mirror docs (~15 min) and build (~15 min).
+Users install the server with `npm install -g github:kinkirill/bevy_manual_mcp`
+(or run it via `npx --allow-git=all github:…`), and fetch the index from the Release
+asset. The Release asset is what keeps the first run to a ~67 MB download instead
+of a
+~30 minute docs mirror plus build.
 
 ## Adding a new Bevy minor (e.g. 0.21)
 
@@ -48,10 +52,10 @@ has to mirror docs (~15 min) and build (~15 min).
    - sparse-clones the engine `examples/`,
    - builds the index,
    - packages `bevy-index-0.21.0.tar.gz`,
-   - attaches it to the `v0.21.0` GitHub Release,
-   - publishes to npm via trusted publishing (OIDC) — no token secret.
+   - attaches it to the `v0.21.0` GitHub Release.
 
-   You can rebuild by hand with `workflow_dispatch` if a step fails.
+   You can rebuild by hand with `workflow_dispatch` if a step fails. npm
+   publishing is skipped unless you opt in (see *Publishing to npm* below).
 
 ## Building and publishing the index manually
 
@@ -83,67 +87,68 @@ gh release create v0.21.0 dist/bevy-index-0.21.0.tar.gz \
 
 ## Publishing to npm (trusted publishing)
 
-npm is retiring tokens that bypass 2FA, so this project does **not** use an
-`NPM_TOKEN`. As of July 2026 such tokens can no longer manage packages, and they
-are slated to lose direct publish around January 2027. Instead the release job
-authenticates with GitHub's **OIDC** token, which npm exchanges for a short-lived,
-workflow-scoped credential and records as provenance.
+## Publishing to npm (optional)
 
-### One-time: the first publish is manual
+npm is **not** part of the normal flow. Distribution is GitHub-first, and
+`npm install -g github:kinkirill/bevy_manual_mcp` covers installation. Everything
+below is only if you later decide you also want a registry listing.
 
-A trusted publisher can only be configured on a package that already exists, so
-the very first release is published by hand:
+If you do, prefer **trusted publishing (OIDC)** over a token. npm is retiring
+tokens that bypass 2FA — since July 2026 they cannot manage packages, and they
+are slated to lose direct publish around January 2027.
 
-```bash
-npm login
-cd bevy_manual_mcp
-npm publish --access public
-```
+1. **First publish is manual** (a trusted publisher can only be configured on a
+   package that already exists):
+   ```bash
+   npm login
+   npm publish --access public
+   ```
+   npm no longer accepts **new TOTP enrolment** — the CLI rejects it with
+   *"Adding a new TOTP 2FA is no longer supported"* — so a security key is
+   required. A phone passkey works, but the cross-device prompt is browser
+   dependent; if it will not complete, generate a short-lived **bypass-2FA
+   granular token** from the phone (where the passkey resolves locally) and use
+   `npm publish --//registry.npmjs.org/:_authToken=<token>`.
 
-This needs 2FA. npm **no longer allows adding a TOTP authenticator app** (new
-TOTP enrolment is rejected with *"Adding a new TOTP 2FA is no longer supported"*),
-so add a **security key** at <https://npmjs.com/settings/kinkirill/tfa>. You do
-not need a USB key: the flow accepts a platform authenticator, i.e. your laptop's
-fingerprint reader, Windows Hello, Touch ID, or your phone's face/fingerprint.
+2. **Authorise this repo** — npmjs.com → package → **Settings → Trusted
+   Publisher → GitHub Actions**:
 
-### Then: authorise this repo
+   | Field | Value |
+   |---|---|
+   | Organization or user | `kinkirill` |
+   | Repository | `bevy_manual_mcp` |
+   | Workflow filename | `release.yml` (filename only, with extension) |
+   | Environment name | *(leave empty)* |
+   | Allowed actions | enable **npm publish** |
 
-On npmjs.com → your package → **Settings → Trusted Publisher → GitHub Actions**:
+3. **Enable it in CI** — create the repository variable `PUBLISH_NPM=true`
+   (Settings → Secrets and variables → Actions → Variables). The release job's
+   npm step is gated on it, so tag pushes never fail on npm auth while it is
+   unset.
 
-| Field | Value |
-|---|---|
-| Organization or user | `kinkirill` |
-| Repository | `bevy_manual_mcp` |
-| Workflow filename | `release.yml` (filename only, with extension) |
-| Environment name | *(leave empty)* |
-| Allowed actions | enable **npm publish** (and `npm dist-tag` if you want it) |
+### Repository secrets and variables
 
-After that, a tag push publishes without any secret. Trusted publishing needs npm
-CLI ≥ 11.5.1, which the Node 24 runner provides — do not downgrade the runner's
-Node version.
-
-### Repository secrets
-
-| Secret | Used by | Notes |
+| Name | Used by | Notes |
 |---|---|---|
 | `GITHUB_TOKEN` | `release.yml` (release asset) | provided automatically; `contents: write` is requested in the workflow. |
-| `NPM_TOKEN` | — | intentionally unused; see above. |
+| `PUBLISH_NPM` (variable) | `release.yml` (npm step) | unset by default; set to `true` to publish to npm. |
 
 ## Registering a release with MCP directories
 
 After a release exists, list the server so people can find it:
 
-- **Official MCP registry** — `server.json` is already in the repo. Publish with
-  the [`mcp-publisher`](https://github.com/modelcontextprotocol/registry) CLI.
-- **Smithery**, **mcp.so**, **Glama**, **PulseMCP** — submit the GitHub URL.
-
-Keep `server.json` in sync with `package.json`: the registry rejects a version
-that numbers differently from the published package.
+- **GitHub topics** — add `mcp`, `model-context-protocol`, `bevy` to the repo so
+  it shows up in GitHub search.
+- **Smithery**, **mcp.so**, **Glama**, **PulseMCP**, **awesome-mcp-servers** —
+  submit the GitHub URL. These accept a GitHub repo without an npm package.
+- **Official MCP registry** — `server.json` currently declares an npm package, so
+  it only validates after a publish to npm. Until then, either leave it alone or
+  point it at the repository.
 
 ## Versioning rules
 
-- `bevy-mcp@X.Y.*` answers for Bevy `X.Y.*`.
-- Bump the bevy-mcp patch (`0.20.0 → 0.20.1`) only for changes to the **tooling**
-  — parser fixes, new tools. The index is unchanged, so users need not upgrade.
-- Never publish a pre-release of Bevy as a target; `bevy_check_version` and the
-  docs.rs mirror both expect a stable `X.Y.Z`.
+- Tags `vX.Y.*` answer for Bevy `X.Y.*`.
+- Bump the patch (`0.20.0 → 0.20.1`) only for changes to the **tooling** — parser
+  fixes, new tools. The index is unchanged, so users need not upgrade.
+- Never target a pre-release of Bevy; `bevy_check_version` and the docs.rs mirror
+  both expect a stable `X.Y.Z`.

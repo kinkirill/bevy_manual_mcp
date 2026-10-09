@@ -3,21 +3,18 @@ name: release
 # Publishing flow for a new Bevy minor (e.g. 0.21.0):
 #   1. bump "version" in package.json and server.json to the Bevy minor
 #   2. git tag v0.21.0 && git push origin v0.21.0
-#   3. this job mirrors rustdoc, builds the index, attaches the prebuilt
-#      bundle to the GitHub Release, and publishes to npm.
+#   3. this job mirrors rustdoc, builds the index, and attaches the prebuilt
+#      bundle to the GitHub Release.
 #
-# npm auth uses TRUSTED PUBLISHING (OIDC) - no NPM_TOKEN secret. npm is retiring
-# tokens that bypass 2FA: as of July 2026 they can no longer manage packages,
-# and they are slated to lose direct publish around January 2027. OIDC issues a
-# short-lived, workflow-scoped token per run instead, and adds provenance.
+# Distribution is GitHub-first: users install with
+#   npm install -g github:kinkirill/bevy_manual_mcp
+# so the repository and its Release assets are the whole channel. There is no
+# npm account in the critical path.
 #
-# One-time setup on npmjs.com (after the package exists):
-#   Package settings -> Trusted Publisher -> GitHub Actions
-#     Organization or user: kinkirill
-#     Repository:           bevy_manual_mcp
-#     Workflow filename:    release.yml
-#     Allowed actions:      enable "npm publish" (and optionally dist-tag)
-# Requires npm CLI >= 11.5.1, which the Node 24 runner provides.
+# npm publishing is available but opt-in (repository variable PUBLISH_NPM=true).
+# It uses TRUSTED PUBLISHING (OIDC) rather than a token, because npm is retiring
+# tokens that bypass 2FA. If you ever enable it, configure a Trusted Publisher
+# on npmjs.com for this workflow - see PUBLISHING.md.
 
 on:
   push:
@@ -95,7 +92,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Auth comes from the OIDC token, not a secret. `--provenance` is implied
-      # by trusted publishing; it is harmless to be explicit.
-      - name: Publish to npm (trusted publishing)
+      # --- Optional: npm -------------------------------------------------
+      # Off by default. Turn it on by creating a repository variable
+      #   PUBLISH_NPM=true   (Settings -> Secrets and variables -> Actions)
+      # and configuring a Trusted Publisher for this workflow on npmjs.com.
+      # See PUBLISHING.md. Left disabled so tag pushes never fail on npm auth.
+      - name: Publish to npm (trusted publishing, opt-in)
+        if: vars.PUBLISH_NPM == 'true'
         run: npm publish --access public --provenance

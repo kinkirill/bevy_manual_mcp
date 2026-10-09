@@ -22,36 +22,54 @@ impossible to silently answer with the wrong version's signature.
 
 ## Quick start
 
-### Install from npm (recommended)
+There is no npm package: the server is installed straight from this repository,
+and the search index comes from the GitHub Releases of this repository.
+
+### Install the CLI (recommended)
 
 ```bash
-npx -y bevy-mcp fetch-index   # download the prebuilt index for your Bevy version
-npx -y bevy-mcp status        # show what was auto-detected
-npx -y bevy-mcp               # start the stdio server
+# npm 12 disables fetching git dependencies by default, hence the opt-in flag
+npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
+
+bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~67 MB)
+bevy-mcp status               # show what was auto-detected
+bevy-mcp                      # start the stdio server
 ```
 
-Point your MCP client at the package and, if it cannot guess the project, pass
-the path — the Bevy version is read from `Cargo.lock`:
+Or clone it yourself, which needs no npm flags at all:
+
+```bash
+git clone https://github.com/kinkirill/bevy_manual_mcp
+cd bevy_manual_mcp && npm install
+./bin/bevy-mcp.js fetch-index 0.20.0
+```
+
+Register it with your MCP client. If the client spawns the command itself, run
+it through `npx` (no global install needed) and pass the project path, since the
+Bevy version is read from `Cargo.lock`:
 
 ```json
 {
   "command": "npx",
-  "args": ["-y", "bevy-mcp"],
+  "args": ["-y", "--allow-git=all", "github:kinkirill/bevy_manual_mcp"],
   "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
 }
 ```
 
-The prebuilt index turns the first run into a ~74 MB download instead of a
-local rustdoc build — see [Distribution and versioning](#distribution-and-versioning).
+If you cloned instead, point the client at the checkout — no npm involvement:
 
-### Install from source
-
-```bash
-git clone https://github.com/kinkirill/bevy_manual_mcp
-cd bevy_manual_mcp
-npm install
-node scripts/fetch-index.mjs 0.20.0   # or build it yourself, see below
+```json
+{
+  "command": "node",
+  "args": ["/absolute/path/to/bevy_manual_mcp/index.js"],
+  "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
+}
 ```
+
+The prebuilt index turns the first run into a ~67 MB download instead of a local
+rustdoc build — see [Distribution and versioning](#distribution-and-versioning).
+
+### Configure it
 
 `bevy-mcp.config.json` is the whole setup — no environment variables needed. The
 minimal version points at your game and lets the server find the docs itself:
@@ -102,11 +120,11 @@ couple of seconds.
 ### Recommended — install the prebuilt index
 
 The index for a released Bevy minor is identical for everyone, so it is built
-once and published as a GitHub Release asset (~74 MB compressed). This is the
+once and published as a GitHub Release asset (~67 MB compressed). This is the
 fast path:
 
 ```bash
-npx bevy-mcp fetch-index 0.20.0    # omit the version to read Cargo.lock
+bevy-mcp fetch-index 0.20.0    # omit the version to read Cargo.lock
 ```
 
 It unpacks into `data/versions/0.20.0/` (or `$BEVY_MCP_DATA_DIR`). To rebuild it
@@ -151,16 +169,16 @@ contain the same public API, so **the mirror is strictly better**. Reach for
 
 ## Distribution and versioning
 
-Releases track Bevy's minor version: **`bevy-mcp@0.20.x` answers for any Bevy
-`0.20.y`**, because patch releases never change the public API. Match the minor
-and you are done.
+Releases track Bevy's minor version: the **`v0.20.x` release** answers for any
+Bevy `0.20.y`, because patch releases never change the public API. Match the
+minor and you are done.
 
 To keep the first run cheap, the pieces are distributed separately:
 
 | Piece | Where | Size |
 |---|---|---|
-| Server code + bundled Book/migration prose | npm (`npx bevy-mcp`) | a few MB |
-| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~74 MB |
+| Server code + bundled Book/migration prose | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
+| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~67 MB |
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
 
 The index holds API metadata, documentation strings, migration guides and
@@ -518,7 +536,7 @@ test/mcp-e2e.mjs              protocol-level test over stdio
 **Startup cost.** A cold build of the full corpus (~270k records: 265k rustdoc
 items, Book/migration/release prose, ~445 examples) takes roughly 12 minutes at a
 2 GB heap, and is then persisted. You can skip it entirely by installing the
-prebuilt index (`bevy-mcp fetch-index`, ~74 MB); otherwise every later run streams
+prebuilt index (`bevy-mcp fetch-index`, ~67 MB); otherwise every later run streams
 `records.ndjson` and imports `text-index.json` in about 2-5 seconds. Deleting
 `data/` forces a cold rebuild.
 
