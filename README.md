@@ -198,8 +198,9 @@ To keep the first run cheap, the pieces are distributed separately:
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
 
 The index holds API metadata, documentation strings, migration guides and
-examples - not engine source. Maintainers: see [PUBLISHING.md](PUBLISHING.md)
-for the release ritual.
+examples - not engine source. Indexes are published for **0.15.3, 0.16.1, 0.17.3,
+0.18.1, 0.19.1 and 0.20.0**; install the one matching your `Cargo.lock`.
+Maintainers: see [PUBLISHING.md](PUBLISHING.md) for the release ritual.
 
 ---
 
@@ -269,9 +270,10 @@ and `command` is an **array**:
 {
   "context_servers": {
     "bevy": {
-      "source": "custom",
       "command": "node",
-      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"]
+      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"],
+      "enabled": true,
+      "remote": false
     }
   }
 }
@@ -390,9 +392,13 @@ All keys are optional:
 | `BEVY_WEBSITE_DIR` | bevy-website checkout | `./vendor/bevy-website` |
 | `BEVY_SRC_DIR` | bevy engine checkout (for `examples/`, `errors/`) | auto |
 | `BEVY_EXAMPLES_DIR` | Explicit examples dir | auto |
+| `BEVY_ERRORS_DIR` | Explicit `errors/` dir | auto |
 | `BEVY_EXTRA_VERSIONS` | Additional versions to hold, e.g. `0.18.1=/path/to/doc,0.17.0=/other` | none |
+| `BEVY_MIRROR_DIR` | Where `fetch-docs.mjs` writes downloads | `~/.cache/bevy-mcp/<version>` |
 | `BEVY_MCP_CONFIG` | Explicit path to a config file | auto-discovered |
-| `BEVY_MCP_DATA_DIR` | Where the persistent index is stored | `<repo>/data` |
+| `BEVY_MCP_DATA_DIR` | Where the persistent index is stored | `<repo>/data` if present, else `~/.cache/bevy-mcp/data` |
+| `BEVY_MCP_MAX_RESULTS` | Default result count for search | `8` |
+| `BEVY_MCP_REPO` | `owner/repo` used by `fetch-index` to build Release URLs | `kinkirill/bevy_manual_mcp` |
 | `BEVY_MCP_FORCE_REINDEX=1` | Rebuild the index even if cached | off |
 | `BEVY_MCP_OFFLINE=1` | Never contact crates.io | off |
 | `BEVY_MCP_DEBUG=1` | Verbose parse errors | off |
@@ -407,7 +413,7 @@ unset (server warns loudly, since an unknown version defeats the point).
 | Tool | Use it for |
 |---|---|
 | `bevy_api` | Exact symbol lookup → real signature, docs, and the documented `Default` value. **Start here for API questions.** |
-| `bevy_api_diff` | The same symbol in each indexed version - did it actually change? |
+| `bevy_api_diff` | Compare a symbol across the versions you name - signature changed, or only its module? |
 | `bevy_search` | Hybrid search across API, book, migration guides, examples. Concepts and tasks. |
 | `bevy_examples` | Runnable example code for a concrete task (2d, ui, input, audio…), led by the example's `setup`/`main` body. |
 | `bevy_migration` | Breaking changes between two versions. |
@@ -462,17 +468,33 @@ carries the MCP protocol stream.
 
 ### Comparing versions
 
-Point it at more than one doc tree to answer "did this change?":
+`bevy_api_diff` answers "did this actually change?" for one symbol. Install the
+indexes you want to compare, then **name the versions to compare** - the tool does
+not guess, because comparing 0.19.1→0.20.0 when you are really moving 0.15→0.20
+would answer a different question than the one you asked:
 
 ```bash
-BEVY_EXTRA_VERSIONS="0.18.1=/path/to/0.18.1/target/doc" node index.js
+bevy-mcp fetch-index 0.19.1
+bevy-mcp fetch-index 0.20.0
 ```
 
-Then `bevy_api_diff` shows a symbol per version and states plainly whether the
-signature actually changed. Signatures are whitespace-normalised before
-comparison, because rustdoc wraps them differently between builds and a
-line-break difference is not an API change.
+```
+bevy_api_diff { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
+```
 
+With exactly two versions installed it compares those two automatically; with more
+it asks you to be explicit. There are three possible verdicts:
+
+- the **signature changed** - the call site will not compile;
+- the signature is unchanged but the item **moved between modules** - the `use`
+  will not resolve even though the call looks the same;
+- identical in both place and signature - nothing to do.
+
+Instead of a Release asset you can add a doc tree you built yourself, with
+`BEVY_EXTRA_VERSIONS="0.18.1=/path/to/0.18.1/target/doc"`.
+
+Signatures are whitespace-normalised before comparison, because rustdoc wraps
+them differently between builds and a line-break difference is not an API change.
 Asking about a version that is **not** indexed returns an error rather than
 silently answering from another version - substituting a different version's
 API is exactly the confusion pinning exists to prevent.
@@ -494,12 +516,13 @@ bevy/examples/**/*.rs              ─┘                           ▼
                                   exact symbol table ──> (API symbols)
 ```
 
-Three design decisions worth knowing:
+Five design decisions worth knowing:
 
 **1. Every rustdoc item is its own record.** rustdoc puts a struct's methods in
 the *parent's* HTML file, so naive scraping buries them. This parser emits one
-record per method/assoc-item with its owner, so `Query::iter` resolves directly
-instead of being lost in a wall of prose.
+record per method and associated item, tagged with its owner, so `Query::iter`
+exists as a record in its own right instead of being buried in a wall of prose
+inside `Query`'s page.
 
 **2. Exact lookup beats fuzzy.** A symbol table resolves `App::add_systems`
 directly; FlexSearch only handles concepts. A purely fuzzy index ranks a
@@ -562,12 +585,12 @@ test/resources-test.mjs       resource conformance over a real MCP client
 test/mcp-e2e.mjs              protocol-level test over stdio
 ```
 
-**Startup cost.** A cold build of the full corpus (~270k records: 265k rustdoc
-items, Book/migration/release prose, ~445 examples) takes roughly 12 minutes at a
-2 GB heap, and is then persisted. You can skip it entirely by installing the
-prebuilt index (`bevy-mcp fetch-index`, ~67 MB); otherwise every later run streams
-`records.ndjson` and imports `text-index.json` in about 2-5 seconds. Deleting
-`data/` forces a cold rebuild.
+**Startup cost.** A cold build of the full corpus takes roughly 5-7 minutes at a
+2 GB heap and is then persisted. For Bevy 0.19.1 that is ~270k records: 265,741
+rustdoc items, 3,389 website prose chunks and 445 examples. You can skip the
+build entirely by installing a prebuilt index (`bevy-mcp fetch-index`, ~67 MB);
+otherwise every later run streams `records.ndjson` and imports `text-index.json`
+in about 2-5 seconds. Deleting `data/` forces a cold rebuild.
 
 Run tests:
 

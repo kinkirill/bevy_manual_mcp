@@ -572,8 +572,8 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          'Comma-separated versions to compare, e.g. "0.19.1,0.20.0". Defaults to the ' +
-            "active version and its nearest neighbour when several are indexed.",
+          'Comma-separated versions to compare, e.g. "0.19.1,0.20.0". Required whenever ' +
+            "more than two versions are indexed; with exactly two they are compared automatically.",
         ),
     },
   },
@@ -603,21 +603,36 @@ server.registerTool(
       };
     }
 
-    // Defaulting to *every* indexed version would load each index into memory,
-    // which gets expensive once several are installed. Default to the pair an
-    // upgrade actually asks about: the active version and its nearest
-    // neighbour (preferring the one below it).
-    const defaultPair = () => {
-      if (all.length <= 2) return all;
-      const i = all.indexOf(String(config.bevyVersion));
-      if (i === -1) return all.slice(-2);
-      const other = i > 0 ? all[i - 1] : all[i + 1];
-      return [other, all[i]].filter(Boolean).sort(cmpVersionForOrder);
-    };
+    // The caller names the versions. Auto-picking a pair would silently answer a
+    // different question than the one asked - comparing 0.19.1->0.20.0 when the
+    // user is actually moving 0.15->0.20 - which is the failure this project
+    // exists to prevent. Only auto-select when there is exactly one possible
+    // pair, i.e. two versions indexed.
+    if (!versions && all.length !== 2) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              `${all.length} Bevy versions are indexed, so which pair to compare is ambiguous. ` +
+              `Name them explicitly:\n\n` +
+              `  versions: "${all[0]},${all[all.length - 1]}"\n\n` +
+              `Indexed: ${all.join(", ")}.`,
+          },
+        ],
+        structuredContent: {
+          symbol,
+          comparable: false,
+          needs_versions: true,
+          indexed: all,
+        },
+      };
+    }
 
     const want = versions
       ? versions.split(",").map((v) => v.trim()).filter(Boolean)
-      : defaultPair();
+      : all;
     const unknown = want.filter((v) => !multi.has(v) && !registry.has(v));
     if (unknown.length && versions) {
       return {
