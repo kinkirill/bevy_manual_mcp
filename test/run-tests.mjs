@@ -408,6 +408,17 @@ pub fn widget_variant_${i}(id: u32) -> u32 { id }`).join("\n\n")}
     assert.match(id.signature, /^id:\s*u32$/, `signature was ${JSON.stringify(id.signature)}`);
   });
 
+  test("tuple struct members are not indexed as fields", () => {
+    // rustdoc names them `structfield.0`, `structfield.1`. Numeric leaf keys
+    // would pollute the symbol table, so they are skipped; the declaration
+    // itself remains on the type record.
+    assert.equal(
+      records.filter((r) => r.kind === "field" && /^\d+$/.test(r.name)).length,
+      0,
+      "tuple members must not become field records",
+    );
+  });
+
   test("each field keeps its OWN documentation", () => {
     const id = records.find((r) => r.kind === "field" && r.name === "id");
     const label = records.find((r) => r.kind === "field" && r.name === "label");
