@@ -1,20 +1,4 @@
 #!/usr/bin/env node
-/**
- * Refresh the vendored bevy-website prose.
- *
- * The repository ships a trimmed copy of bevy-website (Markdown and Rust source
- * only - no media) so that the Book, migration guides, release notes and
- * learning-code-examples work with no network access. This script re-creates
- * that copy from upstream, for when the guides are updated.
- *
- * It uses a partial, sparse clone so that the ~270 MB of news media is never
- * downloaded: only .md/.rs blobs matching the sparse patterns are fetched.
- *
- * Usage:
- *   node scripts/fetch-website.mjs                 # into ./vendor/bevy-website
- *   node scripts/fetch-website.mjs --out /tmp/www
- *   node scripts/fetch-website.mjs --ref main
- */
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -43,7 +27,6 @@ function git(args: string[], cwd?: string): void {
   if (r.status !== 0) throw new Error(`git failed with exit code ${r.status ?? 1}`);
 }
 
-/** Copy only the prose sources upstream, preserving directory structure. */
 function copyProse(from: string, to: string) {
   let count = 0;
   let bytes = 0;
@@ -92,8 +75,7 @@ function main() {
       ],
       undefined,
     );
-    // Non-cone patterns let us pull just .md/.rs, so news .mp4/.png blobs are
-    // never fetched despite living in the same directories.
+    // Non-cone patterns select source files without downloading adjacent media.
     git(["sparse-checkout", "set", "--no-cone", ...SPARSE_PATTERNS], tmp);
 
     fs.mkdirSync(path.dirname(outDir), { recursive: true });

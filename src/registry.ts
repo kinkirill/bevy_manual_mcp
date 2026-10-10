@@ -53,7 +53,7 @@ export function parseRegistryEntry(value: unknown): RegistryEntry { return entry
 interface VersionSource { docDir: string | null; examplesDir: string | null }
 
 function sanitize(version: string): string {
-  // Names are path components, never traversal or arbitrary environment input.
+  // Versions become path components.
   if (!/^(?:unversioned|\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?)$/.test(version)) {
     throw new Error(`Invalid Bevy version: ${version}`);
   }
@@ -64,7 +64,7 @@ function directoryExists(directory: string | null): directory is string {
   try { return fs.statSync(directory).isDirectory(); } catch { return false; }
 }
 
-/** Files, sizes and modification times, including deletions and changes below the newest file. */
+/** Fingerprint every file's relative path, size and modification time. */
 export function sourceFingerprint(directories: (string | null)[]): string {
   const hash = createHash("sha256");
   for (const directory of directories) {
@@ -106,7 +106,7 @@ function apiTextFingerprint(index: BevyIndex, apiCount: number): string {
   return hash.digest("hex");
 }
 
-/** Keep API postings in one pass: imported FlexSearch remove/update scans every term per id. */
+/** Prune postings in one pass; imported FlexSearch updates scan every term per ID. */
 function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boolean, trustedPayloads: boolean): boolean {
   if (!isObject(value) || !Object.values(value).every((part) => typeof part === "string")) {
     throw new Error("Invalid persisted text index");
@@ -143,9 +143,7 @@ function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boole
     if (!field || !/^(?:name|signature|docs)\.\d+\.map$/.test(key)) throw new Error(`Unsupported persisted text part ${key}`);
     parts.get(field)!.push([key, String(part)]);
   }
-  // Validate one field at a time, consuming its required postings as they are
-  // encountered. Matching corpus/export hashes avoid encoding millions of
-  // unchanged payload terms again on later warm loads.
+  // Validate one field at a time to bound memory; matching hashes skip token checks.
   for (const field of TEXT_FIELDS) {
     const expected = new Map<string, Set<string>>();
     if (!trustedPayloads) {
@@ -202,8 +200,7 @@ function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boole
   }
   if (current.size > 0 && Object.keys(dump).length === 0) throw new Error("Persisted text index is empty for a nonempty corpus");
   index.text = importTextIndex(dump);
-  // Publisher prose and repaired duplicate API rows were removed above before
-  // fresh payloads are added, avoiding expensive updates of an imported index.
+  // Re-add pruned payloads without triggering expensive imported-index updates.
   const added = new Set<string>();
   for (const record of index.records) {
     if (index._isIndexed(record) && !added.has(record.id) &&
@@ -307,7 +304,7 @@ export class VersionRegistry {
     return records;
   }
   private supplement(index: BevyIndex, cfg: IndexConfig): void {
-    // A shallow copy gives each isolated index its own provenance/id assignments.
+    // Each version needs its own provenance and IDs.
     index.addRecords(this.sharedWebsite().map((record) => ({ ...record, bevy_version: cfg.bevyVersion })));
     index.addRecords(ingestExamples({ examplesDir: cfg.examplesDir, websiteDir: cfg.websiteDir, bevyVersion: cfg.bevyVersion }));
   }
@@ -343,8 +340,7 @@ export class VersionRegistry {
           apiCount++;
           index.addRecords([record]);
         }
-        // The count describes the persisted corpus, including legacy tuple fields
-        // that addRecords omits. Validate it before accepting a filtered index.
+        // Count raw rows, including tuple fields omitted by addRecords.
         if (metadata.api_records !== undefined && apiCount !== metadata.api_records) {
           throw new Error("Persisted API record count does not match metadata");
         }
@@ -374,8 +370,7 @@ export class VersionRegistry {
           index.meta.website_dir = cfg.websiteDir;
           index.meta.examples_dir = cfg.examplesDir;
           index.meta.symbols = index.symbols.size;
-          // A cache update is optional once valid API records have been loaded.
-          // Stage it as a complete directory, preserving the previous files on failure.
+          // Refresh failures preserve the valid in-memory index and previous cache.
           try { this.refreshCache(version, index); }
           catch (error) { log(`could not refresh persisted supplements: ${errorMessage(error)}`); }
         }

@@ -1,14 +1,6 @@
 /**
- * Response formatting.
- *
- * Design rules for tool output consumed by an LLM:
- *   - Lead with the answer (the signature), not with the prose.
- *   - Always state which Bevy version the result came from. An agent that
- *     cannot tell whether a signature is current will guess.
- *   - Return one compact block per hit and a source pointer, so the agent can
- *     ask again for more instead of receiving everything at once.
- *   - Prefer `structuredContent` (machine-readable) alongside a short text
- *     rendering, so clients can use either.
+ * Lead with signatures, version provenance and source pointers; return compact
+ * text alongside structured results so clients can request more detail as needed.
  */
 
 import type { BevyRecord, SearchHit, ResolvedConfig, VersionBump } from "./types.js";
@@ -32,10 +24,7 @@ function iconFor(r: BevyRecord): string {
   return "📖";
 }
 
-/**
- * Compare one symbol across versions. This is the payoff of holding several
- * indexes: showing exactly how an API changed, rather than describing it.
- */
+/** Summarize signature, location and availability changes for one symbol. */
 export function formatVersionDiff({ symbol, perVersion }: {
   symbol: string; perVersion: { version: string; record: BevyRecord | null }[];
 }): string {
@@ -92,7 +81,6 @@ function truncate(s: string | null | undefined, n: number): string {
   return s.length <= n ? s : s.slice(0, n).trimEnd() + " …";
 }
 
-/** One compact rendering of a single record. */
 interface FormatOptions {
   docsChars?: number;
   exampleChars?: number;
@@ -109,7 +97,6 @@ export function formatRecord(r: BevyRecord, { docsChars = 700, exampleChars = 12
 
   if (r.full_path) parts.push(`\`${r.full_path}\``);
 
-  // Version provenance is the single most important line for an agent.
   const verBits = [];
   if (r.bevy_version) verBits.push(`indexed for Bevy ${r.bevy_version}`);
   if (r.to_version) verBits.push(`applies to ${r.from_version} → ${r.to_version}`);
@@ -127,8 +114,7 @@ export function formatRecord(r: BevyRecord, { docsChars = 700, exampleChars = 12
     parts.push("```rust\n" + r.signature + "\n```");
   }
 
-  // A type's documented `Default` value (captured from its `impl Default`).
-  // This never appears in the type's own docs and is routinely guessed wrong.
+  // Defaults are documented on the trait impl rather than in the type's docblock.
   if (r.defaults) {
     parts.push(`**Default:** ${truncate(r.defaults, 300)}`);
   }
@@ -139,12 +125,6 @@ export function formatRecord(r: BevyRecord, { docsChars = 700, exampleChars = 12
     parts.push(`_Section: ${r.heading}_`);
   }
 
-  // Doctest examples, extracted at ingest time into a separate field so the
-  // `docs` string (which feeds the search index) stays byte-identical.
-  //
-  // These are the highest-value part of an API answer for anything an agent has
-  // to write, and before this they reached the model as run-on prose with
-  // rustdoc's line-number gutter spliced into the source.
   if (r.examples?.length) {
     const shown = r.examples.slice(0, exampleLimit);
     for (const ex of shown) {
@@ -169,10 +149,7 @@ export function formatRecord(r: BevyRecord, { docsChars = 700, exampleChars = 12
 
   const docs = r.docs && r.docs.trim();
   if (r.kind === "code_example") {
-    // Show the example's own description and its `setup`/`main` function, not a
-    // blind first-N-chars slice. The point of an example is what it spawns (and
-    // what it does *not* set); a 700-line file truncated at 3.5 KB can hide
-    // exactly the `setup` body the reader needs.
+    // Prefer setup code so truncation does not hide the example's entity creation.
     const desc = (r.description || "").trim();
     if (desc) parts.push(truncate(desc, 600));
     const code = r.code || docs || "";
@@ -218,14 +195,12 @@ function trimCode(text: string, max: number): string {
 }
 
 /**
- * Extract the `setup`/`main` function from an example source, braces balanced.
- * Returns null when the file has neither, so the caller can fall back to the
- * raw (truncated) code.
+ * Extract a setup/spawn/main function with balanced braces, or return null so
+ * the caller can fall back to the raw code.
  */
 function setupSnippet(code: string, max = 2800): string | null {
   const lines = String(code).split("\n");
-  // `setup*` / `spawn*` is where examples spawn things; `main` is usually just
-  // the plugin list. Prefer the former, fall back to main.
+  // setup/spawn functions contain the scene; main usually only configures plugins.
   const patterns = [
     /^\s*fn\s+setup\w*\s*\(/,
     /^\s*fn\s+spawn\w*\s*\(/,
@@ -257,7 +232,6 @@ function setupSnippet(code: string, max = 2800): string | null {
   return out.join("\n");
 }
 
-/** Full markdown rendering of a list of results. */
 export function formatResults(index: BevyIndex, results: SearchHit[], query: string, opts: FormatOptions = {}): string {
   const label = opts.label || index.meta?.bevy_version;
   const lines = [`## Bevy ${label ?? "UNKNOWN"} - results for "${query}"`];
@@ -284,7 +258,6 @@ export function formatResults(index: BevyIndex, results: SearchHit[], query: str
   return lines.join("\n");
 }
 
-/** Machine-readable shape returned alongside the markdown. */
 export function toStructured(results: SearchHit[], index: BevyIndex) {
   return {
     bevy_version: index.meta?.bevy_version ?? null,
@@ -311,11 +284,7 @@ export function toStructured(results: SearchHit[], index: BevyIndex) {
   };
 }
 
-/**
- * Renewal advisory: what the agent should actually do about a version change.
- * The patch/minor distinction is the point -- a patch release must not trigger
- * a rewrite of working code.
- */
+/** Distinguish patch notices from upgrades that require API migration. */
 export function formatUpgrade({ mine, newest, preview, bump, records }: {
   mine: string | null; newest: string; preview?: string | null; bump: VersionBump; records?: number;
 }): string {

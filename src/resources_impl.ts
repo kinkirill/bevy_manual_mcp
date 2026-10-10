@@ -1,11 +1,4 @@
-/**
- * Resource handlers.
- *
- * Turns a parsed bevy:// URI into MCP resource contents. This is the
- * completeness layer of the server: an item is readable here whether or not it
- * was ever full-text indexed, which is what allows the search index to stay
- * small enough to fit in memory.
- */
+/** Read indexed items by identity, including records excluded from full-text search. */
 
 import {
   parseUri,
@@ -27,7 +20,6 @@ import { ErrorCode, McpError, type ReadResourceResult } from "@modelcontextproto
 import type { BevyIndex } from "./store.js";
 import type { ResourceQuery } from "./types.js";
 
-/** JSON-RPC "invalid params", used for a URI that parses but names nothing. */
 function invalidParams(message: string, data?: unknown) {
   return new McpError(ErrorCode.InvalidParams, message, data);
 }
@@ -51,12 +43,6 @@ function bareUri(uri: string) {
   return i === -1 ? s : s.slice(0, i);
 }
 
-/**
- * Build the resource layer for a set of indexes.
- *
- * @param resolveVersion  async (version) => index | null
- * @param activeVersion   the project's pinned version
- */
 export interface ResourceDependencies {
   resolveVersion: (version: string | null | undefined) => Promise<BevyIndex | null>;
   activeVersion: string | null;
@@ -74,11 +60,9 @@ function queryValue(query: ResourceQuery): string {
     case "index": return "versions";
   }
 }
+/** Bind resource reads and completions to the version registry. */
 export function createResources({ resolveVersion, activeVersion, versions }: ResourceDependencies) {
-  /**
-   * Handle one resources/read request.
-   * Throws a JSON-RPC-shaped error for a bad or unknown URI.
-   */
+  /** Read a resource or reject malformed/unknown URIs with InvalidParams. */
   async function read(uri: string, { cursor }: { cursor?: string; variables?: unknown } = {}): Promise<ResourceReadResult> {
     if (!isBevyUri(uri)) {
       throw invalidParams(`Not a bevy resource URI: ${uri}`, { uri });
@@ -87,8 +71,7 @@ export function createResources({ resolveVersion, activeVersion, versions }: Res
     const q = parseUri(href);
     if (!q) throw invalidParams(`Malformed bevy URI: ${uri}`, { uri });
 
-    // A cursor may arrive as a `?cursor=` query parameter on the URI itself,
-    // which is how a paginated listing is continued.
+    // Continuation cursors can also be encoded in resource URIs.
     if (!cursor && typeof uri === "string") {
       cursor = new URL(uri).searchParams.get("cursor") ?? undefined;
     }
@@ -185,10 +168,7 @@ export function createResources({ resolveVersion, activeVersion, versions }: Res
     }
   }
 
-  /**
-   * Completion for the resource templates, so an interactive client can
-   * discover valid version / kind / crate values as the user types.
-   */
+  /** Complete template arguments using the requested version's indexed values. */
   async function complete(uriTemplate: string, { argument, value, context }: {
     argument: string;
     value: string;

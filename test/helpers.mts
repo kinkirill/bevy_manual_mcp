@@ -45,7 +45,6 @@ export function fixtureConfig(root: string, overrides: Partial<ResolvedConfig> =
   };
 }
 
-/** One genuine rustdoc fixture shared by ingestion, resource and tool tests. */
 export function buildRustdocFixture(root: string): string {
   const crate = path.join(root, "rdfixture");
   writeFixture(path.join(crate, "Cargo.toml"), '[package]\nname = "rdfixture"\nversion = "0.1.0"\nedition = "2021"\n');
@@ -106,7 +105,7 @@ export async function protocolFixture(): Promise<{ root: string; dataDir: string
   return { root, dataDir, owned };
 }
 
-/** Explicit environment prevents developer-specific configuration leaking into subprocesses. */
+// Isolate subprocesses from developer-specific Bevy configuration.
 export function fixtureEnv(root: string, dataDir: string, version = "9.9.9"): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

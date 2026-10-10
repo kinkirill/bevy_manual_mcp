@@ -1,22 +1,6 @@
 /**
- * Resource URI scheme for the Bevy API.
- *
- * This is the layer that makes every indexed item reachable *by identity*
- * rather than by search, which is what lets the server hold far more data
- * than it can full-text index. An item that is never full-text indexed is
- * still fully readable through its URI.
- *
- *   bevy://api/{version}/{path}          one item by full path
- *   bevy://path/{version}/{path}          alias, for callers that prefer it
- *   bevy://kind/{version}/{kind}           every item of a kind (paginated)
- *   bevy://module/{version}/{module}       every item in a module
- *   bevy://crate/{version}/{crate}         every item in a sub-crate
- *   bevy://owner/{version}/{owner}         every method on one type
- *   bevy://doc/{file}                      a source file's items
- *   bevy://index/versions                 what is indexed
- *
- * Paths use `::` for Rust modules and are percent-encoded for transport, so a
- * path containing `/` (module `gltf` under `bevy::gltf`) stays unambiguous.
+ * Identity-based access includes items omitted from full-text search. Rust
+ * paths are percent-encoded to preserve embedded slashes during transport.
  */
 
 import type { ResourceQuery } from "./types.js";
@@ -59,15 +43,11 @@ export function fileUri(version: string | null | undefined, file: string) {
 
 export const indexUri = `${SCHEME}://index/versions`;
 
-/** Is this a URI this server handles? */
 export function isBevyUri(uri: unknown): uri is string {
   return typeof uri === "string" && uri.startsWith(`${SCHEME}://`);
 }
 
-/**
- * Parse a bevy:// URI into a query descriptor.
- * Returns null when the URI is not one of ours or is malformed.
- */
+/** Return a resource query, or null for an unsupported or malformed URI. */
 export function parseUri(uri: unknown): ResourceQuery | null {
   if (!isBevyUri(uri)) return null;
   let rest: URL;
@@ -78,7 +58,6 @@ export function parseUri(uri: unknown): ResourceQuery | null {
   } catch {
     return null;
   }
-  // `new URL` puts bevy in host and the path in pathname.
   const kind = rest.hostname;
   const version = segs[0];
   if (kind !== "index" && !version) return null;
@@ -111,12 +90,8 @@ export function parseUri(uri: unknown): ResourceQuery | null {
 }
 
 /**
- * Resource templates advertised via resources/templates/list.
- *
- * `kind`, `module` and `crate` are deliberately exposed as templates rather than
- * one concrete resource per crate: with 265k items, enumerating them would be
- * absurd, and pagination alone does not solve discovery. Templates let a client
- * ask for the shape it wants.
+ * Templates let clients discover resources without enumerating the entire
+ * corpus in resources/list.
  */
 export function templates(activeVersion: string | null) {
   const v = encodeURIComponent(activeVersion || "unknown");

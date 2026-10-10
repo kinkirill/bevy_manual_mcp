@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-/**
- * `npm test` entry point.
- *
- * Build one real Cargo rustdoc fixture, then run ingestion, persistence,
- * configuration and offline MCP protocol tests against that shared fixture.
- */
+// Reuse one Cargo-generated fixture across ingestion and protocol tests.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -28,9 +23,7 @@ function run(label: string, args: string[], env: Record<string, string> = {}) {
   return r.status ?? 1;
 }
 
-// Cleanup must not rely on `finally`: process.exit() skips it, and every exit
-// path needs the temporary fixture removed. Compute the status first and exit
-// once after cleanup.
+// Exit after finally runs; process.exit() would skip fixture cleanup.
 const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-mcp-res-"));
 let exitCode = 1;
 try {

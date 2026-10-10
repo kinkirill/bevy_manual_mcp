@@ -1,19 +1,6 @@
 #!/usr/bin/env node
-/**
- * Capture a ranking snapshot of the real Bevy index.
- *
- * Guard exact owner lookup, natural-question relevance and field exclusion
- * against the full published corpus. Update the snapshot only after reviewing
- * intentional ranking changes and passing the semantic corpus harness.
- *
- * Usage:
- *   node test/ranking-snapshot.mjs capture  # writes test/fixtures/ranking-snapshot.json
- *   node test/ranking-snapshot.mjs verify  # exits 1 on any difference
- *
- * Not part of `npm test`: it needs the full rustdoc-derived index in data/,
- * which CI does not have. The durable CI-level guard for fields is the
- * synthetic-fixture test in run-tests.mjs; this is the full-corpus check.
- */
+// Kept outside npm test because it requires downloaded indexes.
+// Review ranking changes and pass the semantic harness before updating snapshots.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -27,8 +14,6 @@ import { hybridSearch } from "../src/store.js";
 const SNAPSHOT_PATH = path.join(REPO_ROOT, "test", "fixtures", "ranking-snapshot.json");
 interface Snapshot { bevy_version: string; generated_for: string; queries: Record<string, string[]> }
 
-// A fixed query set spanning the ranking paths that matter: exact-symbol hits,
-// intent-verb + subject noun, prose-only, filters, and field-name lookups.
 const QUERIES = [
   { q: "spawn camera" },
   { q: "How to spawn a sphere" },

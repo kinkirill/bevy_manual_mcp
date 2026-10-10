@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** Verify packaged artifacts and Git preparation from unrelated directories. */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";

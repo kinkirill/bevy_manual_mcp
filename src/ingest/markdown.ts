@@ -1,16 +1,4 @@
-/**
- * Markdown ingester for a bevy-website checkout.
- *
- * The website is the richest prose source available offline:
- *   content/learn/book/**                  conceptual guide ("The Bevy Book")
- *   content/learn/migration-guides/**      consolidated X-to-Y migration guides
- *   content/learn/quick-start/**           task-oriented tutorials
- *   release-content/<ver>/migration-guides/**   per-PR breaking-change notes
- *   release-content/<ver>/release-notes/**  curated release notes
- *
- * Long chapters are split on headings so a search hit points at the right
- * section instead of the first 1500 characters of the file.
- */
+/** Ingest website guides and release notes as citable heading-scoped records. */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -113,8 +101,7 @@ function classify(rel: string): FileInfo {
   if (rel.startsWith("content/news/")) {
     return { kind: "news", title: null };
   }
-  // Non-technical sections: present in the checkout but never useful for
-  // writing Bevy code. Tagged so the indexer can drop them by weight 0.
+  // Mark nontechnical pages for weight-zero exclusion.
   if (rel.startsWith("content/foundation")) {
     return { kind: "foundation", title: null };
   }
@@ -127,10 +114,7 @@ function classify(rel: string): FileInfo {
   return { kind: "doc", title: null };
 }
 
-/**
- * Split a document into heading-scoped chunks. Keeps a breadcrumb so a result
- * can be cited precisely, e.g. "The Game Loop > Scheduling > System Ordering".
- */
+/** Split headings into bounded chunks with citation breadcrumbs. */
 function chunkByHeadings(body: string, { maxChars = 4000 }: { maxChars?: number } = {}): MarkdownChunk[] {
   const lines = body.split(/\r?\n/);
   const chunks: MarkdownChunk[] = [];
@@ -186,10 +170,7 @@ function isInsideFence(lines: string[], idx: number) {
   return fences % 2 === 1;
 }
 
-/**
- * Ingest a bevy-website checkout into records.
- * `bevyVersion` scopes migration/release records to the pinned version.
- */
+/** Ingest website records tagged with the pinned Bevy version. */
 export function ingestWebsite(websiteDir: string | null, bevyVersion: string | null): WebsiteRecord[] {
   if (!websiteDir || !fs.existsSync(websiteDir)) return [];
 
@@ -211,8 +192,7 @@ export function ingestWebsite(websiteDir: string | null, bevyVersion: string | n
 
     const title =
       info.title || meta.long_title || meta.title || path.basename(file, ".md");
-    // Zola hides unreleased/draft pages; keep them but flag them so the agent
-    // does not treat a TODO placeholder as authoritative guidance.
+    // Flag draft pages so placeholders can be filtered out.
     const draft = meta.status === "hidden" || meta.public_draft != null;
 
     const chunks = chunkByHeadings(body);

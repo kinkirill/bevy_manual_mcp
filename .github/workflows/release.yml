@@ -1,20 +1,7 @@
 name: release
 
-# Publishing flow for a new Bevy minor (e.g. 0.21.0):
-#   1. bump "version" in package.json and server.json to the Bevy minor
-#   2. git tag v0.21.0 && git push origin v0.21.0
-#   3. this job mirrors rustdoc, builds the index, and attaches the prebuilt
-#      bundle to the GitHub Release.
-#
-# Distribution is GitHub-first: users install with
-#   npm install -g github:kinkirill/bevy_manual_mcp
-# so the repository and its Release assets are the whole channel. There is no
-# npm account in the critical path.
-#
-# npm publishing is available but opt-in (repository variable PUBLISH_NPM=true).
-# It uses TRUSTED PUBLISHING (OIDC) rather than a token, because npm is retiring
-# tokens that bypass 2FA. If you ever enable it, configure a Trusted Publisher
-# on npmjs.com for this workflow - see PUBLISHING.md.
+# Publish prebuilt indexes for Bevy version tags; npm publication is opt-in.
+# Configure npm trusted publishing as described in PUBLISHING.md.
 
 on:
   push:
@@ -40,8 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No dependency cache in release builds: a poisoned cache is a supply
-      # chain risk, and this job runs rarely enough that it does not matter.
+      # Avoid dependency caches in release builds to reduce cache poisoning risk.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -94,11 +80,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Optional: npm -------------------------------------------------
-      # Off by default. Turn it on by creating a repository variable
-      #   PUBLISH_NPM=true   (Settings -> Secrets and variables -> Actions)
-      # and configuring a Trusted Publisher for this workflow on npmjs.com.
-      # See PUBLISHING.md. Left disabled so tag pushes never fail on npm auth.
+      # PUBLISH_NPM and an npm trusted publisher are required for this optional step.
       - name: Publish to npm (trusted publishing, opt-in)
         if: vars.PUBLISH_NPM == 'true'
         run: npm publish --access public --provenance

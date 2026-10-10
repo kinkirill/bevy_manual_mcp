@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** Download and install a versioned index from the project's GitHub Releases. */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -16,7 +15,7 @@ type DownloadResult = { ok: true; bytes: number; sha256: string } | { ok: false;
 
 function mb(bytes: number): string { return `${(bytes / 1048576).toFixed(1)} MB`; }
 
-/** Older bundles may record their format only in the version's registry entry. */
+// Older bundles may record their format only in the version's registry entry.
 function installedFormat(dataDir: string, version: string): number | null {
   const readObject = (file: string): Record<string, unknown> | null => {
     try {

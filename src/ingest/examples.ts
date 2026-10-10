@@ -1,25 +1,10 @@
-/**
- * Rust source example ingester.
- *
- * Covers two sources:
- *   - learning-code-examples/examples/**  (from the website checkout)
- *   - <bevy-src>/examples/**             (the engine's own canonical examples)
- *
- * For engine examples we also capture the `Cargo.toml` feature flags declared
- * next to the example, which tells the agent what has to be enabled in
- * `bevy`'s features list for the example to compile.
- */
+/** Ingest engine and website Rust examples with adjacent Cargo feature metadata. */
 
 import fs from "node:fs";
 import path from "node:path";
 import type { CodeExampleRecord } from "../types.js";
 
-/**
- * Categories inferred from the example's path, used for filtering.
- * These are matched against a path with a leading slash so that a relative
- * example path like `2d/arcball.rs` still matches `2d` -- the rules below all
- * expect a leading separator.
- */
+/** Path categories match against a leading separator, including relative paths. */
 const CATEGORY_RULES: [RegExp, string][] = [
   [/[/\\]2d[/\\]/, "2d"],
   [/[/\\]3d[/\\]/, "3d"],
@@ -71,8 +56,6 @@ function readCargoFeatures(dir: string) {
   try {
     const text = fs.readFileSync(toml, "utf8");
     const out: string[] = [];
-    // Minimal scan: collect `path = "../2d/xxx"` entries so we can report which
-    // features the engine's Cargo.toml must enable.
     const entry = /^\s*\{\s*path\s*=\s*"([^"]+)"\s*(.*)\}\s*$/gm;
     let m;
     while ((m = entry.exec(text)) !== null) out.push(m[1] ?? "");
@@ -128,7 +111,7 @@ function ingestDir(root: string | null, label: CodeExampleRecord["source"], bevy
       crate: label,
       module: path.dirname(rel).replace(/\//g, "::"),
       signature: "",
-      // Code is the payload, but keep the description first so it ranks well.
+      // Put the description before code for search ranking.
       docs: doc ? `${doc}\n\n\`\`\`rust\n${code}\n\`\`\`` : "```rust\n" + code + "\n```",
       description: doc,
       code,
@@ -145,7 +128,7 @@ function ingestDir(root: string | null, label: CodeExampleRecord["source"], bevy
   return records;
 }
 
-/** Ingest both example sources. Engine examples are preferred for the pinned version. */
+/** Ingest engine and website examples tagged with the pinned version. */
 export function ingestExamples({ examplesDir, websiteDir, bevyVersion }: {
   examplesDir: string | null; websiteDir: string | null; bevyVersion: string | null;
 }): CodeExampleRecord[] {

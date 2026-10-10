@@ -1,11 +1,4 @@
-/**
- * Unit tests for the ingestion and search layers.
- * Run: node test/run-tests.mjs
- *
- * These use a synthetic rustdoc fixture generated from a real `cargo doc` run
- * rather than a hand-written HTML string, so they stay honest about rustdoc's
- * actual nesting quirks.
- */
+// Cargo-generated HTML covers Rustdoc nesting that handwritten fixtures can miss.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -137,7 +130,6 @@ await test("cmpVersion compares numerically, not lexically", () => {
   assert.equal(storeInternal.cmpVersion("0.19.1", "0.20.0"), -1);
   assert.equal(storeInternal.cmpVersion("0.20", "0.19.9"), 1);
   assert.equal(storeInternal.cmpVersion("0.19.0", "0.19"), 0);
-  // pre-release suffixes must not break parsing
   assert.equal(storeInternal.cmpVersion("0.20.0-rc.2", "0.20.0"), 0);
 });
 
@@ -206,7 +198,6 @@ await test("rustdoc outranks news for the same content", () => {
 
 console.log("\nversion diff (patch vs breaking)");
 await test("two patch versions report an unchanged signature", () => {
-  // What an agent should conclude: nothing to migrate.
   const a = { signature: "pub fn add_systems(&mut self, s: impl ScheduleLabel)" };
   const b = { signature: "pub fn add_systems(&mut self, s: impl ScheduleLabel)" };
   const distinct = new Set([a.signature, b.signature]);
@@ -215,8 +206,7 @@ await test("two patch versions report an unchanged signature", () => {
 });
 
 await test("whitespace-only signature differences are not 'changes'", () => {
-  // rustdoc wraps signatures differently between builds; an agent must not be
-  // told the API changed when only line wrapping did.
+  // Rustdoc line wrapping must not create a false API change.
   const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
   const a = "pub fn add_systems<M>(\n  &mut self,\n  schedule: impl ScheduleLabel,\n) -> &mut App";
   const b = "pub fn add_systems<M>( &mut self, schedule: impl ScheduleLabel, ) -> &mut App";
@@ -233,8 +223,6 @@ await test("stripGenericsAndBounds handles where clauses and generics", () => {
 });
 
 await test("parseImplHeader extracts trait and type (regression: Spherewhere...)", () => {
-  // The bug this prevents produced paths like
-  // `Spherewhere Sphere: Send + Sync + 'static,::register_required_components`
   const withWhere =
     "impl Component for Sphere where Sphere: Send + Sync + 'static,";
   assert.deepEqual(ownerInternal.parseImplHeader(withWhere), {
@@ -242,13 +230,11 @@ await test("parseImplHeader extracts trait and type (regression: Spherewhere...)
     typeName: "Sphere",
   });
 
-  // Inherent impl: no trait, just the type.
   assert.deepEqual(ownerInternal.parseImplHeader("impl Sphere"), {
     traitName: null,
     typeName: "Sphere",
   });
 
-  // Generic type with a generic trait and a where clause.
   assert.deepEqual(
     ownerInternal.parseImplHeader("impl<T> Trait<T> for Foo<T> where T: Bar"),
     { traitName: "Trait", typeName: "Foo" },
@@ -272,9 +258,7 @@ await test("traitFromImplText distinguishes inherent from trait impls", () => {
 });
 
 console.log("\nend-to-end on real rustdoc output");
-// The caller (test/index.mjs) can supply the directory, so the fixture survives
-// this process and can be handed to the spawned-server resource tests after it
-// exits. Otherwise it is a private temp dir removed in `finally`.
+// Caller-owned fixtures survive this process for the spawned protocol tests.
 const fixtureDir = (() => {
   if (!process.env.RESOURCE_FIXTURE_OUT) {
     return fs.mkdtempSync(path.join(os.tmpdir(), "bevy-mcp-test-"));
@@ -301,9 +285,7 @@ try {
     assert.ok(n);
     const i = records.find((r) => r.name === "id");
     assert.ok(i);
-    // Assert attribution, not exact text: blockToText flattens a docblock's
-    // <pre> into prose, so a method that documents an example has that example
-    // inline in `docs` as well as in `examples`.
+    // blockToText includes example code in docs, so check the owning method's prefix.
     assert.match(n.docs, /^Creates a widget\./);
     assert.equal(i.docs, "Reads the id.");
   });
@@ -328,8 +310,7 @@ try {
 
   console.log("\nstruct fields");
   await test("fields are indexed with owner, type and their own docs", () => {
-    // rustdoc renders fields as `span.structfield`, not `section[id^="field."]`,
-    // so these were structurally unreachable before the dedicated walk.
+    // Rustdoc places fields in span.structfield headers.
     const id = records.find((r) => r.kind === "field" && r.name === "id");
     assert.ok(id, "expected a field record named `id`");
     assert.equal(id.owner, "Widget");
@@ -338,9 +319,7 @@ try {
   });
 
   await test("tuple struct members are not indexed as fields and retain their type declaration", () => {
-    // rustdoc names them `structfield.0`, `structfield.1`. Numeric leaf keys
-    // would pollute the symbol table, so they are skipped; the declaration
-    // itself remains on the type record.
+    // Numeric tuple keys would pollute symbol lookup; retain their type declaration instead.
     const tuplePage = path.join(docDir, "rdfixture", "struct.TupleWidget.html");
     const $ = cheerio.load(fs.readFileSync(tuplePage, "utf8"));
     assert.equal($("span.structfield[id^='structfield.']").length, 2, "fixture must exercise tuple field headers");
@@ -384,8 +363,7 @@ try {
   });
 
   await test("examples carry no rustdoc line-number gutter", () => {
-    // `<span data-nosnippet>165</span>` is chrome, not code. Left in, it
-    // produces sources like "61fn speed(" that cannot be read or copied.
+    // Rustdoc line-number gutters must not become part of copied code.
     const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
     assert.ok(s);
     for (const ex of s.examples ?? []) {
@@ -394,11 +372,7 @@ try {
   });
 
   await test("extraction does not mutate docs (the search-safety guarantee)", () => {
-    // `docs` feeds _flexPayload -> FlexSearch -> ranking, so it must be exactly
-    // what blockToText produced before this change -- example source included,
-    // because flattening the docblock into prose is pre-existing behaviour that
-    // this work deliberately does not touch. What must NOT happen is the string
-    // changing: that would silently move every ranking in the index.
+    // Example extraction must preserve the docs text used by search ranking.
     const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
     assert.ok(s);
     assert.ok(
@@ -417,7 +391,6 @@ try {
     assert.ok(newFn);
     assert.ok(newFn.examples?.length, "expected Widget::new to own its doctest");
     assert.match(newFn.examples[0]!.code, /Widget::new\(1\)/);
-    // and the type must not have inherited it
     const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
     assert.ok(s);
     assert.ok(
@@ -434,7 +407,6 @@ try {
     assert.ok(out.includes("Widget::new(7)"), "example source must survive formatting");
   });
 
-  // Now exercise the store end to end.
   const { loadOrBuild, hybridSearch, findMigrations } = await import("../src/store.js");
   const idx = await loadOrBuild(
     fixtureConfig(fixtureDir, { docDir }),
@@ -463,9 +435,6 @@ try {
   });
 
   await test("a method outranks a same-named field on the exact-symbol path", () => {
-    // `Widget` now has both a field `id` and a method `id`, so the bare leaf key
-    // `id` points at both. The method must lead, or "read the id" style lookups
-    // start answering with a field declaration.
     const hits = idx.lookupSymbol("id");
     assert.ok(hits.length >= 2, "expected both the method and the field to share the key");
     assert.equal(hits[0]!.record.kind, "method");
@@ -482,8 +451,7 @@ try {
   });
 
   await test("fields are weighted below real API", () => {
-    // Without a KIND_WEIGHT entry these would fall through to rustdoc's 1.0 and
-    // ~10-15k records named x/y/z/translation would crowd out real API.
+    // Common field names must not crowd out methods and types.
     assert.ok(
       storeInternal.recordWeight(fixtureRecord({ source: "rustdoc", kind: "field" })) < 0.6,
       "a field must not carry near-full weight",
@@ -496,8 +464,7 @@ try {
   });
 
   await test("dependency-typed pages contribute no fields", () => {
-    // The mirrored facade tree carries a page per re-exported dependency type;
-    // gating on the page's source link is what keeps glam fields out.
+    // Source links distinguish Bevy fields from facade re-exports of dependency types.
     assert.equal(rustdocInternal.depCrateOfPage(null, "https://docs.rs/glam/0.32.1/src/glam/f32/vec3.rs.html#34"), "glam");
     assert.equal(
       rustdocInternal.depCrateOfPage(null, "https://docs.rs/bevy_app/0.19.1/src/bevy_app/app.rs.html#1609"),
@@ -551,12 +518,8 @@ try {
     assert.equal(res[0]!.record.heading, "About scheduling");
   });
 
-  // Leave the fixture's data dir in place and point resource-conformance tests
-  // at it. They spawn the server, which needs a real persisted index; building
-  // it here means `npm test` covers the resource layer without a rustdoc mirror
-  // or a downloaded release bundle.
   console.log(`\nresource-layer fixture`);
-  // Build the persisted index once for the spawned protocol tests.
+  // Persist once so subprocess tests can load the fixture without network access.
   const { VersionRegistry } = await import("../src/registry.js");
   const fixtureRegistry = new VersionRegistry(fixtureConfig(fixtureDir, {
     docDir,
@@ -579,8 +542,6 @@ try {
     );
   });
 } finally {
-  // Keep the fixture when RESOURCE_FIXTURE_OUT asks for it; the spawned server
-  // in resources-test.mjs needs it after this process exits.
   if (!process.env.RESOURCE_FIXTURE_OUT) {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }

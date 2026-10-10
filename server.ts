@@ -1,18 +1,5 @@
 #!/usr/bin/env node
-/**
- * bevy-mcp - an MCP server that gives agents version-accurate Bevy knowledge.
- *
- * Transport is stdio, so every diagnostic goes to stderr. Anything written to
- * stdout would corrupt the JSON-RPC stream.
- *
- * Configuration (all optional, all via env):
- *   BEVY_PROJECT_ROOT   Cargo project to detect the Bevy version from
- *   BEVY_VERSION        explicit version override, e.g. 0.19.1
- *   BEVY_DOC_DIR        cargo target/doc directory (default: from project root)
- *   BEVY_WEBSITE_DIR    bevy-website checkout
- *   BEVY_SRC_DIR        bevy engine checkout (for examples/ and errors/)
- *   BEVY_MCP_OFFLINE=1  never touch the network
- */
+/** Stdio diagnostics must use stderr to preserve the JSON-RPC transport. */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -42,11 +29,9 @@ import {
 import type { ResolvedConfig, SearchHit, BevyRecord } from "./src/types.js";
 import { errorMessage } from "./src/types.js";
 
-/** Sort helper: oldest version first, ignoring pre-release suffixes. */
 const cmpVersionForOrder = compareVersions;
 
-// Keep the MCP handshake version in lockstep with package.json instead of
-// duplicating it, so a release cannot ship a mismatched self-report.
+// Read the handshake version from package.json to keep release metadata consistent.
 const pkg = z.object({ version: z.string() }).parse(JSON.parse(
   fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"),
 ));
@@ -66,8 +51,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     log("   Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
   }
 
-  // The single most damaging failure mode for this server is answering with one
-  // version's API while claiming another. Detect it loudly rather than silently.
+  // Flag documentation whose version differs from the host project.
   if (config.docDir && config.docVersion && config.bevyVersion) {
     const strip = (v: string) => v.split("-")[0];
     if (strip(config.docVersion) !== strip(config.bevyVersion)) {
@@ -84,7 +68,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
   }
 
   const force = options.force ?? process.env.BEVY_MCP_FORCE_REINDEX === "1";
-  // Load the active version through the registry, which streams ingest to disk.
   const registry = new VersionRegistry(config);
   const index = await registry.get(config.bevyVersion ?? "unversioned", {
     force,
@@ -96,8 +79,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
   }
   const checkVersions = createVersionChecker({ offline: config.env.offline });
 
-  // Extra versions, if the operator pointed us at their doc directories.
-  // Format: BEVY_EXTRA_VERSIONS="0.18=/path/0.18/doc,0.17=/path/0.17/doc"
+  // BEVY_EXTRA_VERSIONS contains comma-separated version=doc-directory pairs.
   for (const entry of (options.extraVersions ?? process.env.BEVY_EXTRA_VERSIONS ?? "").split(",")) {
     const separator = entry.indexOf("=");
     if (separator < 0) continue;
@@ -116,14 +98,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
 
   const VERSION_NOTE = `Index built for Bevy ${config.bevyVersion ?? "UNKNOWN VERSION"}`;
 
-  /**
-   * Resolve an explicitly requested version.
-   *
-   * `known: false` means we do not have
-   * that version, so the caller must say so rather than answering from the wrong
-   * version -- silently substituting the active version is exactly the failure
-   * this whole server exists to prevent.
-   */
+  /** An unavailable requested version must never fall back to the active index. */
   type VersionResolution =
     | { known: true; index: BevyIndex; note: string }
     | { known: false; version: string };
@@ -190,9 +165,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     category: args.category,
   });
 
-  // ---------------------------------------------------------------------------
-  // bevy_search - the general entry point
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_search",
     {
@@ -236,9 +208,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_api - exact symbol lookup, the workhorse for correct signatures
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_api",
     {
@@ -274,11 +243,8 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
         .lookupSymbol(symbol)
         .slice(0, 6);
 
-      // `Type::default` is a special case. Std-trait impl methods are not indexed
-      // (they are dropped as boilerplate during ingest), so a lookup of
-      // `Plane3d::default` can only return unrelated free `default()` functions.
-      // If the type documents its default (captured on the type record), show the
-      // type instead of the free function.
+      // Default trait methods are excluded during ingestion; use the type's
+      // documented default instead of matching unrelated free functions.
       let defaultVia = null;
       const defaultOwner = symbol.match(/^(.+?)::default$/)?.[1];
       if (defaultOwner && !hits.some((h) => h.record.owner === defaultOwner)) {
@@ -293,7 +259,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
       }
 
       if (!hits.length) {
-        // Fall back to full text so we still try to be useful.
         const fallback = hybridSearch(idx, symbol, {
           limit: 4,
           filters: { source: "rustdoc" },
@@ -388,9 +353,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_examples - real runnable code
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_examples",
     {
@@ -448,9 +410,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_migration - breaking changes between versions
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_migration",
     {
@@ -526,9 +485,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_api_diff - did this API change between versions?
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_api_diff",
     {
@@ -600,11 +556,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
         };
       }
 
-      // The caller names the versions. Auto-picking a pair would silently answer a
-      // different question than the one asked - comparing 0.19.1->0.20.0 when the
-      // user is actually moving 0.15->0.20 - which is the failure this project
-      // exists to prevent. Only auto-select when there is exactly one possible
-      // pair, i.e. two versions indexed.
+      // Infer comparison versions only when exactly one pair is available.
       if (!versions && all.length !== 2) {
         return {
           isError: true,
@@ -633,10 +585,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
         if (!resolved.known) return unavailableVersion(v, symbol);
         const hits = resolved.index.lookupSymbol(symbol);
 
-        // Prefer the defining module over a `prelude` re-export. The prelude page
-        // has a short path, so the old "shortest path wins" rule made most types
-        // look like they lived in `bevy::prelude`, which hid real module moves
-        // (e.g. `Sphere` going from `bevy_math` to `bevy_shape` in 0.20).
+        // Prefer defining modules so prelude reexports do not hide module moves.
         const pathOf = (h: SearchHit) => h.record.full_path || "";
         const preludeRank = (h: SearchHit) => (pathOf(h).includes("::prelude::") ? 1 : 0);
         const best = hits
@@ -662,12 +611,10 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
         };
       }
 
-      // rustdoc wraps signatures inconsistently between builds, so compare
-      // whitespace-normalised text or identical APIs look "changed".
+      // Normalize rustdoc line wrapping before comparing signatures.
       const normalize = (sig: string | null | undefined) => (sig || "").replace(/\s+/g, " ").trim();
       const distinct = new Set(found.map((p) => normalize(p.record.signature)));
 
-      // Present the comparison oldest -> newest so it reads as an upgrade path.
       const ordered = [...perVersion].sort(
         (a, b) => cmpVersionForOrder(a.version, b.version),
       );
@@ -705,14 +652,7 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // Resources: the completeness layer
-  //
-  // Every indexed item is readable by identity, whether or not it was ever
-  // full-text indexed. This is what lets the search index stay small enough to
-  // fit in memory while the corpus stays complete, and it is the primitive the
-  // MCP spec intends for large read-only datasets.
-  // ---------------------------------------------------------------------------
+  // Identity reads keep the corpus accessible while full-text search stays smaller.
   const resourceLayer = createResources({
     activeVersion: config.bevyVersion,
     versions: indexedVersions,
@@ -735,11 +675,8 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     async (uri) => resourceLayer.read(uri.href ?? uri.toString()),
   );
 
-  // Templates are registered through the SDK's `ResourceTemplate`, which owns the
-  // per-variable completion callbacks (resources/complete). `list` is
-  // intentionally undefined: with 265k+ items, enumerating every match is not
-  // useful, and the paginated kind/module/crate/owner reads are the discovery
-  // path instead.
+  // Completions use ResourceTemplate callbacks; discovery is paginated rather
+  // than enumerating every item in resources/list.
   for (const t of resourceLayer.templates()) {
     const complete: NonNullable<ConstructorParameters<typeof ResourceTemplate>[1]["complete"]> = {};
     for (const raw of t.uriTemplate.match(/\{(\w+)\}/g) || []) {
@@ -756,18 +693,12 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
         description: t.description,
         mimeType: t.mimeType,
       },
-      // The callback receives the URI with template variables already substituted
-      // plus the decoded variables, so one read path serves both concrete and
-      // templated reads.
       async (uri) => {
         const href = uri.href ?? uri.toString();
-        // A list template may be continued with a cursor; carry it through so a
-        // paged listing can actually be walked. The cursor is folded into the
-        // content URI below, because resources/read has no nextCursor field.
+        // resources/read has no nextCursor field, so continuation lives in the URI.
         const cursor = uri.searchParams?.get("cursor") || undefined;
         const page = await resourceLayer.read(href, { cursor });
         if (!page.nextCursor) return page;
-        // Expose the next cursor as a query parameter on the same URI.
         const next = new URL(href);
         next.searchParams.set("cursor", page.nextCursor);
         page.contents = page.contents.map((content) => ({ ...content, uri: next.href }));
@@ -776,9 +707,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // bevy_check_version - self-renewal: is my index stale?
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_check_version",
     {
@@ -882,9 +810,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_indexed_versions - what can this server answer for?
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_indexed_versions",
     {
@@ -953,9 +878,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     },
   );
 
-  // ---------------------------------------------------------------------------
-  // bevy_index_status - self-diagnosis
-  // ---------------------------------------------------------------------------
   server.registerTool(
     "bevy_index_status",
     {
@@ -987,6 +909,5 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     }),
   );
 
-  // ---------------------------------------------------------------------------
   return { server, index, registry, config, checkVersions, info: SERVER_INFO };
 }

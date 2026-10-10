@@ -1,12 +1,3 @@
-/**
- * Resource-layer tests against a real MCP client.
- *
- * This is the spec-conformance harness the tool tests are not: it checks the
- * primitive the SDK will not error on for you (resources/list, templates,
- * completion, cursors, error codes).
- *
- * Run: node test/resources-test.mjs
- */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -70,21 +61,16 @@ try {
   await check("index shows a URI example", idxText.includes("bevy://api/"));
 
   console.log("\nresources/read - a single item");
-  // Accepts any semver-shaped version, not just 0.x: the CI fixture index is
-  // built from a synthetic crate at 9.9.9.
+  // The Cargo fixture uses version 9.9.9.
   const v = /\*\*(\d+\.\d+\.\d+[^\s*]*)\*\*/.exec(idxText)?.[1];
   await check("extracted a version from the index", !!v, `version=${v}`);
 
-  // The item to read is whatever the index actually holds. Hardcoding a Bevy
-  // path made this fail against the CI fixture, and silently pass nothing when
-  // the index was empty.
+  // Discover a path from the fixture rather than requiring a published Bevy symbol.
   const probe = await client.readResource({
     uri: `bevy://kind/${encodeURIComponent(v || "0.0.0")}/struct`,
   });
   const probeText = resourceText(probe);
-  // The listing renders each item as a bullet plus a `bevy://api/...` URI on the
-  // next line; the path is percent-encoded inside that URI, so decode it rather
-  // than trying to match the display form.
+  // The resource URI carries the exact percent-encoded path.
   const apiUriMatch = /bevy:\/\/api\/[^/\s]+\/([^\s`)]+)/.exec(probeText);
   const encodedPath = apiUriMatch?.[1];
   const itemPath = encodedPath ? decodeURIComponent(encodedPath) : null;
@@ -104,9 +90,7 @@ try {
     }
 
     console.log("\nresources/read - fields");
-    // Field records are the point of the ingest work, and they are deliberately
-    // absent from the search index, so the resource layer is the only way to
-    // reach them. This is the assertion that would have caught them going missing.
+    // Fields are excluded from full-text search but must remain readable as resources.
     try {
       const fields = await client.readResource({
         uri: `bevy://kind/${encodeURIComponent(v)}/field`,
@@ -135,9 +119,7 @@ try {
     );
   }
   try {
-    // Use a syntactically valid URL with a foreign scheme. A bare string like
-    // "not-a-bevy-uri" is rejected by the SDK's own `new URL()` before the
-    // server handler runs, so it cannot exercise our scheme guard.
+    // A valid foreign URL reaches the server guard; the SDK rejects malformed URLs first.
     await client.readResource({ uri: "https://example.com/not-bevy" });
     await check("foreign URI is rejected", false, "expected an error");
   } catch (err) {
@@ -145,8 +127,7 @@ try {
   }
 
   console.log("\npagination");
-  // `fn` is the kind the fixture deliberately makes large (>50 items) so that
-  // the cursor path is actually exercised rather than skipped.
+  // The fixture has more than 50 functions to exercise cursor continuation.
   const listUri = `bevy://kind/${encodeURIComponent(v || "0.0.0")}/fn`;
   const p1 = await client.readResource({ uri: listUri });
   await check("kind listing returns a page", resourceText(p1).includes("item(s)"));
@@ -161,9 +142,6 @@ try {
       resourceText(p2).slice(0, 100),
     );
   } else {
-    // A single-page fixture means the cursor protocol was NOT exercised. Say so
-    // loudly rather than counting it as a pass -- a green run must not be able to
-    // hide an untested path.
     console.log(
       "  SKIP cursor continuation: fixture fits in one page, so this path is " +
         "unverified by this run (see test/regressions.mjs pagination tests)",

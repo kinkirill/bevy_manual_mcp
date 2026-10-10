@@ -1,19 +1,5 @@
 #!/usr/bin/env node
-/**
- * Build (or rebuild) the persisted search index for one version and exit.
- *
- * The MCP server normally builds the index lazily on first start, then blocks
- * on stdio. That is fine interactively but useless in CI, where we need a
- * command that builds and returns. This is that command.
- *
- * Usage:
- *   node scripts/build-index.mjs              # version from config/Cargo.lock
- *   node scripts/build-index.mjs 0.20.0
- *   node scripts/build-index.mjs 0.20.0 --force
- *
- * Requires a rustdoc source: either BEVY_DOC_DIR, or target/doc under the
- * project root (see scripts/fetch-docs.mjs to mirror from docs.rs).
- */
+// Exits after persisting the index; a matching Rustdoc source supplies its API records.
 
 import { resolveConfig, log } from "../src/config.js";
 import { VersionRegistry } from "../src/registry.js";

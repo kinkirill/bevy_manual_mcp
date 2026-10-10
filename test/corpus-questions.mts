@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Optional real-corpus MCP checks. Each version runs in a separate process. */
+// Run each corpus in a separate process to release its index before the next.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -281,7 +281,7 @@ async function runVersion(version: string, dataDir: string): Promise<VersionRepo
     await verifyApi("Mesh3d", canonical(index.records.filter((record) => record.source === "rustdoc" && record.kind === "struct" && record.name === "Mesh3d")));
     for (const question of QUESTIONS) {
       try {
-        // Deliberately omit limit: this checks the actual default user experience.
+        // Omit limit to test the default search results.
         const result = await client.callTool({ name: "bevy_search", arguments: { query: question.query, version } });
         assert.notEqual(result.isError, true, toolText(result));
         const search = searchSchema.parse(result.structuredContent);

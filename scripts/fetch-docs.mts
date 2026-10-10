@@ -1,35 +1,18 @@
 #!/usr/bin/env node
-/**
- * Mirror rustdoc HTML from docs.rs for a pinned Bevy version.
- *
- * Why this exists: `cargo doc -p bevy` takes many minutes and needs the user's
- * whole dependency tree compiled, but `bevy`'s facade crate re-exports the
- * entire public API, so the docs.rs page set for `bevy` alone contains
- * everything an agent needs -- 0.19.0 has ~7,956 item pages.
- *
- * Usage:
- *   node scripts/fetch-docs.mjs 0.19.0
- *   node scripts/fetch-docs.mjs 0.19.0 --out ~/.cache/bevy-mcp/0.19.0
- *   node scripts/fetch-docs.mjs            # reads version from the project
- *
- * It is resumable: existing non-empty files are skipped, so re-running after an
- * interruption continues where it stopped.
- */
 
 import fs from "node:fs";
 import path from "node:path";
 import { resolveConfig } from "../src/config.js";
 import { errorMessage, isObject, stableVersion, stringOption, versionArgs } from "./cli-utils.mjs";
 
+// The facade crate re-exports the public API, so only its pages need mirroring.
 const CRATE = "bevy";
 
-// docs.rs is a shared public service and answers HTTP 429 under load. Be a
-// good citizen: few workers, a global minimum interval between requests, and
-// honour Retry-After. Adjust with FETCH_CONCURRENCY / FETCH_MIN_INTERVAL_MS.
+// Limit request concurrency and spacing to avoid docs.rs rate limits.
 const CONCURRENCY = Number(process.env.FETCH_CONCURRENCY || 4);
 const MIN_INTERVAL_MS = Number(process.env.FETCH_MIN_INTERVAL_MS || 120);
 
-/** Serialises every request so the whole process respects MIN_INTERVAL_MS. */
+// Share request spacing across all download workers.
 let chain = Promise.resolve();
 function throttle() {
   const next = chain.then(
@@ -41,11 +24,7 @@ function throttle() {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/**
- * GET with 429/5xx backoff. Returns the body text, or null for 404/permanent
- * failure. `tries` counts attempts, with full jitter so workers don't retry in
- * lockstep and re-trigger the limit.
- */
+// Retry transient failures with jitter so workers do not retry together.
 async function fetchText(url: string, tries = 5): Promise<string | null> {
   for (let attempt = 1; attempt <= tries; attempt++) {
     await throttle();
@@ -121,10 +100,7 @@ async function main() {
   }
   fs.mkdirSync(crateDir, { recursive: true });
 
-  // Record which version these docs are for, so the server can detect a
-  // mismatch against the host project's Cargo.lock instead of silently
-  // mislabelling results. Written now (version only) and updated with the page
-  // count once discovery finishes.
+  // Record provenance before downloading so resumed mirrors cannot be relabelled.
   const writeManifest = (totalPages: number | null) => {
     try {
       fs.writeFileSync(
@@ -143,7 +119,7 @@ async function main() {
         ) + "\n",
       );
     } catch {
-      /* non-fatal */
+      // Mirroring can continue without a manifest write.
     }
   };
   writeManifest(null);
@@ -153,10 +129,7 @@ async function main() {
   console.log(`  source: ${base}`);
   console.log(`  target: ${crateDir}\n`);
 
-  // ---- 1. Discover the page list from all.html ---------------------------
-  // The page list is cached on disk so a re-run after a rate-limit penalty box
-  // does not have to re-fetch the one request we are most likely to be blocked
-  // on.
+  // Cache discovery so resumed runs avoid another rate-limited all.html request.
   const listCache = path.join(outRoot, `pages-${version}.json`);
   let pages: string[] | null = null;
 
@@ -175,7 +148,7 @@ async function main() {
 
   if (!pages?.length) {
     console.log("Fetching all.html (page index)... be patient if docs.rs is slow.");
-    // all.html is the linchpin of the whole run: give it far more attempts.
+    // Discovery must succeed before any item pages can be fetched.
     const allHtml = await fetchText(`${base}/all.html`, 10);
     if (!allHtml) {
       console.error(
@@ -199,13 +172,12 @@ async function main() {
     try {
       fs.writeFileSync(listCache, JSON.stringify(pages));
     } catch {
-      /* non-fatal */
+      // Discovery can be repeated if caching fails.
     }
     console.log(`Found ${pages.length} item pages (list cached).`);
   }
   if (!pages) throw new Error("No rustdoc pages were discovered.");
 
-  // Queue items we do not already have, so a resumed run does no work.
   const missing = pages.filter((rel) => {
     try {
       return fs.statSync(path.join(crateDir, rel)).size === 0;
@@ -216,7 +188,6 @@ async function main() {
   console.log(`\n${missing.length} of ${pages.length} pages still missing.\n`);
   writeManifest(pages.length);
 
-  // ---- 2. Download concurrently, skipping what we already have -----------
   let done = 0;
   let skipped = 0;
   const failures: string[] = [];
@@ -224,7 +195,7 @@ async function main() {
   const queue = [...missing];
   const started = Date.now();
 
-  // Always mirror the crate root too (module index + re-export list).
+  // all.html omits the crate root and its re-export list.
   const rootTargets = ["index.html"];
 
   const total = missing.length + rootTargets.length + skippedPre;

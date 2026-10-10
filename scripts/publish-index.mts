@@ -1,23 +1,4 @@
 #!/usr/bin/env node
-/**
- * Package a built index into a distributable tarball for a GitHub Release.
- *
- * This is the maintainer side of `fetch-index.mjs`. It does not build anything:
- * the version must already be present in the data directory (built with
- * `node index.js` after mirroring docs). It produces:
- *
- *   dist/bevy-index-<version>.tar.gz
- *     ├── versions/<version>/{meta.json,records.ndjson,text-index.json}
- *     └── registry-entry.json
- *
- * Attach that file to the `v<version>` GitHub Release so users can install the
- * index with `bevy-mcp fetch-index`.
- *
- * Usage:
- *   node scripts/publish-index.mjs 0.20.0
- *   node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist
- *   node scripts/publish-index.mjs 0.20.0 --revision 1
- */
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -67,8 +48,7 @@ async function main(): Promise<void> {
   if (entry.cache_version !== CACHE_VERSION) throw new Error("Registry cache format is stale; rebuild this version first.");
   await validateIndex(versionDir, version);
 
-  // Stage only what belongs in the bundle so the tarball cannot pick up stray
-  // files from the data directory.
+  // Stage only index files so unrelated data cannot enter the release archive.
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-index-bundle-"));
   try {
     fs.mkdirSync(path.join(staging, "versions", sanitized), { recursive: true });

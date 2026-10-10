@@ -1,4 +1,4 @@
-/** Select an index asset revision without changing the indexed Bevy version. */
+// Asset revisions select rebuilds without changing the indexed Bevy version.
 import { z } from "zod";
 import { errorMessage, stableVersion } from "./cli-utils.mjs";
 

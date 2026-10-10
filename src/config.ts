@@ -116,7 +116,7 @@ export function detectBevyVersion(
 function firstExistingDir(...paths: (string | null | undefined)[]): string | null {
   for (const candidate of paths) {
     if (!candidate) continue;
-    try { if (fs.statSync(candidate).isDirectory()) return path.resolve(candidate); } catch { /* Try next. */ }
+    try { if (fs.statSync(candidate).isDirectory()) return path.resolve(candidate); } catch { }
   }
   return null;
 }
@@ -127,11 +127,11 @@ export function findDocRoot(projectRoot: string, override?: string, env: NodeJS.
     for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
       if (entry.isDirectory() && entry.name !== "doc") candidates.push(path.join(target, entry.name, "doc"));
     }
-  } catch { /* No target directory. */ }
+  } catch { }
   for (const candidate of candidates) {
     if (!candidate) continue;
     try { if (fs.statSync(candidate).isDirectory() && fs.readdirSync(candidate).length) return path.resolve(candidate); }
-    catch { /* A missing or unreadable directory is not usable. */ }
+    catch { }
   }
   return null;
 }
@@ -148,7 +148,7 @@ export function detectDocVersion(docDir: string | null): { version: string; sour
         const entry: unknown = parsed.find((item: unknown) => isObject(item) && item.name === "bevy");
         if (isObject(entry) && typeof entry.version === "string") return { version: entry.version, source: file };
       } else if (isObject(parsed) && typeof parsed.bevy === "string") return { version: parsed.bevy, source: file };
-    } catch { /* Missing or unexpected format: try the next source. */ }
+    } catch { /* Try the next version marker. */ }
   }
   return null;
 }

@@ -1,21 +1,5 @@
 #!/usr/bin/env node
-/**
- * bevy-mcp CLI.
- *
- * With no subcommand this starts the stdio MCP server, exactly like
- * `node index.js`. The subcommands cover one-time setup so that people who
- * install from npm never have to juggle environment variables:
- *
- *   bevy-mcp                 start the MCP server (stdio)
- *   bevy-mcp fetch-index     download the prebuilt index for your Bevy version
- *   bevy-mcp fetch-docs      mirror rustdoc from docs.rs (advanced / new versions)
- *   bevy-mcp fetch-website   refresh the vendored bevy-website prose
- *   bevy-mcp status          show resolved paths and index state
- *   bevy-mcp help            this text
- *
- * Diagnostics always go to stderr: stdout is reserved for the MCP JSON-RPC
- * stream once the server is running.
- */
+// Once the server starts, stdout is reserved for MCP JSON-RPC.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -42,7 +26,6 @@ Run this from (or point BEVY_PROJECT_ROOT at) your Bevy project; the version is
 read from Cargo.lock. Set BEVY_VERSION to override.
 `;
 
-/** Run one of the setup scripts in a child process, inheriting stdio. */
 function runScript(script: string, args: string[]): Promise<number> {
   return new Promise<number>((resolve) => {
     const child = spawn(process.execPath, [script, ...args], {

@@ -1,11 +1,4 @@
-/**
- * Index store: build, cache, and query the Bevy record set.
- *
- * Two complementary lookup paths, because neither alone is good enough:
- *   1. An exact symbol table. API questions look like `Query::iter`, and a
- *      purely fuzzy index ranks prose above the function you asked for.
- *   2. A FlexSearch full-text index for concepts, tasks and prose.
- */
+/** Builds cached Bevy indexes with exact-symbol and full-text search. */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -25,30 +18,15 @@ export type TextIndex = Document<TextPayload, false, false>;
 export type TextIndexDump = Record<string, string>;
 export const TEXT_FIELDS = ["name", "signature", "docs"] as const;
 export const TEXT_RESOLUTION = 9;
-// Share FlexSearch's default encoder with persisted-posting validation. Strict
-// tokenization indexes each encoded term without generating prefix variants.
+// Use the same encoder to build and validate persisted postings.
 const textEncoder = new FlexSearch.Encoder();
 export function encodeTextTokens(text: string): string[] { return textEncoder.encode(text); }
 type WeightedRecord = Partial<BevyRecord> & { kind: string };
 
-/**
- * Bump whenever the *shape or content* of a persisted record changes, so a
- * previously built index is rebuilt instead of being served as current.
- *
- * History: 4 = rustdoc records streamed to NDJSON, per-version registry. 5 =
- * struct fields added to the corpus (they are not reachable by an older index,
- * and their weights changed, so serving a v4 index would answer field queries
- * as "no such item" while the server claimed to be current).
- */
+/** Bump when persisted record shape or content requires rebuilding existing caches. */
 export const CACHE_VERSION = 5;
 
-/**
- * Serialize the FlexSearch index to a plain object.
- *
- * FlexSearch's export() takes a callback (it does not return a value), and
- * import() is per-key. Persisting this turns a 7.3s rebuild into a ~0.7s load,
- * which is what makes holding several Bevy versions at once practical.
- */
+/** Serialize the callback-based FlexSearch export into a keyed dump. */
 export function exportTextIndex(flexIndex: TextIndex): TextIndexDump {
   const dump: TextIndexDump = {};
   flexIndex.export((key, data) => {
@@ -61,10 +39,7 @@ export function importTextIndex(dump: unknown): TextIndex {
   if (!isObject(dump) || !Object.values(dump).every((value) => typeof value === "string")) {
     throw new Error("Invalid persisted text index");
   }
-  // NOTE: this field list AND tokenizer must stay in sync with
-  // BevyIndex.buildTextIndex, because an export encodes field names in its keys
-  // and the tokenizer is baked into the exported maps. `full_path` stays out of
-  // the index: it is high-cardinality with no ranking value.
+  // Persisted fields, tokenizer and resolution must match buildTextIndex.
   const flexIndex = new FlexSearch.Document<TextPayload>({
     document: {
       id: "id",
@@ -86,28 +61,14 @@ function baseName(name: string | null | undefined) {
 }
 
 /**
- * The Bevy sub-crate a record was actually defined in.
- *
- * The mirrored rustdoc is the `bevy` facade only, so `record.crate` is always
- * "bevy" even though most items are defined in `bevy_app`, `bevy_ecs`, etc. The
- * only place that information survives the facade re-export is the rustdoc
- * source link, which points at the defining crate on docs.rs. Falls back to
- * `record.crate` when there is no source link (variants, some re-exported
- * items), so `bevy://crate/<v>/bevy` still returns the facade remainder.
+ * Resolve the defining subcrate from docs.rs links; record.crate identifies the facade.
+ * Fall back to record.crate when a source link is unavailable.
  */
 export function subCrateOf(r: Pick<BevyRecord, "source_ref" | "crate">): string | null {
   const m = String(r.source_ref || "").match(/docs\.rs\/([a-z0-9_]+)\//);
   return m?.[1] ?? r.crate ?? null;
 }
 
-/**
- * Filler words that carry no search intent.
- *
- * FlexSearch matches multi-term queries with AND semantics by default, so a
- * natural-language query like "how do I spawn a 2d camera" requires *every*
- * token to appear in one document and therefore matches nothing. Dropping the
- * filler and retrying in suggestion (OR) mode is what makes those queries work.
- */
 const QUERY_STOPWORDS = new Set([
   "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at", "by",
   "with", "from", "into", "as", "is", "are", "was", "were", "be", "been",
@@ -119,7 +80,7 @@ const QUERY_STOPWORDS = new Set([
   "yes", "please", "help", "between",
 ]);
 
-/** Keep only the tokens of a query that carry intent. */
+/** Drop filler words and comparison framing while retaining query subjects. */
 function meaningfulTerms(query: string) {
   const comparison = /\b(?:between|versus|vs|compare|comparison)\b/i.test(query);
   return String(query || "")
@@ -150,15 +111,13 @@ function queryFocus(query: string): QueryFocus {
     (action !== null && action !== "create" && terms.some((term) => term === "message" || term === "event")) ||
     (comparison && terms.includes("message") && terms.includes("event"));
   if (asksCommunication && ecsContext) subjects = ["message", "event"];
-  // Buffered events were renamed to messages. Actual candidates, rather than
-  // an assumed version boundary, decide which family this corpus can offer.
+  // Include event and message candidates without assuming a version boundary.
   if (communication && action && subjects.includes("event")) subjects.push("message");
   if (communication && subjects.some((term) => term === "event" || term === "message")) {
     subjects = subjects.filter((term) => term !== "system");
   }
   if (!subjects.length) subjects = terms.filter((term) => !INTENT_VERBS.has(term));
-  // Keep supporting concepts even when a preposition separates them from the
-  // main subject: a sphere "with a material" needs both API families.
+  // Preserve secondary concepts introduced by prepositions, such as a sphere's material.
   const context = terms.filter((term) => !INTENT_VERBS.has(term) && !subjects.includes(term) &&
     !(communication && (term === "system" || term === "ecs")));
   return { terms, subjects: [...new Set(subjects)], context: [...new Set(context)], action, communication };
@@ -189,7 +148,7 @@ function normKey(s: string) {
     .toLowerCase();
 }
 
-/** Cheap fingerprint of every input, so we skip re-parsing when nothing changed. */
+/** Fingerprint source paths, file counts and newest modification times. */
 function fingerprint({ bevyVersion, docDir, websiteDir, examplesDir }: Pick<IndexConfig, "bevyVersion" | "docDir" | "websiteDir" | "examplesDir">) {
   const parts = [String(CACHE_VERSION), String(bevyVersion)];
   for (const dir of [docDir, websiteDir, examplesDir]) {
@@ -220,7 +179,6 @@ function fingerprint({ bevyVersion, docDir, websiteDir, examplesDir }: Pick<Inde
             const m = fs.statSync(full).mtimeMs;
             if (m > newest) newest = m;
           } catch {
-            /* ignore */
           }
         }
       }
@@ -230,14 +188,7 @@ function fingerprint({ bevyVersion, docDir, websiteDir, examplesDir }: Pick<Inde
   return crypto.createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 16);
 }
 
-/**
- * Relative importance of each record. Bevy API docs must outrank a blog post
- * about the engine, otherwise a concept query returns news items instead of
- * documentation. Records scoring 0 are dropped from the index entirely.
- *
- * `source` weights cover code (rustdoc, examples); `kind` weights cover the
- * website, where every record shares the same source.
- */
+/** Source and kind weights prioritize API over news; zero weights exclude records. */
 const SOURCE_WEIGHT: Record<string, number> = {
   rustdoc: 1.0,
   "bevy-examples": 0.9,
@@ -246,11 +197,7 @@ const SOURCE_WEIGHT: Record<string, number> = {
 };
 
 const KIND_WEIGHT: Record<string, number> = {
-  // Struct fields are indexed but deliberately low weight. Without an entry
-  // here they would fall through to SOURCE_WEIGHT.rustdoc = 1.0, and ~10-15k
-  // full-weight records named `x`, `y`, `z`, `translation` or `scale` would
-  // crowd real API out of concept queries. They stay reachable by exact lookup
-  // and `bevy://owner/...`, which is where "what fields does X have" resolves.
+  // Low weights keep common fields from dominating concepts; exact lookup still finds them.
   field: 0.45,
   book: 0.7,
   tutorial: 0.7,
@@ -272,8 +219,7 @@ function recordWeight(r: WeightedRecord) {
   return SOURCE_WEIGHT[r.source ?? ""] ?? 0.4;
 }
 
-// Re-exported under a public name so the registry can share the same
-// "is this record worth indexing?" decision.
+// Share indexing weights and eligibility rules with the registry.
 export {
   recordWeight as recordWeightOf,
   KIND_WEIGHT,
@@ -282,47 +228,27 @@ export {
   DEP_CRATES,
 };
 
-/**
- * Website prose is version-independent, so it deliberately shares ids across
- * versions and is stored once. Rustdoc is version-specific and gets ids that
- * include the version.
- */
+/** Scope API and example identities by Bevy version; website identities are shared. */
 function isVersionSpecificSource(source: BevyRecord["source"]) {
   return source === "rustdoc" || source === "bevy-examples";
 }
 
 /**
- * Should this record be in the full-text index?
- *
- * The full-text index exists to answer intent-shaped questions ("how do I
- * create a sphere with colour"). That means it needs prose and high-value API,
- * and it does not need the bulk of derive/trait boilerplate. Records excluded
- * here are NOT dropped from the corpus: they remain readable by resource URI and
- * resolvable through the exact symbol table, so nothing becomes unreachable.
- *
- * Criteria, in order:
- *   - drop dependency-defined methods (glam, bevy_reflect, bevy_math codegen)
- *   - keep all prose (book, tutorials, migration notes, examples)
- *   - keep API whose docs actually explain something
- *   - keep all types, traits, functions and constants (small, high value)
+ * Select high-value records when onlySearchable is enabled.
+ * Exact symbols and resources still expose excluded records.
  */
 function isSearchable(r: WeightedRecord) {
-  if (r.source !== "rustdoc") return true; // all website prose + examples
+  if (r.source !== "rustdoc") return true;
 
-  // Methods on bevy types that are actually defined by a dependency are noise
-  // for intent search: `Vec3::x` via a Bevy wrapper, or `#[derive(Reflect)]`
-  // codegen. Decided from the item's own source link, not by name matching.
+  // Source links identify dependency-defined methods despite facade namespaces.
   if (r.kind === "method" || r.kind === "associated_type") {
     const ref = r.source_ref || "";
     const m = ref.match(/docs\.rs\/([a-z0-9_]+)\//);
     const crate = m ? m[1] : ref.includes("rust-lang.org") ? "std" : null;
-    // `std` counts too: `Vec::iter` reached through a Bevy wrapper is not Bevy
-    // API, and the caller already knows that method from the std docs.
     if (crate && (DEP_CRATES.has(crate) || crate === "std")) return false;
   }
 
-  // A method with a real docblock is worth full-text; one with none is only
-  // reachable by name anyway, and there are ~30k of them.
+  // Keep methods with substantive docs; exact lookup still covers the rest.
   if (r.kind === "method") return !!(r.docs && r.docs.trim().length > 80);
 
   return true;
@@ -331,17 +257,8 @@ function isSearchable(r: WeightedRecord) {
 /** Dependency crates whose methods surface on Bevy types but are not Bevy API. */
 const DEP_CRATES = new Set(["glam", "bevy_reflect", "bevy_math"]);
 
-/**
- * Compare dotted versions numerically. Returns -1 / 0 / 1.
- *
- * Only the leading digits of each segment count, so pre-release builds compare
- * equal to their release: `0.20.0-rc.2` === `0.20.0`. Comparing the strings
- * directly would rank `0.19` above `0.9`.
- */
+/** Compare numeric version segments, returning -1/0/1 and ignoring prerelease/build suffixes. */
 export function cmpVersion(a: string, b: string) {
-  // Drop any pre-release / build suffix first: `0.20.0-rc.2` -> `0.20.0`.
-  // Otherwise the `-rc` part splits into extra numeric-looking segments and
-  // `0.20.0-rc.2` would compare as *greater than* `0.20.0`.
   const parse = (v: string) =>
     String(v)
       .split("-")[0]!
@@ -357,27 +274,20 @@ export function cmpVersion(a: string, b: string) {
   return 0;
 }
 
-/**
- * How relevant a record is to the *pinned* Bevy version.
- *
- * This is the whole point of pinning: a 0.4 -> 0.5 guide is noise when the
- * project is on 0.19, while a guide whose target version equals the project's
- * version is exactly what the agent needs. Version strings can be suffixed
- * (-rc.1), which cmpVersion ignores.
- */
+/** Weight migration and release records against the pinned version, favoring its target guides. */
 function versionWeight(r: Partial<BevyRecord>, bevyVersion: string | null | undefined) {
   if (!bevyVersion) return 1;
   const cur = bevyVersion;
 
   if (r.to_version) {
     const c = cmpVersion(r.to_version, cur);
-    if (c === 0) return 2.5; // "upgrade to the version you are on"
-    if (c < 0) return 0.3; // migration INTO an older version: historical noise
-    return 0.8; // migration to a future version: useful, but not your API
+    if (c === 0) return 2.5;
+    if (c < 0) return 0.3;
+    return 0.8;
   }
   if (r.from_version) {
     const c = cmpVersion(r.from_version, cur);
-    if (c === 0) return 2.0; // "migrate away from the version you are on"
+    if (c === 0) return 2.0;
     return 0.4;
   }
   if (r.version) {
@@ -397,30 +307,21 @@ export class BevyIndex {
   meta: IndexMetadata | null;
   stats: IndexStats;
   searchableIds = new Set<string>();
-  // Published bundles can repeat an identity with less complete documentation.
-  // Its imported text payload must be refreshed from the merged record.
+  // Refresh imported postings for identities consolidated from duplicate bundle records.
   readonly repairedIds = new Set<string>();
   constructor() {
     this.records = [];
     this.byId = new Map();
-    this.symbols = new Map(); // normalised key -> [ids]
+    this.symbols = new Map();
     this.text = null;
     this.meta = null;
     this.stats = { total: 0, by_source: {}, by_kind: {} };
   }
 
-  /**
-   * Add records, assigning a stable content-derived id when they lack one.
-   *
-   * Ids are version-qualified for version-specific sources (rustdoc) so the
-   * same symbol in two Bevy versions does not collide. Without this, loading a
-   * second version would overwrite the first version's record and make a
-   * cross-version diff impossible.
-   */
+  /** Merge matching identities and assign stable, version-scoped IDs when absent. */
   addRecords(records: Iterable<BevyRecord>) {
     for (const r of records) {
-      // Older v5 bundles contain tuple members under numeric field names.
-      // Keep those bundles readable while matching current rustdoc ingestion.
+      // Ignore legacy tuple-field rows while retaining v5 bundle compatibility.
       if (r.source === "rustdoc" && r.kind === "field" && /^\d+$/.test(r.name)) continue;
       if (!r.id) {
         const versionScoped = isVersionSpecificSource(r.source) ? r.bevy_version || "?" : "";
@@ -460,17 +361,12 @@ export class BevyIndex {
   }
 
   /**
-   * Build the exact-symbol table.
-   *
-   * Keys get progressively more qualified (`iter`, `Query::iter`,
-   * `bevy::ecs::query::Query::iter`) so a bare name resolves but a qualified
-   * query is precise. For leaf-only keys we keep the *best* candidates rather
-   * than the first 40: `Sprite` must return `struct Sprite`, not
-   * `Sprite::from_13` or some impl-noise method whose name merely contains it.
+   * Build concrete path, owner-qualified and bare-name aliases.
+   * Bare names prefer API definitions over members and macros.
    */
   buildSymbolTable() {
     this.symbols = new Map();
-    // Track whether a leaf key is ambiguous, so we can rank its candidates.
+    // Rank ambiguous bare names independently of exact paths.
     const leafCandidates = new Map<string, Map<string, number>>();
 
     const add = (key: string, id: string, rank?: number) => {
@@ -488,7 +384,6 @@ export class BevyIndex {
       }
     };
 
-    // Preference order for a bare-name match: the type itself beats a method.
     const rankFor = (r: BevyRecord) => {
       switch (r.kind) {
         case "struct":
@@ -512,8 +407,7 @@ export class BevyIndex {
       const owner = baseName(r.owner);
       const rank = rankFor(r);
 
-      // Register concrete full paths before shorthand aliases. Crate-relative
-      // paths are explicit aliases; an arbitrary owner must never be stripped.
+      // Register only verified aliases so arbitrary owner qualifications cannot collapse.
       const addPath = (fullPath: string) => {
         add(fullPath, r.id, rank);
         const crate = normKey(r.crate || "");
@@ -529,7 +423,6 @@ export class BevyIndex {
       add(leaf, r.id, rank);
     }
 
-    // Reorder leaf keys so the most plausible definition comes first.
     for (const [k, cands] of leafCandidates) {
       const ids = this.symbols.get(k);
       if (!ids || ids.length <= 1) continue;
@@ -537,7 +430,7 @@ export class BevyIndex {
       let i = 0;
       for (const id of ids) if (!order.has(id)) order.set(id, i++);
       const sorted = [...cands.entries()].sort((a, b) => a[1] - b[1]);
-      // Keep any ids that were not ranked (shouldn't happen) at the end.
+      // Keep unranked IDs as a fallback.
       for (const [id] of [...order].reverse()) {
         if (!cands.has(id)) sorted.push([id, 99]);
       }
@@ -550,22 +443,13 @@ export class BevyIndex {
     return this.symbols.size;
   }
 
-  /**
-   * Ingest rustdoc into this index.
-   *
-   * Split out from buildTextIndex so the registry can add records *before* the
-   * full index is built. Used when a second version is added to a process that
-   * already holds the active index: the shared text index is reused and only
-   * the new version's items are appended, which is far cheaper than a rebuild.
-   */
+  /** Append rustdoc records and update an existing text index without rebuilding it. */
   async addRustdocAsync(docDir: string, version: string) {
     const records = ingestRustdoc(docDir, version).filter(
       (r) => recordWeight(r) > 0,
     );
     this.addRecords(records);
-    // Same memory discipline as buildTextIndex: FlexSearch 0.8 `add()` is
-    // synchronous, so add one payload at a time instead of materialising the
-    // whole payload array (a full second copy of the corpus) in flight.
+    // Add synchronously one payload at a time to avoid duplicating the corpus in memory.
     if (this.text) {
       for (const r of records) {
         if (!this._isIndexed(r)) continue;
@@ -575,13 +459,7 @@ export class BevyIndex {
     return records.length;
   }
 
-  /**
-   * Run one FlexSearch query and map hits to records.
-   *
-   * `relaxed` drops stopwords and enables `suggest`, which switches FlexSearch
-   * from AND to OR (progressive relaxation). The strict pass is tried first so
-   * precise multi-word queries keep their precision.
-   */
+  /** Map weighted FlexSearch hits to records; relaxed mode drops stopwords and enables suggestions. */
   _searchText(query: string, { limit, allowedIds, relaxed = false, base = 100 }: {
     limit: number; allowedIds: Set<string> | null; relaxed?: boolean; base?: number;
   }): SearchHit[] {
@@ -594,11 +472,7 @@ export class BevyIndex {
     } catch {
       return [];
     }
-    // FlexSearch returns one group per indexed field ([{ field, result }]). A hit
-    // in `name` means the query matched the symbol itself; a hit in `docs` means
-    // it merely appeared in prose -- often someone else's code example. Rank the
-    // former well above the latter. Without this, "spawn camera" surfaces a
-    // struct whose docblock happens to contain a `spawn_camera` snippet.
+    // Name matches outrank incidental mentions in documentation.
     const FIELD_WEIGHT: Record<string, number> = { name: 4, signature: 1.5, docs: 1 };
     const out: SearchHit[] = [];
     for (const group of raw || []) {
@@ -609,9 +483,7 @@ export class BevyIndex {
         if (allowedIds && !allowedIds.has(id)) continue;
         const rec = this.byId.get(id);
         if (rec) {
-          // Gentle positional decay (1, 0.998, 0.996, ...) so the field and name
-          // boosts in hybridSearch decide the order, not FlexSearch's position.
-          // A hard `base - i` went negative once the pool exceeded `base`.
+          // Positive positional decay lets field and name weights dominate ordering.
           out.push({ record: rec, score: (base * fw) / (1 + i * 0.002) });
           i++;
         }
@@ -625,17 +497,7 @@ export class BevyIndex {
     return this.searchText(query, { limit, allowedIds });
   }
 
-  /**
-   * Is this record worth a full-text posting list?
-   *
-   * Fields are excluded deliberately. They are ~10-15k records with very short,
-   * highly repetitive text (`translation: Vec3`, `x: f32`), and indexing them
-   * adds posting-list weight to common words without adding real intent signal
-   * -- a concept query for "scale" gains nothing from `Transform::scale` and
-   * loses ranking precision against real API. They remain fully reachable by
-   * exact symbol lookup and by `bevy://owner/{v}/{Type}`, which is the access
-   * path that actually answers "what fields does this type have".
-   */
+  /** Exclude repetitive fields from full text; exact lookup and owner resources still expose them. */
   _isIndexed(r: BevyRecord) {
     return r.kind !== "field";
   }
@@ -651,23 +513,8 @@ export class BevyIndex {
   }
 
   /**
-   * Build the full-text index.
-   *
-   * Field choice determines whether this fits in memory, and the measured
-   * difference is stark. Over all ~265k Bevy records:
-   *
-   *   [name, full_path, signature, docs]  -> OOM at 2 GB, after ~10 min of GC
-   *   [name, signature, docs]             -> 201 MB, 368 ms
-   *   [name, docs]                        -> 181 MB, 384 ms
-   *
-   * The culprit is `full_path`: it is high-cardinality, so every module segment
-   * becomes an enormous posting list for no ranking benefit. It stays on the
-   * record as a filterable attribute -- exact lookup and resources both use it --
-   * it simply is not an indexed term.
-   *
-   * Because the whole corpus now fits, nothing is excluded from search by
-   * default: there is no curation trade-off, and completeness holds in every
-   * layer.
+   * Index names, signatures and docs; omitting paths avoids large posting lists.
+   * Paths remain available for exact lookup and filters; onlySearchable enables optional filtering.
    */
   async buildTextIndex({ onlySearchable = false }: { onlySearchable?: boolean } = {}) {
     this.text = new FlexSearch.Document<TextPayload>({
@@ -676,12 +523,7 @@ export class BevyIndex {
         index: ["name", "signature", "docs"],
         store: false,
       },
-      // "forward" (FlexSearch's default) indexes every prefix of every word
-      // ("system" -> s, sy, sys, ...) which is only useful for autocomplete and
-      // scales super-linearly: measured ~10 min+ for 265k records. "strict"
-      // indexes whole terms only - ~4x faster and ~2.5x smaller - and we do not
-      // lose prefix behaviour because the exact symbol table (lookupSymbol)
-      // already handles `Query`/`QueryData`-style lookups separately.
+      // Whole-term tokens avoid the posting growth caused by prefix indexing.
       tokenize: "strict",
       resolution: TEXT_RESOLUTION,
     });
@@ -689,12 +531,7 @@ export class BevyIndex {
       ? this.records.filter((r) => isSearchable(r))
       : this.records;
 
-    // FlexSearch 0.8's `add()` is synchronous; `addAsync()` merely wraps `add()`
-    // in a resolved promise. The previous `Promise.all(targets.map(...))` built
-    // two full-length arrays at once (265k payload objects + 265k promises),
-    // i.e. a complete second copy of the corpus in flight on top of
-    // `this.records` and the growing index - that was the OOM trigger. A plain
-    // loop keeps peak memory to one payload at a time.
+    // Add synchronously, keeping only one payload allocated at a time.
     let added = 0;
     for (const r of targets) {
       if (!this._isIndexed(r)) continue;
@@ -726,19 +563,9 @@ export class BevyIndex {
     return out.sort((a, b) => b.score - a.score);
   }
 
-  /**
-   * Full-text search across the record set.
-   *
-   * `allowedIds` restricts results to a subset (used to isolate one version
-   * when several are held in one index).
-   */
+  /** Search text, optionally restricting results to allowedIds. */
   searchText(query: string, { limit = 20, allowedIds = null }: { limit?: number; allowedIds?: Set<string> | null } = {}): SearchHit[] {
-    // FlexSearch's AND semantics is precise but brittle: "spawn camera" only
-    // matches documents that literally contain both words, however irrelevant
-    // they are. Run the same query again in OR/suggestion mode with stopwords
-    // dropped and return those behind the strict hits, so a symbol whose NAME
-    // matches one of the words still surfaces (and the field weighting in
-    // _searchText lifts it above prose coincidences).
+    // Combine strict and relaxed matches so natural questions can match useful individual terms.
     const strict = this._searchText(query, { limit, allowedIds, relaxed: false, base: 100 });
     const relaxed = this._searchText(query, { limit, allowedIds, relaxed: true, base: 60 });
     const out: SearchHit[] = [];
@@ -795,20 +622,7 @@ function applyFilters(items: SearchHit[], filters: SearchFilters) {
   });
 }
 
-/**
- * Hybrid search: exact symbol matches first, then full text, de-duplicated.
- *
- * Ranking is (match quality x source weight). The weight stops `news` posts
- * from outranking real API documentation, while exact symbol hits always lead.
- */
-/**
- * Enumerate records matching a resource query, without any full-text index.
- *
- * This is the path that makes every item reachable even when it is excluded
- * from the search index: a linear scan with cheap string predicates, costing
- * O(n) once (~10ms for 265k records) and needing no extra memory. That is the
- * whole reason Resources, not search, is the completeness guarantee.
- */
+/** Enumerate resource records even when they are excluded from full-text search. */
 export function queryRecords(index: BevyIndex, query: ResourceQuery): IndexedRecord[] {
   const out: IndexedRecord[] = [];
   for (const r of index.records) {
@@ -823,17 +637,9 @@ export function queryRecords(index: BevyIndex, query: ResourceQuery): IndexedRec
   return out;
 }
 
-/**
- * Resolve one item by full path.
- *
- * Exact match first, then suffix match, so `primitives::Sphere` finds
- * `bevy::camera::primitives::Sphere`. Among candidates, a definition site beats
- * a prelude re-export, so `Sphere` resolves to the real type rather than to the
- * `bevy::prelude` alias for it.
- */
+/** Resolve exact paths before suffixes, preferring types and definition sites over macros and reexports. */
 export function findByPath(index: BevyIndex, version: string | null, path: string): IndexedRecord | null {
-  // Rust type and derive-macro namespaces can share a full path. Match the
-  // exact API tool's preference for the type before its same-named derive.
+  // Type and derive-macro namespaces can share a path; prefer the API type.
   const symbol = index.lookupSymbol(path).find(({ record }) =>
     record.full_path === path && (!version || record.bevy_version === version));
   if (symbol) return symbol.record;
@@ -872,15 +678,7 @@ export function cratesIn(index: BevyIndex): string[] {
   return [...new Set(index.records.map(subCrateOf).filter((crate): crate is string => !!crate))].sort();
 }
 
-/**
- * Common request verbs ("how do I spawn/add/load X").
- *
- * In a multi-term query these are the *intent*, not the *subject*: "spawn
- * camera" is a question about `Camera`, not about `Spawn`. A record whose name
- * matches one of these therefore gets a weaker boost than one matching the
- * subject noun -- unless the verb is the whole query ("spawn"), where it is
- * exactly what the user asked for.
- */
+/** Request verbs receive less weight than subject nouns unless they form the whole query. */
 const INTENT_VERBS = new Set([
   "spawn", "despawn", "add", "insert", "remove", "delete", "create", "make",
   "get", "set", "apply", "update", "build", "load", "open", "close", "play",
@@ -889,15 +687,7 @@ const INTENT_VERBS = new Set([
   "turn", "communicate", "communication", "communicating", "compare", "difference",
 ]);
 
-/**
- * How strongly a record's own NAME matches the query, as a multiplier.
- *
- * FlexSearch scores matches anywhere in the indexed text and cannot tell that
- * the subject of a request ("camera") matters more than its verb ("spawn").
- * A record literally named after a query word is almost always what was asked
- * for, and a type (struct/enum/trait/fn) answers "spawn X" better than a method
- * that merely mentions X, so both are boosted here on top of the field weights.
- */
+/** Boost subject and type matches above incidental verbs and supporting text matches. */
 function relevanceBoost(r: BevyRecord, focus: QueryFocus) {
   if (!focus.terms.length) return 1;
   const leaf = singularTerm(baseName(r.name || "").toLowerCase());
@@ -907,8 +697,6 @@ function relevanceBoost(r: BevyRecord, focus: QueryFocus) {
   let boost = 1;
   let matched = 0;
   for (const t of new Set([...focus.terms, ...focus.subjects])) {
-    // In a multi-term query the intent verb is not the subject ("spawn camera"
-    // asks about `Camera`, not about `Spawn`), so it contributes little.
     const intent = focus.terms.length > 1 && (INTENT_VERBS.has(t) ||
       (!focus.subjects.includes(t) && !focus.context.includes(t)));
     if (leaf === t) {
@@ -923,15 +711,11 @@ function relevanceBoost(r: BevyRecord, focus: QueryFocus) {
     } else if (pathWords.includes(t)) {
       boost += 0.8;
     } else if (focus.context.includes(t) && new RegExp(`\\b${t}(?:s)?\\b`, "i").test(r.docs)) {
-      // Documentation can connect a supporting concept to the API: material
-      // types explaining a red base color are more useful than empty helpers.
+      // Supporting concepts in docs distinguish useful API from empty helpers.
       boost += 0.9;
     }
   }
-  // A record matching several query terms in its name (`add_systems` for "add
-  // systems") is a stronger hit than one matching a single term exactly.
   if (matched > 1) boost += (matched - 1) * 1.2;
-  // A type answers "what/what is" better than a method that merely mentions it.
   if (["struct", "enum", "trait", "fn", "type", "primitive"].includes(r.kind)) {
     boost += 0.5;
   }
@@ -952,6 +736,7 @@ function definitionKey(record: IndexedRecord): string {
   return record.id;
 }
 
+/** Combine exact symbols and weighted text/subject matches, collapsing reexports. */
 export function hybridSearch(
   index: BevyIndex,
   query: string,
@@ -960,15 +745,10 @@ export function hybridSearch(
   const cur = index.meta?.bevy_version;
   const weightOf = (r: BevyRecord) => recordWeight(r) * versionWeight(r, cur);
   const hasFilters = Object.values(filters || {}).some(Boolean);
-  // A scope restricts to one version's records; web/version-independent prose is
-  // shared, so it stays visible unless the caller filters it out.
+  // Website prose is shared across scopes; API IDs select one version.
   const scoped = (r: IndexedRecord) => !scope || r.source !== "rustdoc" || scope.has(r.id);
 
-  // FlexSearch applies `limit` *before* we can filter or re-rank, so a narrow
-  // pool starves: the name-weighted re-rank below can only lift records that
-  // FlexSearch actually returned, and its own scoring buries a subject noun
-  // ("camera") under every record whose name contains the verb ("add"). Ask for
-  // a wide pool and narrow it ourselves.
+  // Fetch a wide pool because FlexSearch applies its limit before our filters and reranking.
   const pool = hasFilters ? Math.max(limit * 100, 3000) : Math.max(limit * 100, 2000);
 
   const focus = queryFocus(query);
@@ -991,10 +771,7 @@ export function hybridSearch(
     filters,
   ).filter((h) => scoped(h.record));
 
-  // Keep fuzzy hits in a band strictly below the exact-symbol hits (scored
-  // ~900-1000), so an exact match always leads no matter how strong a prose hit
-  // looks. Normalising by the best raw score keeps the band meaningful without
-  // hard-coding a ceiling.
+  // Normalize fuzzy scores to a fixed band while preserving exact-symbol scores.
   const rawById = new Map<string, { record: IndexedRecord; raw: number }>();
   for (const hit of fuzzy) {
     if (seen.has(hit.record.id)) continue;
@@ -1005,8 +782,7 @@ export function hybridSearch(
       raw,
     });
   }
-  // A long corpus can exhaust FlexSearch's candidate budget on one query word.
-  // Add subject-name matches directly, including CamelCase reader/writer types.
+  // Add name/owner matches that FlexSearch's candidate budget may miss.
   const candidateTerms = [...focus.subjects, ...focus.context];
   const includesApi = !filters.source || filters.source.split(",").some((source) => source.trim() === "rustdoc");
   if (!exact.length && candidateTerms.length && includesApi) {
@@ -1019,8 +795,7 @@ export function hybridSearch(
     for (const record of applyFilters(names.map((record) => ({ record, score: 0 })), filters).map((hit) => hit.record)) {
       const ownMatch = candidateTerms.some((term) => nameTerms(record.name).includes(term));
       const definition = ["struct", "enum", "trait", "fn", "type", "primitive"].includes(record.kind);
-      // A helper such as another shape's `bounding_sphere` is weaker than a
-      // definition of the requested shape or of its supporting material.
+      // Definitions outrank incidental noun-containing helpers.
       const raw = (ownMatch && definition ? 240 : 90) * weightOf(record) * relevanceBoost(record, focus);
       if (raw > (rawById.get(record.id)?.raw ?? 0)) rawById.set(record.id, { record, raw });
     }
@@ -1046,9 +821,6 @@ function buildFromSource(config: IndexConfig) {
   const idx = new BevyIndex();
   const t0 = Date.now();
 
-  // Prose (book, migration guides, news) is version-independent: it comes from
-  // one bevy-website checkout and is tagged per record anyway. So we parse it
-  // once and share the records across every version index.
   const shared = loadSharedWebsiteRecords(config);
 
   const rustdoc = config.docDir
@@ -1064,7 +836,6 @@ function buildFromSource(config: IndexConfig) {
     }),
   );
 
-  // Drop sections that are never useful for coding help.
   const kept = idx.records.filter((r) => recordWeight(r) > 0);
   idx.records = kept;
   idx.byId = new Map(kept.map((r) => [r.id, r]));
@@ -1087,10 +858,7 @@ function buildFromSource(config: IndexConfig) {
   return idx;
 }
 
-/**
- * Website markdown does not change per Bevy version, so parse it once per
- * process and reuse. This is most of the win when several versions are indexed.
- */
+// Cache unchanged website prose within the process.
 let sharedCache: { key: string; website: BevyRecord[] } | null = null;
 function loadSharedWebsiteRecords(config: IndexConfig) {
   const key = fingerprint({ ...config, docDir: null, examplesDir: null });
@@ -1150,13 +918,8 @@ export async function loadOrBuild(config: IndexConfig, { force = false }: { forc
 }
 
 /**
- * Find migration guidance between two versions.
- *
- * Migration guides are chunked by heading, and a big guide can be 75+ chunks
- * long. Collapsing each document to a single chunk throws away the very section
- * the caller asked about, so we keep the best N chunks per document instead.
- * The optional `topic` filter runs *before* ranking, so a topic match is never
- * discarded in favour of a higher-ranked chunk from the same document.
+ * Return migration chunks between versions, retaining up to perDoc matches per document.
+ * Apply topic before ranking so relevant sections are not dropped.
  */
 export function findMigrations(index: BevyIndex, from: string | null | undefined, to: string | null | undefined, { topic = null, perDoc = 6 }: { topic?: string | null; perDoc?: number } = {}) {
   const matchesTopic = (r: BevyRecord) =>
@@ -1186,7 +949,6 @@ export function findMigrations(index: BevyIndex, from: string | null | undefined
     }
   }
 
-  // Group by document, keep the strongest few chunks of each.
   const byDoc = new Map<string, SearchHit[]>();
   for (const item of scored) {
     const key = item.record.full_path;
@@ -1216,11 +978,7 @@ export const _internal = {
   bumpBetween,
 };
 
-/**
- * Split a Bevy version into its semver components.
- * Bevy's pre-1.0 versioning means the MINOR digit is the breaking-change axis:
- * 0.19 -> 0.20 breaks APIs, 0.19.0 -> 0.19.1 does not.
- */
+/** Parse semantic version components while ignoring build metadata. */
 function versionKind(version: string): VersionParts {
   const clean = String(version || "").split("+")[0] ?? "";
   const [core, pre] = clean.split("-");
@@ -1234,26 +992,13 @@ function versionKind(version: string): VersionParts {
   };
 }
 
-/**
- * Classify the jump from version `from` to version `to`.
- *
- * Returns { level, breaksApi, direction, label }:
- *   level: 'none' | 'patch' | 'minor' | 'major' | 'downgrade'
- *   breaksApi: true only for a minor (or major) bump on a 0.x version, which is
- *     where Bevy performs its breaking changes.
- *
- * The user-facing distinction that matters: 0.19.0 -> 0.19.1 is a patch with a
- * handful of fixes and no API change, so an agent should NOT be told to rewrite
- * working code. 0.19 -> 0.20 is a sweeping overhaul and it should.
- */
+/** Classify direction, release level and API compatibility; Bevy 0.x minor bumps are breaking. */
 function bumpBetween(from: string | null | undefined, to: string | null | undefined): VersionBump {
   if (!from || !to) {
     return { level: "unknown", breaksApi: true, direction: "unknown", label: "unknown" };
   }
   const a = versionKind(from);
   const b = versionKind(to);
-  // Note cmpVersion returns < 0 when `from` is LOWER than `to`, so `from < to`
-  // is an upgrade, not a downgrade.
   const cmp = cmpVersion(from, to);
 
   if (cmp === 0) {
@@ -1280,7 +1025,6 @@ function bumpBetween(from: string | null | undefined, to: string | null | undefi
     };
   }
 
-  // Pre-1.0: the minor digit carries breaking changes.
   if (a.major === 0 && b.major === 0 && a.minor !== b.minor) {
     return {
       level: "minor",

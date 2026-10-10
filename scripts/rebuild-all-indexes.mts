@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** Rebuild existing rustdoc mirrors sequentially, without downloading sources. */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

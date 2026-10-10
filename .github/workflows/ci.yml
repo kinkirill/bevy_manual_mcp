@@ -3,9 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
-    # Prose and licence changes cannot break the tests. Skipping them keeps the
-    # check meaningful and makes doc pushes instant. pull_request is left
-    # unfiltered on purpose so a PR always reports a status.
+    # Skip documentation-only pushes; PRs always run checks.
     paths-ignore:
       - "**/*.md"
       - "LICENSE"
@@ -30,9 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
 
-      # The test suite builds its rustdoc fixture with a real `cargo doc`, so the
-      # ingest tests run against genuine rustdoc markup rather than a hand-written
-      # HTML string. Without this the suite fails at the fixture step.
+      # Ingestion tests generate their fixture with cargo doc.
       - uses: dtolnay/rust-toolchain@stable
 
       - run: npm test

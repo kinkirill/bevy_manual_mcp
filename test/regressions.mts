@@ -482,8 +482,7 @@ try {
           if (!key.startsWith(`${field}.`)) continue;
           const entries: unknown = JSON.parse(wrongTokens[key]!);
           assert.ok(Array.isArray(entries));
-          // Retain every ID and its score bucket, replacing only the tokens.
-          // Field/record coverage alone must not accept this broken export.
+          // Correct IDs and score buckets must not hide missing token coverage.
           wrongTokens[key] = JSON.stringify(entries.map((entry: unknown, i: number) => {
             assert.ok(Array.isArray(entry));
             return [`wrong${field}token${i}`, entry[1]];
@@ -663,14 +662,14 @@ try {
       fs.writeFileSync(metaPath, JSON.stringify(meta));
       fs.rmSync(docs, { recursive: true, force: true });
       const loaded = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
-      // API resources read this collection: only the legacy numeric row is omitted.
+      // Resources must retain named fields when legacy tuple rows are omitted.
       assert.deepEqual(loaded.records, original.records);
       assert.ok(loaded.lookupSymbol("Widget::label").some((hit) => hit.record.kind === "field"));
       assert.match(loaded.lookupSymbol("TupleWidget")[0]!.record.signature, /pub struct TupleWidget\s*\(/);
       assert.equal(loaded.lookupSymbol("0").length, 0);
       assert.equal(loaded.lookupSymbol(numeric.full_path).length, 0);
       assert.equal(loaded.byId.has("legacy-tuple-field"), false);
-      // A count equal to admitted records is still torn against the raw bundle rows.
+      // Validate the raw row count before filtering tuple members.
       meta.api_records = originalCount;
       fs.writeFileSync(metaPath, JSON.stringify(meta));
       const files = [recordsPath, metaPath, path.join(config.dataDir, "registry.json")];
