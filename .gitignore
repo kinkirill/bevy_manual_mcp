@@ -1,23 +1,28 @@
-# dependencies
 node_modules/
 
-# built search index (large, version-specific) - distributed via GitHub Releases
+# TypeScript output and generated compatibility launchers
+/build/
+/index.js
+/bin/*.js
+/scripts/*.mjs
+/scripts/rebuild-all-indexes.sh
+/test/*.mjs
+
+# Large, version-specific indexes are distributed via GitHub Releases.
 data/
 
-# rustdoc mirrors are fetched on demand, never committed
+# Rustdoc mirrors are fetched on demand.
 bevy-docs-*/
 vendor/bevy-docs-*/
 
-# the full upstream website checkout (prose lives in vendor/bevy-website/)
+# The full website checkout is local; prose lives in vendor/bevy-website/.
 /bevy-website/
 
-# index bundles produced by scripts/publish-index.mjs
 /dist/
 
 # local, machine-specific configuration
 bevy-mcp.config.json
 
-# runtime artefacts
 *.log
 .DS_Store
 .cache/

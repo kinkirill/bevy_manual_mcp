@@ -1,0 +1,344 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-10T13:04:08.569Z",
+  "validation": {
+    "passed": true,
+    "versions": 6,
+    "question_results": {
+      "passed": 62,
+      "unavailable": 4,
+      "failed": 0
+    },
+    "search_limit": 8,
+    "version_explicit": true,
+    "exact_api_and_resource_checks": "Available Event/Message families, geometry Sphere::new, Commands::spawn and Mesh3d; absent Message resources rejected for 0.15 and 0.16."
+  },
+  "questions": {
+    "user-sphere": "How to spawn a sphere",
+    "user-comparison": "Difference between message and event",
+    "sphere-radius": "How do I create a 3D sphere with a given radius?",
+    "sphere-scene": "How do I spawn a sphere in a 3D scene?",
+    "sphere-material": "How do I create a sphere with a red material?",
+    "sphere-mesh": "How do I turn a sphere into a mesh?",
+    "send-events": "How do I send events between systems?",
+    "read-events": "How can a system read events?",
+    "send-messages": "How do I send messages between systems?",
+    "read-messages": "How can a system read messages?",
+    "communicate": "How do I communicate between systems?"
+  },
+  "interpretation": [
+    "Question results check relevant API or documentation in the default eight MCP search hits; they do not establish that a complete generated tutorial compiles.",
+    "Unavailable means the selected corpus has no ECS Message API, not a search failure. Event remains available in every corpus; buffered EventReader/EventWriter/Events aliases disappear after 0.17.",
+    "Raw counts describe the hashed published archives. Loaded records merge duplicate identities and retain richer documentation; raw NDJSON counts remain intact for cache validation.",
+    "Every published field lacks a defining source link. Many scraped snippets lack source_file metadata; this rewrite cannot reconstruct those missing links.",
+    "The run uses complete published Rustdoc API records and the current bundled website, without a local Rustdoc mirror. Retrieved snippets were not compiled."
+  ],
+  "versions": [
+    {
+      "version": "0.15.3",
+      "asset": {
+        "name": "bevy-index-0.15.3+1.tar.gz",
+        "sha256": "a4293ac6985dd34e051d6fb84f11527fb56872926d6cfa2431a415362dc576ac",
+        "bytes": 46459000,
+        "updated_at": "2026-10-10T12:09:21Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T08:40:58.393Z",
+      "raw": {
+        "api_records": 179984,
+        "fields": 4108,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 6186,
+        "duplicate_rows_with_less_complete_docs": 3212,
+        "fields_without_defining_source": 4108,
+        "code_snippets": 13948,
+        "scraped_code_snippets": 13948,
+        "scraped_code_snippets_without_source": 7734,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 173798,
+        "api_code_snippets": 13948
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": true,
+        "EventWriter": true,
+        "Events": true,
+        "Message": false,
+        "MessageReader": false,
+        "MessageWriter": false,
+        "Messages": false
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "unavailable",
+        "read-messages": "unavailable",
+        "communicate": "passed"
+      }
+    },
+    {
+      "version": "0.16.1",
+      "asset": {
+        "name": "bevy-index-0.16.1+1.tar.gz",
+        "sha256": "44fad92bc2cde37b56e4e89617876f62c13c2556057fccf6a09e473da467c348",
+        "bytes": 59785159,
+        "updated_at": "2026-10-10T12:09:33Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T08:52:27.664Z",
+      "raw": {
+        "api_records": 213242,
+        "fields": 3956,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 6608,
+        "duplicate_rows_with_less_complete_docs": 3489,
+        "fields_without_defining_source": 3956,
+        "code_snippets": 24299,
+        "scraped_code_snippets": 24299,
+        "scraped_code_snippets_without_source": 15513,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 206634,
+        "api_code_snippets": 24298
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": true,
+        "EventWriter": true,
+        "Events": true,
+        "Message": false,
+        "MessageReader": false,
+        "MessageWriter": false,
+        "Messages": false
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "unavailable",
+        "read-messages": "unavailable",
+        "communicate": "passed"
+      }
+    },
+    {
+      "version": "0.17.3",
+      "asset": {
+        "name": "bevy-index-0.17.3+1.tar.gz",
+        "sha256": "2e75fc7e6eb97427207d3641711be3c0b57452057d303815fedb728f3edf45a4",
+        "bytes": 63848805,
+        "updated_at": "2026-10-10T12:09:49Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T09:04:39.043Z",
+      "raw": {
+        "api_records": 229716,
+        "fields": 3827,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 7361,
+        "duplicate_rows_with_less_complete_docs": 3618,
+        "fields_without_defining_source": 3827,
+        "code_snippets": 25169,
+        "scraped_code_snippets": 25169,
+        "scraped_code_snippets_without_source": 16558,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 222355,
+        "api_code_snippets": 25168
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": true,
+        "EventWriter": true,
+        "Events": true,
+        "Message": true,
+        "MessageReader": true,
+        "MessageWriter": true,
+        "Messages": true
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "passed",
+        "read-messages": "passed",
+        "communicate": "passed"
+      }
+    },
+    {
+      "version": "0.18.1",
+      "asset": {
+        "name": "bevy-index-0.18.1+1.tar.gz",
+        "sha256": "6352986aaceba9dea59a4c480788b67d887a11202f0e7fed987834be11bad5c8",
+        "bytes": 62031268,
+        "updated_at": "2026-10-10T12:09:58Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T09:17:05.670Z",
+      "raw": {
+        "api_records": 234231,
+        "fields": 3936,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 7191,
+        "duplicate_rows_with_less_complete_docs": 3643,
+        "fields_without_defining_source": 3936,
+        "code_snippets": 18050,
+        "scraped_code_snippets": 18050,
+        "scraped_code_snippets_without_source": 16733,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 227040,
+        "api_code_snippets": 18049
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": false,
+        "EventWriter": false,
+        "Events": false,
+        "Message": true,
+        "MessageReader": true,
+        "MessageWriter": true,
+        "Messages": true
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "passed",
+        "read-messages": "passed",
+        "communicate": "passed"
+      }
+    },
+    {
+      "version": "0.19.1",
+      "asset": {
+        "name": "bevy-index-0.19.1+1.tar.gz",
+        "sha256": "76092aa844d4f0c2023d29c77a5b9aeb2a0d114048e1c20788ad1a44fbc00be3",
+        "bytes": 76756398,
+        "updated_at": "2026-10-10T12:10:11Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T09:30:50.262Z",
+      "raw": {
+        "api_records": 270525,
+        "fields": 4784,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 6386,
+        "duplicate_rows_with_less_complete_docs": 4170,
+        "fields_without_defining_source": 4784,
+        "code_snippets": 29470,
+        "scraped_code_snippets": 29470,
+        "scraped_code_snippets_without_source": 17963,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 264139,
+        "api_code_snippets": 29470
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": false,
+        "EventWriter": false,
+        "Events": false,
+        "Message": true,
+        "MessageReader": true,
+        "MessageWriter": true,
+        "Messages": true
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "passed",
+        "read-messages": "passed",
+        "communicate": "passed"
+      }
+    },
+    {
+      "version": "0.20.0",
+      "asset": {
+        "name": "bevy-index-0.20.0+1.tar.gz",
+        "sha256": "8bcc6a4a19ef311a561ae5d40a0a4029843d6fe3aab2f71f465be95568c4a16a",
+        "bytes": 77577514,
+        "updated_at": "2026-10-10T12:10:24Z"
+      },
+      "cache_version": 5,
+      "published_built_at": "2026-10-10T09:56:03.654Z",
+      "raw": {
+        "api_records": 255740,
+        "fields": 5880,
+        "numeric_fields": 0,
+        "duplicate_identity_rows": 6387,
+        "duplicate_rows_with_less_complete_docs": 4675,
+        "fields_without_defining_source": 5880,
+        "code_snippets": 31953,
+        "scraped_code_snippets": 31953,
+        "scraped_code_snippets_without_source": 19502,
+        "schema_errors": 0,
+        "provenance_errors": 0
+      },
+      "loaded": {
+        "unique_api_records": 249353,
+        "api_code_snippets": 31953
+      },
+      "capabilities": {
+        "Event": true,
+        "EventReader": false,
+        "EventWriter": false,
+        "Events": false,
+        "Message": true,
+        "MessageReader": true,
+        "MessageWriter": true,
+        "Messages": true
+      },
+      "questions": {
+        "user-sphere": "passed",
+        "user-comparison": "passed",
+        "sphere-radius": "passed",
+        "sphere-scene": "passed",
+        "sphere-material": "passed",
+        "sphere-mesh": "passed",
+        "send-events": "passed",
+        "read-events": "passed",
+        "send-messages": "passed",
+        "read-messages": "passed",
+        "communicate": "passed"
+      }
+    }
+  ]
+}

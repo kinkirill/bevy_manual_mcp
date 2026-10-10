@@ -3,9 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
-    # Prose and licence changes cannot break the tests. Skipping them keeps the
-    # check meaningful and makes doc pushes instant. pull_request is left
-    # unfiltered on purpose so a PR always reports a status.
+    # Skip documentation-only pushes; PRs always run checks.
     paths-ignore:
       - "**/*.md"
       - "LICENSE"
@@ -15,22 +13,26 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
 
-      # The test suite builds its rustdoc fixture with a real `cargo doc`, so the
-      # ingest tests run against genuine rustdoc markup rather than a hand-written
-      # HTML string. Without this the suite fails at the fixture step.
-      - name: Report rust toolchain
-        run: cargo --version || echo "cargo missing - ingest tests will fail"
+      # Ingestion tests generate their fixture with cargo doc.
+      - uses: dtolnay/rust-toolchain@stable
 
       - run: npm test
+      - run: npm run test:package -- --git
 
-      - name: Validate server.json against the MCP registry schema
+      - name: Check server manifest JSON
         run: node -e "JSON.parse(require('fs').readFileSync('server.json','utf8')); console.log('server.json parses')"

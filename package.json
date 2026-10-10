@@ -9,9 +9,16 @@
   },
   "files": [
     "index.js",
-    "bin/",
-    "src/",
-    "scripts/",
+    "bin/*.js",
+    "build/index.js",
+    "build/index.js.map",
+    "build/server.js",
+    "build/server.js.map",
+    "build/bin/",
+    "build/src/",
+    "build/scripts/",
+    "scripts/*.mjs",
+    "scripts/rebuild-all-indexes.sh",
     "vendor/",
     "README.md",
     "GETTING-API-DOCS.md",
@@ -23,6 +30,9 @@
     "server.json"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.json && node build/scripts/generate-launchers.mjs",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node index.js",
     "fetch-index": "node scripts/fetch-index.mjs",
     "fetch-docs": "node scripts/fetch-docs.mjs",
@@ -30,8 +40,11 @@
     "publish-index": "node scripts/publish-index.mjs",
     "build-index": "node scripts/build-index.mjs",
     "reindex": "node scripts/build-index.mjs --force",
-    "test": "node test/index.mjs",
-    "test:unit": "node test/run-tests.mjs"
+    "rebuild-all": "node scripts/rebuild-all-indexes.mjs",
+    "test": "npm run build && node build/test/index.mjs",
+    "test:unit": "npm run build && node build/test/run-tests.mjs",
+    "test:corpus": "npm run build && node build/test/corpus-questions.mjs",
+    "test:package": "npm run build && node build/scripts/package-smoke.mjs"
   },
   "keywords": [
     "mcp",
@@ -53,12 +66,17 @@
     "url": "https://github.com/kinkirill/bevy_manual_mcp/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "cheerio": "^1.2.0",
     "flexsearch": "^0.8.212",
+    "smol-toml": "^1.9.1",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
   }
 }

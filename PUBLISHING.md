@@ -15,47 +15,48 @@ Three layers, three homes, on purpose:
 | Layer | Where it lives | Why |
 |---|---|---|
 | Code + vendored prose (`.md`/`.rs`) | git repo | small, changes when you change it |
-| Built search index (~74 MB gzip) | GitHub Release asset | 290 MB raw, identical for every user |
+| Built search index (~74 MiB gzip for 0.20.0) | GitHub Release asset | identical for every user |
 | rustdoc mirror (1.6 GB) | `scripts/fetch-docs.mjs`, on demand | only needed to rebuild the index |
 
 Users install the server with `npm install -g github:kinkirill/bevy_manual_mcp`
 (or run it via `npx --allow-git=all github:…`), and fetch the index from the Release
-asset. The Release asset is what keeps the first run to a ~74 MB download instead
+asset. The Release asset is what keeps the first run to a ~74 MiB download instead
 of a
 ~30 minute docs mirror plus build.
 
+The repository contains TypeScript sources. `npm ci` and Git dependency
+installation run `prepare`, which compiles into `build/` and generates the
+legacy JavaScript launchers. Do not commit generated launchers or build output.
+Before releasing, run `npm run typecheck`, `npm test`, and
+`npm run test:package -- --git` on Node.js 22 or newer. The packed artifact
+contains executable JavaScript and vendored prose, with no compiler needed
+at runtime.
+
 ## Rebuilding an index that already exists
 
-Adding a new minor uses a new tag. Rebuilding an index that is **already
-published** does not: the tag stays, so the asset name is what distinguishes
-one build from the next. Publish rebuilds with a `+1` suffix:
+Keep the Bevy release tag and publish a numbered asset revision when replacing
+an existing bundle:
 
 ```bash
-node scripts/rebuild-all-indexes.sh 0.20.0        # ~10 min per version
-node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist
+npm run rebuild-all -- 0.20.0
+node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist --revision 1
 gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz --clobber
 ```
 
-`fetch-index` tries `bevy-index-<version>+1.tar.gz` first and falls back to the
-unsuffixed name, so keeping the original asset means older documented URLs still
-resolve. Bump the suffix again for a third build.
+The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
+numeric revision from the release metadata; keep the canonical asset if older
+download URLs should continue working. Use `--revision 2` for the next rebuild.
 
-Two things make this work, and both are easy to forget:
+Bump `CACHE_VERSION` in `src/store.ts` when the record schema or required
+content changes. `fetch-index` replaces stale or unknown installed cache formats
+automatically; `--no-recheck` keeps an unknown local format. To refresh an
+already current format with a newer asset revision, use `--force`. Explain the
+changed content and format in the release notes.
 
-- **Bump `CACHE_VERSION`** in `src/store.js` when a rebuild changes record
-  shape or content. The server compares it on load and `fetch-index` compares
-  it before skipping a download, so without the bump an installed index is
-  never replaced. Existing installs then rebuild locally unless they re-fetch,
-  so say so in the release notes.
-- **State what changed and what did not** in the release body. A reader diffing
-  asset sizes will notice them move; say whether that is more data or a
-  regression.
-
-Verify line counts before trusting a rebuild: `wc -l data/versions/<v>/records.ndjson`
-must equal `api_records` in `meta.json`. A build killed mid-write leaves
-`meta.json` and `text-index.json` describing the *previous* build while
-`records.ndjson` is truncated, and a `cache_version` check will not catch it —
-the format is current, the file is simply incomplete.
+Before uploading, run `npm run test:corpus -- --data data 0.20.0` and check that
+the raw `records.ndjson` line count equals `api_records` in `meta.json`.
+`publish-index` validates the count and provenance before packaging; an intact
+cache version alone does not establish that a bundle is complete.
 
 ## Adding a new Bevy minor (e.g. 0.21)
 
@@ -117,8 +118,6 @@ gh release create v0.21.0 dist/bevy-index-0.21.0.tar.gz \
   --title "Bevy 0.21 index" \
   --notes "Prebuilt Bevy 0.21 search index for bevy-mcp."
 ```
-
-## Publishing to npm (trusted publishing)
 
 ## Publishing to npm (optional)
 

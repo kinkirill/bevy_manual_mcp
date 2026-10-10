@@ -13,10 +13,10 @@ exists for:
 
 > “How do I create a 3D sphere with a given radius?”
 
-`Sphere::new(radius)`. And the answer includes where that type lives *in your
-version*: `bevy::math::primitives::Sphere` in 0.19, but `bevy::shape::Sphere` in
-0.20, after the primitives were split into their own crate. Same question,
-different answer - and importing the stale path simply fails to compile.
+`Sphere::new(radius)`. The answer includes its actual path and signature from
+the installed version's index: `bevy::shape::Sphere` in the current
+0.20.0 bundle. Version checks also distinguish buffered `MessageReader` APIs
+from the older `EventReader` APIs available in 0.15 and 0.16.
 
 You can also point a coding agent at it, and it will stop inventing signatures
 for your version - a genuine side benefit. But that is not what it is for: the
@@ -47,11 +47,15 @@ and the search index comes from the GitHub Releases of this repository.
 
 ### Install the CLI
 
+Requires **Node.js 22 or newer**. The server, CLI, maintenance scripts, and
+tests are written in TypeScript. Installation from Git builds the executable
+JavaScript automatically through npm's `prepare` lifecycle.
+
 ```bash
 # npm 12 disables fetching git dependencies by default, hence the opt-in flag
 npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
 
-bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~74 MB)
+bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~78 MB)
 bevy-mcp status               # show what was auto-detected
 bevy-mcp                      # start the stdio server
 ```
@@ -61,7 +65,7 @@ Or clone it yourself, which needs no npm flags at all:
 ```bash
 git clone https://github.com/kinkirill/bevy_manual_mcp
 cd bevy_manual_mcp && npm install
-./bin/bevy-mcp.js fetch-index 0.20.0
+node bin/bevy-mcp.js fetch-index 0.20.0
 ```
 
 ### Configure it
@@ -100,13 +104,13 @@ reserved for the protocol):
 ```bash
 node index.js
 # [bevy-mcp] config: loaded .../bevy-mcp.config.json
-# [bevy-mcp] version 0.20.0: loaded persisted index in 2602ms
+# [bevy-mcp] version 0.20.0: loaded 249353 records in 10828ms
 # [bevy-mcp] ready - bevy-mcp 0.20.0, bevy 0.20.0
 ```
 
-The first run either downloads the prebuilt index or builds it from rustdoc
-(one-time, see [Getting the API docs](GETTING-API-DOCS.md)). Every run after
-that reloads from disk in a couple of seconds.
+Install a prebuilt index with `bevy-mcp fetch-index` before starting the server.
+When no index is installed, the server builds from locally configured sources
+(see [Getting the API docs](GETTING-API-DOCS.md)). Later runs load it from disk.
 
 ---
 
@@ -344,8 +348,13 @@ One command, for the version in your `Cargo.lock`:
 bevy-mcp fetch-index 0.20.0
 ```
 
-That downloads the prebuilt index (~74 MB) and unpacks it into `data/`. Indexes
+That downloads the prebuilt index (~78 MB) and unpacks it into `data/`. Indexes
 are published for Bevy **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
+
+The downloader selects the highest numbered asset revision, such as
+`bevy-index-0.20.0+1.tar.gz`, from release `v0.20.0` and checks its advertised
+SHA-256. The indexed Bevy version stays `0.20.0`. Use
+`bevy-mcp fetch-index 0.20.0 --force` to replace an already installed index.
 
 To build an index yourself instead - mirroring rustdoc from docs.rs, using your
 own `cargo doc`, adding engine examples, and what the build costs - see
@@ -405,7 +414,7 @@ To keep the first run cheap, the pieces are distributed separately:
 | Piece | Where | Size |
 |---|---|---|
 | Server code + bundled Book/migration prose | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
-| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~74 MB |
+| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~78 MB for 0.20.0 |
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
 
 The index holds API metadata, documentation strings, migration guides and
