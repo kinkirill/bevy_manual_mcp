@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveConfig } from "../src/config.js";
+import { errorMessage, isObject, stableVersion, stringOption, versionArgs } from "./cli-utils.mjs";
 
 const CRATE = "bevy";
 
@@ -32,29 +33,20 @@ const MIN_INTERVAL_MS = Number(process.env.FETCH_MIN_INTERVAL_MS || 120);
 let chain = Promise.resolve();
 function throttle() {
   const next = chain.then(
-    () => new Promise((r) => setTimeout(r, MIN_INTERVAL_MS)),
+    () => new Promise<void>((r) => setTimeout(r, MIN_INTERVAL_MS)),
   );
   chain = next.catch(() => {});
   return next;
 }
 
-function parseArgs(argv) {
-  const positional = argv.filter((a) => !a.startsWith("--"));
-  const outIdx = argv.indexOf("--out");
-  return {
-    version: positional[0],
-    out: outIdx !== -1 ? argv[outIdx + 1] : null,
-  };
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * GET with 429/5xx backoff. Returns the body text, or null for 404/permanent
  * failure. `tries` counts attempts, with full jitter so workers don't retry in
  * lockstep and re-trigger the limit.
  */
-async function fetchText(url, tries = 5) {
+async function fetchText(url: string, tries = 5): Promise<string | null> {
   for (let attempt = 1; attempt <= tries; attempt++) {
     await throttle();
     let res;
@@ -64,10 +56,11 @@ async function fetchText(url, tries = 5) {
           "User-Agent": "bevy-mcp/1.0 (personal docs mirror; respects rate limits)",
           Accept: "text/html",
         },
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (err) {
       if (attempt === tries) {
-        console.error(`  ! network error ${url}: ${err.message}`);
+        console.error(`  ! network error ${url}: ${errorMessage(err)}`);
         return null;
       }
       await sleep(500 * attempt + Math.random() * 400);
@@ -101,8 +94,9 @@ async function fetchText(url, tries = 5) {
 }
 
 async function main() {
-  const { version: argVersion, out: outArg } = parseArgs(process.argv.slice(2));
-  const config = resolveConfig();
+  const { version: argVersion, values } = versionArgs(process.argv.slice(2), { out: { type: "string" } });
+  const outArg = stringOption(values.out);
+  const config = resolveConfig({ bevyVersion: argVersion });
   const version = argVersion || config.bevyVersion;
 
   if (!version) {
@@ -111,27 +105,30 @@ async function main() {
     );
     process.exit(1);
   }
-  if (!/^\d+\.\d+/.test(version)) {
-    console.error(
-      `Refusing to fetch "${version}": pass a plain version like 0.19.0 ` +
-        `(docs.rs does not host pre-releases such as ${version} in a stable form).`,
-    );
-    process.exit(1);
+  stableVersion(version);
+  if (!Number.isInteger(CONCURRENCY) || CONCURRENCY < 1 || !Number.isFinite(MIN_INTERVAL_MS) || MIN_INTERVAL_MS < 0) {
+    throw new Error("FETCH_CONCURRENCY must be a positive integer and FETCH_MIN_INTERVAL_MS a nonnegative number.");
   }
 
-  const outRoot =
-    outArg || path.join(process.env.HOME || ".", ".cache", "bevy-mcp", version);
+  const outRoot = path.resolve(outArg || config.mirrorDir);
   const crateDir = path.join(outRoot, CRATE);
+  const manifestFile = path.join(outRoot, ".bevy-mcp-docversion.json");
+  if (fs.existsSync(manifestFile)) {
+    const previous: unknown = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+    if (!isObject(previous) || previous.version !== version) {
+      throw new Error(`The mirror at ${outRoot} belongs to a different or unknown Bevy version. Choose a fresh --out directory.`);
+    }
+  }
   fs.mkdirSync(crateDir, { recursive: true });
 
   // Record which version these docs are for, so the server can detect a
   // mismatch against the host project's Cargo.lock instead of silently
   // mislabelling results. Written now (version only) and updated with the page
   // count once discovery finishes.
-  const writeManifest = (totalPages) => {
+  const writeManifest = (totalPages: number | null) => {
     try {
       fs.writeFileSync(
-        path.join(outRoot, ".bevy-mcp-docversion.json"),
+        manifestFile,
         JSON.stringify(
           {
             crate: CRATE,
@@ -161,11 +158,15 @@ async function main() {
   // does not have to re-fetch the one request we are most likely to be blocked
   // on.
   const listCache = path.join(outRoot, `pages-${version}.json`);
-  let pages;
+  let pages: string[] | null = null;
 
   if (fs.existsSync(listCache)) {
     try {
-      pages = JSON.parse(fs.readFileSync(listCache, "utf8"));
+      const cached: unknown = JSON.parse(fs.readFileSync(listCache, "utf8"));
+      if (!Array.isArray(cached) || !cached.every((page): page is string => typeof page === "string")) {
+        throw new Error("Invalid cached page list.");
+      }
+      pages = cached;
       console.log(`Using cached page list (${pages.length} pages) from ${listCache}`);
     } catch {
       pages = null;
@@ -186,9 +187,10 @@ async function main() {
       );
       process.exit(1);
     }
-    const links = new Set();
+    const links = new Set<string>();
     for (const m of allHtml.matchAll(/href="([^"#?]+\.html)"/g)) {
       const href = m[1];
+      if (!href) continue;
       if (href.startsWith("http") || href.startsWith("/") || href.startsWith("..")) continue;
       if (href === "all.html" || href === "index.html") continue;
       links.add(href);
@@ -201,6 +203,7 @@ async function main() {
     }
     console.log(`Found ${pages.length} item pages (list cached).`);
   }
+  if (!pages) throw new Error("No rustdoc pages were discovered.");
 
   // Queue items we do not already have, so a resumed run does no work.
   const missing = pages.filter((rel) => {
@@ -216,7 +219,7 @@ async function main() {
   // ---- 2. Download concurrently, skipping what we already have -----------
   let done = 0;
   let skipped = 0;
-  const failures = [];
+  const failures: string[] = [];
   const skippedPre = pages.length - missing.length;
   const queue = [...missing];
   const started = Date.now();
@@ -226,7 +229,7 @@ async function main() {
 
   const total = missing.length + rootTargets.length + skippedPre;
   let lastPaint = 0;
-  const bar = (msg) => {
+  const bar = () => {
     const now = Date.now();
     if (now - lastPaint < 120) return;
     lastPaint = now;
@@ -240,7 +243,7 @@ async function main() {
     );
   };
 
-  async function downloadOne(rel) {
+  async function downloadOne(rel: string) {
     const target = path.join(crateDir, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     const html = await fetchText(`${base}/${rel}`);
@@ -256,8 +259,9 @@ async function main() {
   async function worker() {
     while (queue.length) {
       const rel = queue.shift();
+      if (rel === undefined) break;
       await downloadOne(rel);
-      bar("downloading");
+      bar();
     }
   }
 
@@ -282,6 +286,7 @@ async function main() {
     );
     console.log("First few failures:");
     for (const f of failures.slice(0, 5)) console.log(`  - ${f}`);
+    process.exitCode = 1;
   }
 }
 

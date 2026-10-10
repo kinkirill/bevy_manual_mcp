@@ -47,6 +47,10 @@ and the search index comes from the GitHub Releases of this repository.
 
 ### Install the CLI
 
+Requires **Node.js 22 or newer**. The server, CLI, maintenance scripts, and
+tests are written in TypeScript. Installation from Git builds the executable
+JavaScript automatically through npm's `prepare` lifecycle.
+
 ```bash
 # npm 12 disables fetching git dependencies by default, hence the opt-in flag
 npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
@@ -61,7 +65,7 @@ Or clone it yourself, which needs no npm flags at all:
 ```bash
 git clone https://github.com/kinkirill/bevy_manual_mcp
 cd bevy_manual_mcp && npm install
-./bin/bevy-mcp.js fetch-index 0.20.0
+node bin/bevy-mcp.js fetch-index 0.20.0
 ```
 
 ### Configure it
@@ -104,9 +108,9 @@ node index.js
 # [bevy-mcp] ready - bevy-mcp 0.20.0, bevy 0.20.0
 ```
 
-The first run either downloads the prebuilt index or builds it from rustdoc
-(one-time, see [Getting the API docs](GETTING-API-DOCS.md)). Every run after
-that reloads from disk in a couple of seconds.
+Install a prebuilt index with `bevy-mcp fetch-index` before starting the server.
+When no index is installed, the server builds from locally configured sources
+(see [Getting the API docs](GETTING-API-DOCS.md)). Later runs load it from disk.
 
 ---
 

@@ -20,9 +20,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { PACKAGE_ROOT, resolveConfig } from "../src/config.js";
+import { errorMessage, validateOutputTarget } from "./cli-utils.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const UPSTREAM = process.env.BEVY_WEBSITE_REPO || "https://github.com/bevyengine/bevy-website.git";
 
 const SPARSE_PATTERNS = [
@@ -33,29 +34,21 @@ const SPARSE_PATTERNS = [
   "/LICENSE",
 ];
 
-function parseArgs(argv) {
-  const opt = (name) => {
-    const i = argv.indexOf(name);
-    return i !== -1 ? argv[i + 1] : null;
-  };
-  return { out: opt("--out"), ref: opt("--ref") || "main" };
-}
-
-function git(args, cwd) {
+function git(args: string[], cwd?: string): void {
   const r = spawnSync("git", args, { cwd, stdio: "inherit" });
   if (r.error) {
     console.error(`[bevy-mcp] git not available: ${r.error.message}`);
-    process.exit(1);
+    throw r.error;
   }
-  if (r.status !== 0) process.exit(r.status ?? 1);
+  if (r.status !== 0) throw new Error(`git failed with exit code ${r.status ?? 1}`);
 }
 
 /** Copy only the prose sources upstream, preserving directory structure. */
-function copyProse(from, to) {
+function copyProse(from: string, to: string) {
   let count = 0;
   let bytes = 0;
 
-  const walk = (dir) => {
+  const walk = (dir: string): void => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (e.name === ".git") continue;
       const src = path.join(dir, e.name);
@@ -78,11 +71,12 @@ function copyProse(from, to) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const outDir = path.resolve(args.out || path.join(ROOT, "vendor", "bevy-website"));
+  const { values } = parseArgs({ options: { out: { type: "string" }, ref: { type: "string", default: "main" } } });
+  const config = resolveConfig();
+  const outDir = validateOutputTarget(values.out || path.join(PACKAGE_ROOT, "vendor", "bevy-website"), [PACKAGE_ROOT, config.projectRoot, process.cwd()]);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-website-"));
 
-  console.log(`Fetching bevy-website (${args.ref}) - prose only, no media`);
+  console.log(`Fetching bevy-website (${values.ref}) - prose only, no media`);
   try {
     git(
       [
@@ -92,7 +86,7 @@ function main() {
         "--filter=blob:none",
         "--sparse",
         "--branch",
-        args.ref,
+        values.ref,
         UPSTREAM,
         tmp,
       ],
@@ -102,9 +96,25 @@ function main() {
     // never fetched despite living in the same directories.
     git(["sparse-checkout", "set", "--no-cone", ...SPARSE_PATTERNS], tmp);
 
-    fs.rmSync(outDir, { recursive: true, force: true });
-    fs.mkdirSync(outDir, { recursive: true });
-    const { count, bytes } = copyProse(tmp, outDir);
+    fs.mkdirSync(path.dirname(outDir), { recursive: true });
+    const staging = fs.mkdtempSync(path.join(path.dirname(outDir), ".bevy-website-stage-"));
+    const backup = `${staging}-previous`;
+    let result;
+    try {
+      result = copyProse(tmp, staging);
+      if (!result.count) throw new Error("No prose files found; existing website was preserved.");
+      if (fs.existsSync(outDir)) fs.renameSync(outDir, backup);
+      try {
+        fs.renameSync(staging, outDir);
+      } catch (error) {
+        if (fs.existsSync(backup)) fs.renameSync(backup, outDir);
+        throw error;
+      }
+      fs.rmSync(backup, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
+    const { count, bytes } = result;
     console.log(
       `\nWrote ${count} files (${(bytes / 1048576).toFixed(2)} MB) to ${outDir}`,
     );
@@ -113,4 +123,9 @@ function main() {
   }
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(`[bevy-mcp] ${errorMessage(error)}`);
+  process.exitCode = 1;
+}

@@ -46,10 +46,12 @@ jobs:
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          package-manager-cache: false
 
       - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm run typecheck
       - run: npm test
+      - run: npm run test:package
 
       - name: Normalise version
         run: echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
@@ -57,7 +59,7 @@ jobs:
       - name: Mirror rustdoc from docs.rs
         env:
           FETCH_CONCURRENCY: "6"
-        run: node scripts/fetch-docs.mjs "$VERSION" --out "$RUNNER_TEMP/bevy-docs"
+        run: node build/scripts/fetch-docs.mjs "$VERSION" --out "$RUNNER_TEMP/bevy-docs"
 
       - name: Fetch Bevy engine examples (sparse)
         run: |
@@ -71,10 +73,10 @@ jobs:
           BEVY_DOC_DIR: ${{ runner.temp }}/bevy-docs
           BEVY_SRC_DIR: ${{ runner.temp }}/bevy-src
           BEVY_MCP_DATA_DIR: ${{ github.workspace }}/data
-        run: node scripts/build-index.mjs "$VERSION" --force
+        run: node build/scripts/build-index.mjs "$VERSION" --force
 
       - name: Package the index bundle
-        run: node scripts/publish-index.mjs "$VERSION" --data ./data --out ./dist
+        run: node build/scripts/publish-index.mjs "$VERSION" --data ./data --out ./dist
 
       - name: Attach bundle to the GitHub Release
         uses: softprops/action-gh-release@v2
@@ -87,7 +89,7 @@ jobs:
 
             Install it with:
             ```
-            npx bevy-mcp fetch-index ${{ env.VERSION }}
+            npx --allow-git=all github:kinkirill/bevy_manual_mcp fetch-index ${{ env.VERSION }}
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

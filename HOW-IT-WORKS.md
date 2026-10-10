@@ -55,34 +55,40 @@ directories, so startup is fast after the first run.
 ## Repository layout
 
 ```
-index.js                      MCP server: tools, resources, wiring, stdio transport
-bin/bevy-mcp.js               CLI: serve (default), fetch-index, fetch-docs, status
+index.ts / server.ts          MCP server: tools, resources, wiring, stdio transport
+bin/bevy-mcp.ts               CLI: serve (default), fetch-index, fetch-docs, status
 bevy-mcp.config.example.json  template config (copy to bevy-mcp.config.json)
 server.json                   MCP registry manifest
 PUBLISHING.md                 maintainer release checklist
 vendor/bevy-website/          prose-only bevy-website (Book, guides, release notes)
-src/config.js                 config-file + path + version resolution
-src/store.js                  index build, persisted search index, hybrid search, ranking
-src/registry.js               per-version index persistence (fast reload)
-src/multiversion.js           hold several versions in one process, scope searches
-src/resources.js              bevy:// URI scheme + templates
-src/resources_impl.js         resource read + completion handlers
-src/pagination.js             cursor pagination for list resources
-src/versions.js               crates.io lookup, stable-vs-prerelease split
-src/format.js                 response rendering (markdown + structuredContent)
-src/ingest/rustdoc.js         rustdoc HTML parser (one record per item)
-src/ingest/markdown.js        website markdown, heading chunking, classification
-src/ingest/examples.js        .rs example sources (engine + book)
-src/ingest/owner.js           impl-header parsing (owner type, trait)
-scripts/fetch-docs.mjs        docs.rs mirror with rate-limit handling
-scripts/fetch-index.mjs       download the prebuilt index from GitHub Releases
-scripts/build-index.mjs       build the index headlessly (CI / manual)
-scripts/publish-index.mjs     package an index bundle for a Release
-scripts/fetch-website.mjs     refresh vendor/bevy-website (sparse, prose only)
-test/run-tests.mjs            unit tests (uses real cargo doc output)
-test/resources-test.mjs       resource conformance over a real MCP client
-test/mcp-e2e.mjs              protocol-level test over stdio
+src/config.ts                 config-file + path + version resolution
+src/store.ts                  index build, persisted search index, hybrid search, ranking
+src/registry.ts               isolated indexes per version, persistence, source registration
+src/types.ts                  record, configuration, metadata and query contracts
+src/resources.ts              bevy:// URI scheme + templates
+src/resources_impl.ts         resource read + completion handlers
+src/pagination.ts             cursor pagination for list resources
+src/versions.ts               crates.io lookup, stable-vs-prerelease split
+src/format.ts                 response rendering (markdown + structuredContent)
+src/ingest/rustdoc.ts         rustdoc HTML parser (one record per item)
+src/ingest/markdown.ts        website markdown, heading chunking, classification
+src/ingest/examples.ts        .rs example sources (engine + book)
+src/ingest/owner.ts           impl-header parsing (owner type, trait)
+scripts/fetch-docs.mts        docs.rs mirror with rate-limit handling
+scripts/fetch-index.mts       download the prebuilt index from GitHub Releases
+scripts/build-index.mts       build the index headlessly (CI / manual)
+scripts/publish-index.mts     package an index bundle for a Release
+scripts/fetch-website.mts     refresh vendor/bevy-website (sparse, prose only)
+test/run-tests.mts            unit tests (uses real cargo doc output)
+test/resources-test.mts       resource conformance over a real MCP client
+test/mcp-e2e.mts              protocol-level test over stdio
 ```
+
+`npm ci` builds the strict TypeScript sources into `build/`. The build also
+generates compatibility launchers at `index.js`, `bin/bevy-mcp.js`, and the
+previous `scripts/*.mjs` and `test/*.mjs` paths. These launchers are ignored by
+Git and included where needed in the distributable package. Existing MCP
+client commands continue to work; the runtime needs Node.js 22 or newer.
 
 ---
 
@@ -90,5 +96,10 @@ test/mcp-e2e.mjs              protocol-level test over stdio
 
 ```bash
 npm test
+npm run typecheck
 BEVY_VERSION=0.20.0 BEVY_DOC_DIR=... node test/resources-test.mjs
 ```
+
+`npm run test:package -- --git` also verifies an installed tarball and a Git
+dependency prepared from TypeScript, using CLI and MCP checks outside the
+checkout. It requires npm registry access to install their dependencies.

@@ -15,22 +15,28 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
 
       # The test suite builds its rustdoc fixture with a real `cargo doc`, so the
       # ingest tests run against genuine rustdoc markup rather than a hand-written
       # HTML string. Without this the suite fails at the fixture step.
-      - name: Report rust toolchain
-        run: cargo --version || echo "cargo missing - ingest tests will fail"
+      - uses: dtolnay/rust-toolchain@stable
 
       - run: npm test
+      - run: npm run test:package -- --git
 
-      - name: Validate server.json against the MCP registry schema
+      - name: Check server manifest JSON
         run: node -e "JSON.parse(require('fs').readFileSync('server.json','utf8')); console.log('server.json parses')"

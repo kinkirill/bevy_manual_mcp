@@ -24,57 +24,52 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveConfig } from "../src/config.js";
+import { versionArgs, stringOption, stableVersion, errorMessage } from "./cli-utils.mjs";
+import { INDEX_FILES, readRegistry, validateIndex } from "./index-artifacts.mjs";
+import { CACHE_VERSION } from "../src/store.js";
 
-function parseArgs(argv) {
-  const positional = argv.filter((a) => !a.startsWith("--"));
-  const opt = (name) => {
-    const i = argv.indexOf(name);
-    return i !== -1 ? argv[i + 1] : null;
-  };
-  return { version: positional[0] || null, data: opt("--data"), out: opt("--out") };
-}
-
-function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const config = resolveConfig();
+async function main(): Promise<void> {
+  const args = versionArgs(process.argv.slice(2), { data: { type: "string" }, out: { type: "string" } });
+  const config = resolveConfig({ bevyVersion: args.version });
   const version = args.version || config.bevyVersion;
   if (!version) {
     console.error("Usage: node scripts/publish-index.mjs <version>");
     process.exit(1);
   }
 
-  const dataDir = path.resolve(args.data || config.dataDir);
-  const outDir = path.resolve(args.out || path.join(process.cwd(), "dist"));
+  stableVersion(version);
+  const dataDir = path.resolve(stringOption(args.values.data) || config.dataDir);
+  const outDir = path.resolve(stringOption(args.values.out) || path.join(process.cwd(), "dist"));
   const sanitized = String(version).replace(/[^a-zA-Z0-9._+-]/g, "_");
   const versionDir = path.join(dataDir, "versions", sanitized);
 
-  for (const f of ["records.ndjson", "text-index.json", "meta.json"]) {
+  for (const f of INDEX_FILES) {
     const p = path.join(versionDir, f);
     if (!fs.existsSync(p)) {
       console.error(
         `Missing ${p}.\nBuild this version first:  node scripts/build-index.mjs <version> --force`,
       );
-      process.exit(1);
+      throw new Error(`Missing ${p}; build this version first.`);
     }
   }
 
-  const registry = JSON.parse(
-    fs.readFileSync(path.join(dataDir, "registry.json"), "utf8"),
-  );
+  const registry = readRegistry(dataDir);
   const entry = registry.versions?.[sanitized];
   if (!entry) {
     console.error(
       `No registry entry for ${version} in ${dataDir}/registry.json - build it first.`,
     );
-    process.exit(1);
+    throw new Error(`No registry entry for ${version}; build this version first.`);
   }
+  if (entry.cache_version !== CACHE_VERSION) throw new Error("Registry cache format is stale; rebuild this version first.");
+  await validateIndex(versionDir, version);
 
   // Stage only what belongs in the bundle so the tarball cannot pick up stray
   // files from the data directory.
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-index-bundle-"));
   try {
     fs.mkdirSync(path.join(staging, "versions", sanitized), { recursive: true });
-    for (const f of ["records.ndjson", "text-index.json", "meta.json"]) {
+    for (const f of INDEX_FILES) {
       fs.copyFileSync(
         path.join(versionDir, f),
         path.join(staging, "versions", sanitized, f),
@@ -92,7 +87,7 @@ function main() {
       ["-czf", bundle, "-C", staging, "versions", "registry-entry.json"],
       { stdio: "inherit" },
     );
-    if (r.status !== 0) process.exit(r.status ?? 1);
+    if (r.error || r.status !== 0) throw new Error(`tar failed: ${r.error?.message ?? r.status}`);
 
     const size = fs.statSync(bundle).size;
     console.log(`\nWrote ${bundle} (${(size / 1048576).toFixed(1)} MB)`);
@@ -107,4 +102,4 @@ function main() {
   }
 }
 
-main();
+main().catch((error: unknown) => { console.error(`[bevy-mcp] ${errorMessage(error)}`); process.exitCode = 1; });

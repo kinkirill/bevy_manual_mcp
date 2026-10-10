@@ -11,9 +11,8 @@
  *     rendering, so clients can use either.
  */
 
-const KIND_ICON = {
-  rustdoc: { api: "⚙️" },
-};
+import type { BevyRecord, SearchHit, ResolvedConfig, VersionBump } from "./types.js";
+import type { BevyIndex } from "./store.js";
 
 const SOURCE_LABEL = {
   rustdoc: "API",
@@ -22,7 +21,7 @@ const SOURCE_LABEL = {
   website: "docs",
 };
 
-function iconFor(r) {
+function iconFor(r: BevyRecord): string {
   if (r.source === "rustdoc") {
     return r.kind === "method" || r.kind === "fn" ? "🔧" : "⚙️";
   }
@@ -33,16 +32,13 @@ function iconFor(r) {
   return "📖";
 }
 
-function header(index) {
-  const v = index.meta?.bevy_version;
-  return v ? `Bevy ${v}` : "Bevy (version UNKNOWN - set BEVY_VERSION)";
-}
-
 /**
  * Compare one symbol across versions. This is the payoff of holding several
  * indexes: showing exactly how an API changed, rather than describing it.
  */
-export function formatVersionDiff({ symbol, perVersion }) {
+export function formatVersionDiff({ symbol, perVersion }: {
+  symbol: string; perVersion: { version: string; record: BevyRecord | null }[];
+}): string {
   const lines = [`# ${symbol} across Bevy versions`, ``];
   const sigs = new Set();
   const paths = new Set();
@@ -61,7 +57,7 @@ export function formatVersionDiff({ symbol, perVersion }) {
       paths.add(path);
     }
     lines.push("```rust", record.signature || "(no signature recorded)", "```", ``);
-    sigs.add(record.signature || "");
+    sigs.add((record.signature || "").replace(/\s+/g, " ").trim());
   }
 
   lines.push(`---`, ``);
@@ -91,13 +87,20 @@ export function formatVersionDiff({ symbol, perVersion }) {
   return lines.join("\n");
 }
 
-function truncate(s, n) {
+function truncate(s: string | null | undefined, n: number): string {
   if (!s) return "";
   return s.length <= n ? s : s.slice(0, n).trimEnd() + " …";
 }
 
 /** One compact rendering of a single record. */
-export function formatRecord(r, { docsChars = 700, exampleChars = 1200, exampleLimit = 2 } = {}) {
+interface FormatOptions {
+  docsChars?: number;
+  exampleChars?: number;
+  exampleLimit?: number;
+  label?: string | null;
+}
+
+export function formatRecord(r: BevyRecord, { docsChars = 700, exampleChars = 1200, exampleLimit = 2 }: FormatOptions = {}): string {
   const parts = [];
   const icon = iconFor(r);
   const label = SOURCE_LABEL[r.source] || r.source;
@@ -153,7 +156,7 @@ export function formatRecord(r, { docsChars = 700, exampleChars = 1200, exampleL
           : null;
       if (note) parts.push(note.trim());
       if (ex.source_file) {
-        parts.push(`_Example scraped from \`${ex.source_file}_\``);
+        parts.push(`_Example scraped from \`${ex.source_file}\`_`);
       }
       parts.push("```rust\n" + trimCode(ex.code, exampleChars) + "\n```");
     }
@@ -201,7 +204,7 @@ export function formatRecord(r, { docsChars = 700, exampleChars = 1200, exampleL
 }
 
 /** Keep code fences balanced when slicing an example. */
-function trimCode(text, max) {
+function trimCode(text: string, max: number): string {
   let t = text;
   if (t.length <= max) return t;
   const cut = t.slice(0, max);
@@ -219,7 +222,7 @@ function trimCode(text, max) {
  * Returns null when the file has neither, so the caller can fall back to the
  * raw (truncated) code.
  */
-function setupSnippet(code, max = 2800) {
+function setupSnippet(code: string, max = 2800): string | null {
   const lines = String(code).split("\n");
   // `setup*` / `spawn*` is where examples spawn things; `main` is usually just
   // the plugin list. Prefer the former, fall back to main.
@@ -238,8 +241,9 @@ function setupSnippet(code, max = 2800) {
   let depth = 0;
   let opened = false;
   for (let i = start; i < lines.length; i++) {
-    out.push(lines[i]);
-    for (const ch of lines[i]) {
+    const line = lines[i]!;
+    out.push(line);
+    for (const ch of line) {
       if (ch === "{") {
         depth += 1;
         opened = true;
@@ -254,7 +258,7 @@ function setupSnippet(code, max = 2800) {
 }
 
 /** Full markdown rendering of a list of results. */
-export function formatResults(index, results, query, opts = {}) {
+export function formatResults(index: BevyIndex, results: SearchHit[], query: string, opts: FormatOptions = {}): string {
   const label = opts.label || index.meta?.bevy_version;
   const lines = [`## Bevy ${label ?? "UNKNOWN"} - results for "${query}"`];
 
@@ -281,7 +285,7 @@ export function formatResults(index, results, query, opts = {}) {
 }
 
 /** Machine-readable shape returned alongside the markdown. */
-export function toStructured(results, index) {
+export function toStructured(results: SearchHit[], index: BevyIndex) {
   return {
     bevy_version: index.meta?.bevy_version ?? null,
     version_source: index.meta?.version_source ?? null,
@@ -312,7 +316,9 @@ export function toStructured(results, index) {
  * The patch/minor distinction is the point -- a patch release must not trigger
  * a rewrite of working code.
  */
-export function formatUpgrade({ mine, newest, preview, bump, records }) {
+export function formatUpgrade({ mine, newest, preview, bump, records }: {
+  mine: string | null; newest: string; preview?: string | null; bump: VersionBump; records?: number;
+}): string {
   const lines = [`# bevy-mcp update notice`, ``];
 
   lines.push(`- **Indexed for:** ${mine ?? "UNKNOWN"}`);
@@ -340,9 +346,9 @@ export function formatUpgrade({ mine, newest, preview, bump, records }) {
   return lines.join("\n");
 }
 
-export function formatStatus(index, config) {
-  const m = index.meta || {};
-  const s = index.stats || {};
+export function formatStatus(index: BevyIndex, config: ResolvedConfig): string {
+  const m = index.meta ?? { bevy_version: null };
+  const s = index.stats;
   const mismatch =
     config?.docVersion &&
     config?.bevyVersion &&

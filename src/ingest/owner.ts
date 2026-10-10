@@ -17,7 +17,7 @@
  */
 
 /** Strip generic arguments and any trailing `where ...` clause. */
-function stripGenericsAndBounds(text) {
+function stripGenericsAndBounds(text: string) {
   let out = text;
   // Drop a where clause first: it can appear after the generics.
   const whereIdx = out.search(/\bwhere\b/);
@@ -33,7 +33,7 @@ function stripGenericsAndBounds(text) {
  * Returns { traitName, typeName } where either may be null.
  * For an inherent impl (`impl Foo`) only typeName is set.
  */
-export function parseImplHeader(headerText) {
+export function parseImplHeader(headerText: string | null | undefined) {
   let text = String(headerText || "")
     .replace(/\s+/g, " ")
     .replace(/§/g, "")
@@ -69,7 +69,7 @@ export function parseImplHeader(headerText) {
  * The owning type for a method, from the impl header text.
  * Null for an inherent impl, since the caller falls back to the page's item.
  */
-export function ownerFromImplText(headerText) {
+export function ownerFromImplText(headerText: string | null | undefined) {
   const { traitName, typeName } = parseImplHeader(headerText);
   // An inherent `impl Foo` gives typeName with no trait; a trait impl gives
   // both. Either way the owner is the type after `for`.
@@ -81,7 +81,7 @@ export function ownerFromImplText(headerText) {
  * The trait name for a trait impl, or null for an inherent impl.
  * Used to decide whether a method is real API or trait boilerplate.
  */
-export function traitFromImplText(headerText) {
+export function traitFromImplText(headerText: string | null | undefined) {
   return parseImplHeader(headerText).traitName;
 }
 

@@ -17,12 +17,13 @@
 
 import { resolveConfig, log } from "../src/config.js";
 import { VersionRegistry } from "../src/registry.js";
+import { versionArgs } from "./cli-utils.mjs";
 
-const args = process.argv.slice(2);
-const version = args.find((a) => !a.startsWith("--")) || null;
-const force = args.includes("--force");
+const args = versionArgs(process.argv.slice(2), { force: { type: "boolean" } });
+const version = args.version;
+const force = args.values.force === true;
 
-const config = resolveConfig();
+const config = resolveConfig({ bevyVersion: version });
 const target = version || config.bevyVersion;
 
 if (!target) {

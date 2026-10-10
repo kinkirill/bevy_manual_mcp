@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { CodeExampleRecord } from "../types.js";
 
 /**
  * Categories inferred from the example's path, used for filtering.
@@ -19,7 +20,7 @@ import path from "node:path";
  * example path like `2d/arcball.rs` still matches `2d` -- the rules below all
  * expect a leading separator.
  */
-const CATEGORY_RULES = [
+const CATEGORY_RULES: [RegExp, string][] = [
   [/[/\\]2d[/\\]/, "2d"],
   [/[/\\]3d[/\\]/, "3d"],
   [/[/\\]ui[/\\]|[/\\]ui\.rs$/, "ui"],
@@ -42,8 +43,8 @@ const CATEGORY_RULES = [
   [/[/\\]ecs[/\\]observer|observ/, "observers"],
 ];
 
-function categorise(rel) {
-  const tags = new Set();
+function categorise(rel: string) {
+  const tags = new Set<string>();
   const withSlash = rel.startsWith("/") ? rel : "/" + rel;
   for (const [re, tag] of CATEGORY_RULES) {
     if (re.test(withSlash)) tags.add(tag);
@@ -52,7 +53,7 @@ function categorise(rel) {
 }
 
 /** The `//!` module comment at the top of a bevy example describes it. */
-function moduleDoc(code) {
+function moduleDoc(code: string) {
   const lines = code.split(/\r?\n/);
   const out = [];
   for (const line of lines) {
@@ -64,20 +65,20 @@ function moduleDoc(code) {
   return out.join("\n").trim();
 }
 
-function readCargoFeatures(dir) {
+function readCargoFeatures(dir: string) {
   const toml = path.join(dir, "Cargo.toml");
   if (!fs.existsSync(toml)) return null;
   try {
     const text = fs.readFileSync(toml, "utf8");
-    const out = [];
+    const out: string[] = [];
     // Minimal scan: collect `path = "../2d/xxx"` entries so we can report which
     // features the engine's Cargo.toml must enable.
     const entry = /^\s*\{\s*path\s*=\s*"([^"]+)"\s*(.*)\}\s*$/gm;
     let m;
-    while ((m = entry.exec(text)) !== null) out.push(m[1]);
+    while ((m = entry.exec(text)) !== null) out.push(m[1] ?? "");
     const fe = text.match(/^\s*default\s*=\s*\[([\s\S]*?)\]/m);
     const features = fe
-      ? fe[1]
+      ? (fe[1] ?? "")
           .split(",")
           .map((s) => s.trim().replace(/^"|"$/g, ""))
           .filter(Boolean)
@@ -88,7 +89,7 @@ function readCargoFeatures(dir) {
   }
 }
 
-function walkRs(dir, out = [], depth = 0) {
+function walkRs(dir: string, out: string[] = [], depth = 0): string[] {
   if (depth > 6) return out;
   let entries;
   try {
@@ -104,9 +105,9 @@ function walkRs(dir, out = [], depth = 0) {
   return out;
 }
 
-function ingestDir(root, label, bevyVersion) {
+function ingestDir(root: string | null, label: CodeExampleRecord["source"], bevyVersion: string | null): CodeExampleRecord[] {
   if (!root || !fs.existsSync(root)) return [];
-  const records = [];
+  const records: CodeExampleRecord[] = [];
   for (const file of walkRs(root)) {
     const rel = path.relative(root, file).replace(/\\/g, "/");
     let code;
@@ -145,8 +146,10 @@ function ingestDir(root, label, bevyVersion) {
 }
 
 /** Ingest both example sources. Engine examples are preferred for the pinned version. */
-export function ingestExamples({ examplesDir, websiteDir, bevyVersion }) {
-  const records = [];
+export function ingestExamples({ examplesDir, websiteDir, bevyVersion }: {
+  examplesDir: string | null; websiteDir: string | null; bevyVersion: string | null;
+}): CodeExampleRecord[] {
+  const records: CodeExampleRecord[] = [];
 
   if (examplesDir) {
     records.push(...ingestDir(examplesDir, "bevy-examples", bevyVersion));

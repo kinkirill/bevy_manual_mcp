@@ -62,5 +62,5 @@ not a copy of the engine source. Full license texts:
 ## Runtime dependencies
 
 Dependencies declared in `package.json` (`@modelcontextprotocol/sdk`, `cheerio`,
-`flexsearch`, `zod`) are fetched from npm and carry their own licenses, not
+`flexsearch`, `zod`, `smol-toml`) are fetched from npm and carry their own licenses, not
 redistributed here.

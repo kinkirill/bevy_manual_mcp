@@ -21,6 +21,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveConfig } from "../src/config.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -42,11 +43,10 @@ read from Cargo.lock. Set BEVY_VERSION to override.
 `;
 
 /** Run one of the setup scripts in a child process, inheriting stdio. */
-function runScript(script, args) {
-  return new Promise((resolve) => {
+function runScript(script: string, args: string[]): Promise<number> {
+  return new Promise<number>((resolve) => {
     const child = spawn(process.execPath, [script, ...args], {
       stdio: "inherit",
-      cwd: ROOT,
     });
     child.on("exit", (code, signal) => resolve(signal ? 1 : (code ?? 1)));
     child.on("error", (err) => {
@@ -57,9 +57,6 @@ function runScript(script, args) {
 }
 
 async function status() {
-  const { resolveConfig } = await import(
-    pathToFileURL(path.join(ROOT, "src", "config.js")).href
-  );
   const config = resolveConfig();
   const indexDir = config.bevyVersion
     ? path.join(config.dataDir, "versions", String(config.bevyVersion).replace(/[^a-zA-Z0-9._+-]/g, "_"))

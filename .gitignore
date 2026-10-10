@@ -1,6 +1,13 @@
 # dependencies
 node_modules/
 
+# TypeScript output and generated compatibility launchers
+/build/
+/index.js
+/bin/*.js
+/scripts/*.mjs
+/test/*.mjs
+
 # built search index (large, version-specific) - distributed via GitHub Releases
 data/
 

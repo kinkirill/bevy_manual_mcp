@@ -15,6 +15,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as cheerio from "cheerio";
+import type { Cheerio, CheerioAPI } from "cheerio";
+import type { AnyNode } from "domhandler";
+import { errorMessage, type DocExample, type RustdocRecord } from "../types.js";
 import { ownerFromImplText, traitFromImplText } from "./owner.js";
 
 /** Sections that contain only noise: auto-trait and blanket impls. */
@@ -57,12 +60,12 @@ const TOP_LEVEL_KINDS = [
   "module",
 ];
 
-function normalizeSpace(s) {
-  return s.replace(/\s+/g, " ").trim();
+function normalizeSpace(s: string | null | undefined) {
+  return (s ?? "").replace(/\s+/g, " ").trim();
 }
 
 /** Convert a docblock element to compact markdown-ish text. */
-function blockToText($el) {
+function blockToText($el: Cheerio<AnyNode>) {
   return $el
     .text()
     .replace(/\r/g, "")
@@ -71,7 +74,7 @@ function blockToText($el) {
     .trim();
 }
 
-function codeHeaderOf($, el) {
+function codeHeaderOf($: CheerioAPI, el: AnyNode) {
   const hdr = $(el).find("h4.code-header").first();
   const own = $(el).children("h4.code-header").first();
   const target = own.length ? own : hdr;
@@ -91,7 +94,7 @@ function codeHeaderOf($, el) {
  * `nextAll()` already returns the siblings, and `find()` only searches their
  * descendants, so it silently matches the following item's docs instead.
  */
-function docblockFor($, el, skipSelector) {
+function docblockFor($: CheerioAPI, el: AnyNode, skipSelector: string) {
   const inside = $(el).find(".docblock").first();
   if (inside.length) return inside;
 
@@ -112,7 +115,7 @@ function docblockFor($, el, skipSelector) {
   return null;
 }
 
-function isNoise($, el) {
+function isNoise($: CheerioAPI, el: AnyNode) {
   for (const sel of NOISE_LISTS) {
     if ($(el).closest(sel).length) return true;
   }
@@ -129,11 +132,12 @@ function isNoise($, el) {
  * field on the record captures. Returns "" when the impl is undocumented (the
  * common `#[derive(Default)]` case).
  */
-function defaultImplDoc($, skipSelector) {
+function defaultImplDoc($: CheerioAPI, skipSelector: string) {
   const impl = $('section[id^="impl-Default-for-"]');
   if (!impl.length) return "";
   const fn = $('section[id="method.default"], section[id^="method.default-"]').first();
-  const doc = docblockFor($, fn.length ? fn : impl.first(), skipSelector);
+  const node = (fn.length ? fn : impl.first())[0];
+  const doc = node ? docblockFor($, node, skipSelector) : null;
   const text = doc && doc.length ? normalizeSpace(blockToText(doc)) : "";
   // Ignore the inherited trait doc ("Returns the default value for a type"),
   // which carries no type-specific information and only adds noise.
@@ -160,7 +164,9 @@ function defaultImplDoc($, skipSelector) {
  * is the only reliable place the field name lives (the id prefix is
  * `structfield.`, not `field.`).
  */
-function fieldFromSpan($, el, { crate, module, file, relFile, owner, bevyVersion }) {
+function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, owner, bevyVersion }: {
+  crate: string; module: string; file: string; relFile: string; owner: string | null; bevyVersion: string | null;
+}): RustdocRecord | null {
   const id = $(el).attr("id") || "";
   const name = id.replace(/^structfield\./, "");
   if (!name) return null;
@@ -203,7 +209,7 @@ function fieldFromSpan($, el, { crate, module, file, relFile, owner, bevyVersion
  * page once is both cheaper and more accurate than filtering each field: every
  * field on a glam page is a glam field.
  */
-function depCrateOfPage($, srcLink) {
+function depCrateOfPage($: CheerioAPI | null, srcLink: string | null) {
   const ref = String(srcLink || "");
   if (ref.includes("rust-lang.org")) return "std";
   const m = ref.match(/docs\.rs\/([a-z0-9_]+)\//);
@@ -226,9 +232,9 @@ function depCrateOfPage($, srcLink) {
  * <summary>. Returns null for an example in the type-level docblock, which
  * genuinely belongs to the page's own item.
  */
-function itemForExample($, el) {
+function itemForExample($: CheerioAPI, el: AnyNode) {
   // Walk out to the innermost <details> that wraps an item, then read its summary.
-  let sec = null;
+  let sec: Cheerio<AnyNode> | null = null;
   let node = $(el);
   for (let depth = 0; depth < 8 && node.length; depth++) {
     const details = node.is("details") ? node : node.closest("details");
@@ -250,7 +256,7 @@ function itemForExample($, el) {
 
   // The type comes from the enclosing impl block, whose header is a preceding
   // sibling section (`<section id="impl-Query-for-X">`).
-  let owner = ownerFromImpl($, sec[0]);
+  let owner = sec[0] ? ownerFromImpl($, sec[0]) : null;
   if (!owner) {
     const impl = sec.closest("details").prevAll("section.impl").first();
     if (impl.length) {
@@ -265,8 +271,8 @@ function itemForExample($, el) {
   return { owner: owner || null, name };
 }
 
-function itemKindFromSectionId(id) {
-  const prefix = id.split(".")[0];
+function itemKindFromSectionId(id: string) {
+  const prefix = id.split(".")[0] ?? "";
   switch (prefix) {
     case "method":
     case "tymethod":
@@ -292,7 +298,7 @@ function itemKindFromSectionId(id) {
   }
 }
 
-function sectionName(id) {
+function sectionName(id: string) {
   const i = id.indexOf(".");
   return i === -1 ? id : id.slice(i + 1);
 }
@@ -301,7 +307,7 @@ function sectionName(id) {
  * Is this method defined by a trait impl rather than an inherent impl?
  * rustdoc marks these with the `trait-impl` class.
  */
-function isTraitImplMethod($, el) {
+function isTraitImplMethod($: CheerioAPI, el: AnyNode) {
   return $(el).hasClass("trait-impl");
 }
 
@@ -310,7 +316,7 @@ function isTraitImplMethod($, el) {
  * `impl MyTrait for MyType` or `impl<T> MyTrait<T> for MyType`.
  * Returns null for an inherent `impl MyType`.
  */
-function traitNameFromImpl($, el) {
+function traitNameFromImpl($: CheerioAPI, el: AnyNode) {
   const implSection = enclosingImpl($, el);
   if (!implSection) return null;
   const hdr = $(implSection).children("h3.code-header").first();
@@ -337,13 +343,13 @@ const STD_TRAITS = new Set([
   "ToString", "Unpin", "Write", "fmt", "std",
 ]);
 
-function traitIsLocal(traitName, crate) {
+function traitIsLocal(traitName: string | null, crate: string) {
   if (!traitName) return false;
   if (STD_TRAITS.has(traitName)) return false;
   // Path-qualified traits (e.g. `bevy_math::RectOps`) are local when they start
   // with the crate under documentation.
   if (traitName.includes("::")) {
-    const head = traitName.split("::")[0];
+    const head = traitName.split("::")[0] ?? "";
     return head === crate || head.startsWith("bevy");
   }
   // A bare name we do not recognise is most likely a std trait we have not
@@ -362,7 +368,7 @@ function traitIsLocal(traitName, crate) {
  * so the impl is neither an ancestor nor a descendant of the method. We look
  * for an ancestor impl first, then fall back to a preceding sibling.
  */
-function ownerFromImpl($, el) {
+function ownerFromImpl($: CheerioAPI, el: AnyNode) {
   const implSection = enclosingImpl($, el);
   if (!implSection) return null;
   // Clone the header and drop the `where` div before reading text: rustdoc
@@ -376,13 +382,13 @@ function ownerFromImpl($, el) {
 }
 
 /** The `<section class="impl">` that owns this method, if any. */
-function enclosingImpl($, el) {
+function enclosingImpl($: CheerioAPI, el: AnyNode): AnyNode | null {
   const ancestor = $(el).closest("section.impl");
-  if (ancestor.length) return ancestor;
+  if (ancestor.length) return ancestor[0] ?? null;
   let node = $(el);
   for (let depth = 0; depth < 7 && node.length; depth++) {
     const prev = node.prevAll().find("section.impl").first();
-    if (prev.length) return prev;
+    if (prev.length) return prev[0] ?? null;
     node = node.parent();
     if (!node.length) break;
     if (node.is("section#main-content")) break;
@@ -391,35 +397,35 @@ function enclosingImpl($, el) {
 }
 
 /** Parse `struct.Query-1.html` -> { kind: 'struct', name: 'Query' } */
-function kindFromFilename(file) {
+function kindFromFilename(file: string): { kind: string | null; name: string | null } {
   const base = path.basename(file, ".html");
   if (base === "index" || base === "all") return { kind: "module", name: null };
   if (base === "fnindex" || base === "traitindex") return { kind: null, name: null };
   const m = base.match(/^([a-z_]+)\.(.+?)(?:-\d+)?$/);
   if (!m) return { kind: null, name: null };
-  return { kind: m[1], name: m[2] };
+  return { kind: m[1] ?? null, name: m[2] ?? null };
 }
 
 /** Turn `bevy/ecs/query/struct.Query.html` into module path `bevy::ecs::query`. */
-function moduleFromPath(docRoot, file) {
+function moduleFromPath(docRoot: string, file: string) {
   const rel = path.relative(docRoot, file).replace(/\\/g, "/");
   const segs = rel.split("/");
-  const crate = segs[0];
+  const crate = segs[0] ?? "";
   const rest = segs.slice(1);
   // Drop the page filename. For modules that is `index.html`; for items it is
   // `struct.Query.html`, which must not become part of the module path.
-  if (rest.length && /\.html$/.test(rest[rest.length - 1])) rest.pop();
+  if (rest.length && /\.html$/.test(rest[rest.length - 1] ?? "")) rest.pop();
   return { crate, module: [crate, ...rest].join("::") };
 }
 
-function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) {
+function parsePage(html: string, file: string, docRoot: string, bevyVersion: string | null, { docsChars = 4000 }: { docsChars?: number } = {}): RustdocRecord[] {
   const $ = cheerio.load(html);
-  const clip = (t) => (t ? (t.length <= docsChars ? t : t.slice(0, docsChars).trimEnd() + " …") : "");
+  const clip = (t: string) => (t ? (t.length <= docsChars ? t : t.slice(0, docsChars).trimEnd() + " …") : "");
   const { crate, module } = moduleFromPath(docRoot, file);
   const { kind: fileKind, name: fileName } = kindFromFilename(file);
   const relFile = path.relative(docRoot, file).replace(/\\/g, "/");
 
-  const records = [];
+  const records: RustdocRecord[] = [];
   const skipSel = NOISE_LISTS.join(", ");
 
   // ---- 1. The top-level item on this page -------------------------------
@@ -472,7 +478,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
       const traitName = traitNameFromImpl($, el);
       if (!traitIsLocal(traitName, crate)) return;
     }
-    const name = sectionName(id);
+    const name = sectionName(id ?? "");
     if (!name) return;
 
     const signature = codeHeaderOf($, el);
@@ -529,7 +535,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
   // ---- 4. Enum variants get their own records ---------------------------
   $("section[id^='variant.']").each((_, el) => {
     const id = $(el).attr("id");
-    const name = sectionName(id);
+    const name = sectionName(id ?? "");
     const docs = clip(blockToText($(el).find(".docblock").first()));
     records.push({
       source: "rustdoc",
@@ -560,7 +566,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
   // ("fn post_process_system(\n76 view: ViewQuery<("). Reading the inner <code>
   // of the <pre> recovers the source exactly, because the syntax-highlighting
   // <span>s are the only markup inside it.
-  const examples = [];
+  const examples: { example: DocExample; $el: Cheerio<AnyNode> }[] = [];
   // Scoped deliberately. A bare `pre.rust` selector also matches
   // `pre.rust.item-decl` -- the type's own declaration (`pub struct
   // MinimalPlugins;`) -- which is not an example. Real doctests live inside
@@ -588,7 +594,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
       // provenance is worth keeping -- it says the snippet is real, runnable
       // engine code rather than something the author wrote inline.
       const scraped = $pre.closest(".scraped-example");
-      const title = scraped
+      const title = scraped.length
         ? scraped.find(".scraped-example-title").first().text().trim()
         : null;
       const example = {
@@ -597,7 +603,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
         // marker is the entire point of them, so it is preserved rather than lost.
         compile_fail: $pre.hasClass("compile_fail"),
         ignored: $pre.hasClass("ignore"),
-        scraped: !!scraped,
+        scraped: scraped.length > 0,
         source_file: title,
         code: src.replace(/\n+$/, ""),
       };
@@ -610,7 +616,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
   // full_path, which is unique per item within a page.
   const byPath = new Map(records.map((r) => [r.full_path, r]));
   for (const { example, $el } of examples) {
-    const item = itemForExample($, $el[0]);
+    const item = $el[0] ? itemForExample($, $el[0]) : null;
     const target = item
       ? byPath.get(
           item.owner
@@ -626,7 +632,7 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
 }
 
 /** Recursively collect every .html file under `dir`. */
-export function walkHtml(dir, out = []) {
+export function walkHtml(dir: string, out: string[] = []): string[] {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -660,7 +666,7 @@ export function walkHtml(dir, out = []) {
  * `index.html` pages ARE still walked into (their function lists are useful),
  * but the giant ones are skipped when they carry no item markup.
  */
-function isIndexablePage(file, size) {
+function isIndexablePage(file: string, size: number) {
   const base = path.basename(file);
   if (base === "all.html" || base === "help.html" || base === "settings.html") {
     return false;
@@ -674,7 +680,7 @@ function isIndexablePage(file, size) {
  * Ingest a cargo target/doc directory. Returns item records.
  * `includeCrates` lets us index only the facade crate for a smaller index.
  */
-export function ingestRustdoc(docDir, bevyVersion, { includeCrates = null } = {}) {
+export function ingestRustdoc(docDir: string | null, bevyVersion: string | null, { includeCrates = null }: { includeCrates?: string[] | null } = {}): RustdocRecord[] {
   if (!docDir || !fs.existsSync(docDir)) return [];
   return [...streamRustdoc(docDir, bevyVersion, { includeCrates })];
 }
@@ -692,7 +698,7 @@ export function ingestRustdoc(docDir, bevyVersion, { includeCrates = null } = {}
  * Each page's records are still held only for that page, so peak memory is
  * bounded by the largest single HTML page (rustdoc's biggest is ~6 MB).
  */
-export function* streamRustdoc(docDir, bevyVersion, { includeCrates = null } = {}) {
+export function* streamRustdoc(docDir: string | null, bevyVersion: string | null, { includeCrates = null }: { includeCrates?: string[] | null } = {}): Generator<RustdocRecord> {
   if (!docDir || !fs.existsSync(docDir)) return;
 
   for (const file of walkHtml(docDir, [])) {
@@ -722,7 +728,7 @@ export function* streamRustdoc(docDir, bevyVersion, { includeCrates = null } = {
       });
     } catch (err) {
       if (process.env.BEVY_MCP_DEBUG === "1") {
-        console.error("[rustdoc] failed:", file, err.message);
+        console.error("[rustdoc] failed:", file, errorMessage(err));
       }
     }
   }

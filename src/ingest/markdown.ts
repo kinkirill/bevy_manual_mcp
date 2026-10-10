@@ -14,13 +14,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { WebsiteRecord } from "../types.js";
+
+interface FrontMatter { title?: string; weight?: number; status?: string; long_title?: string; public_draft?: unknown }
+interface FileInfo { kind: string; title?: string | null; from_version?: string; to_version?: string; version?: string; pr?: number | null }
+interface MarkdownChunk { heading: string | null; heading_line: number; breadcrumb: string[]; text: string }
 
 /** Strip a Zola/TOML front matter block and parse the few keys we care about. */
-function splitFrontMatter(text) {
+function splitFrontMatter(text: string): { meta: FrontMatter; body: string } {
   const m = text.match(/^\+\+\+\r?\n([\s\S]*?)\r?\n\+\+\+\r?\n?/);
   if (!m) return { meta: {}, body: text };
-  const meta = {};
-  const fm = m[1];
+  const meta: FrontMatter = {};
+  const fm = m[1] ?? "";
   const title = fm.match(/^\s*title\s*=\s*"([^"]*)"/m);
   if (title) meta.title = title[1];
   const weight = fm.match(/^\s*weight\s*=\s*(\d+)/m);
@@ -32,7 +37,7 @@ function splitFrontMatter(text) {
   return { meta, body: text.slice(m[0].length).replace(/^\r?\n/, "") };
 }
 
-function walkMarkdown(dir, out = []) {
+function walkMarkdown(dir: string, out: string[] = []): string[] {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -52,7 +57,7 @@ function walkMarkdown(dir, out = []) {
 }
 
 /** Classify a file by its path inside the website repo. */
-function classify(rel) {
+function classify(rel: string): FileInfo {
   const migration = rel.match(
     /^content\/learn\/migration-guides\/(\d+\.\d+)-to-(\d+\.\d+)\.md$/,
   );
@@ -72,7 +77,7 @@ function classify(rel) {
     /^release-content\/(\d+\.\d+)\/migration-guides\/(?:(\d+)_)?(.*)\.md$/,
   );
   if (relMig) {
-    const slug = relMig[3].replace(/_/g, " ");
+    const slug = (relMig[3] ?? "").replace(/_/g, " ");
     return {
       kind: "migration_entry",
       title: slug,
@@ -85,7 +90,7 @@ function classify(rel) {
   if (relNotes) {
     return {
       kind: "release_notes",
-      title: relNotes[2].replace(/_/g, " "),
+      title: (relNotes[2] ?? "").replace(/_/g, " "),
       version: relNotes[1],
     };
   }
@@ -126,14 +131,14 @@ function classify(rel) {
  * Split a document into heading-scoped chunks. Keeps a breadcrumb so a result
  * can be cited precisely, e.g. "The Game Loop > Scheduling > System Ordering".
  */
-function chunkByHeadings(body, { maxChars = 4000 } = {}) {
+function chunkByHeadings(body: string, { maxChars = 4000 }: { maxChars?: number } = {}): MarkdownChunk[] {
   const lines = body.split(/\r?\n/);
-  const chunks = [];
-  const stack = [];
+  const chunks: MarkdownChunk[] = [];
+  const stack: string[] = [];
 
-  let heading = null;
+  let heading: string | null = null;
   let headingLine = 0;
-  let buf = [];
+  let buf: string[] = [];
 
   const flush = () => {
     const text = buf.join("\n").trim();
@@ -152,13 +157,13 @@ function chunkByHeadings(body, { maxChars = 4000 } = {}) {
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i] ?? "";
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     // Ignore headings inside fenced code blocks.
     if (h && !isInsideFence(lines, i)) {
       flush();
-      const level = h[1].length;
-      while (stack.length && stack[stack.length - 1].match(/^#+/)[0].length >= level) {
+      const level = (h[1] ?? "").length;
+      while (stack.length && ((stack[stack.length - 1] ?? "").match(/^#+/)?.[0].length ?? 0) >= level) {
         stack.pop();
       }
       stack.push(line);
@@ -173,10 +178,10 @@ function chunkByHeadings(body, { maxChars = 4000 } = {}) {
   return chunks;
 }
 
-function isInsideFence(lines, idx) {
+function isInsideFence(lines: string[], idx: number) {
   let fences = 0;
   for (let i = 0; i < idx; i++) {
-    if (/^\s*(```|~~~)/.test(lines[i])) fences++;
+    if (/^\s*(```|~~~)/.test(lines[i] ?? "")) fences++;
   }
   return fences % 2 === 1;
 }
@@ -185,11 +190,11 @@ function isInsideFence(lines, idx) {
  * Ingest a bevy-website checkout into records.
  * `bevyVersion` scopes migration/release records to the pinned version.
  */
-export function ingestWebsite(websiteDir, bevyVersion) {
+export function ingestWebsite(websiteDir: string | null, bevyVersion: string | null): WebsiteRecord[] {
   if (!websiteDir || !fs.existsSync(websiteDir)) return [];
 
   const files = walkMarkdown(websiteDir, []);
-  const records = [];
+  const records: WebsiteRecord[] = [];
 
   for (const file of files) {
     const rel = path.relative(websiteDir, file).replace(/\\/g, "/");
@@ -211,7 +216,7 @@ export function ingestWebsite(websiteDir, bevyVersion) {
     const draft = meta.status === "hidden" || meta.public_draft != null;
 
     const chunks = chunkByHeadings(body);
-    const base = {
+    const base: Omit<WebsiteRecord, "kind" | "name" | "full_path" | "signature" | "docs"> = {
       source: "website",
       crate: "bevy-website",
       module: rel.split("/").slice(0, -1).join("::"),

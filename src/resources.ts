@@ -19,38 +19,40 @@
  * path containing `/` (module `gltf` under `bevy::gltf`) stays unambiguous.
  */
 
+import type { ResourceQuery } from "./types.js";
+
 const SCHEME = "bevy";
 
-export function apiUri(version, fullPath) {
-  return `${SCHEME}://api/${encodeURIComponent(version)}/${encodeURIComponent(
+export function apiUri(version: string | null | undefined, fullPath: string) {
+  return `${SCHEME}://api/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(
     fullPath,
   )}`;
 }
 
-export function kindUri(version, kind) {
-  return `${SCHEME}://kind/${encodeURIComponent(version)}/${encodeURIComponent(kind)}`;
+export function kindUri(version: string | null | undefined, kind: string) {
+  return `${SCHEME}://kind/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(kind)}`;
 }
 
-export function moduleUri(version, module) {
-  return `${SCHEME}://module/${encodeURIComponent(version)}/${encodeURIComponent(
+export function moduleUri(version: string | null | undefined, module: string) {
+  return `${SCHEME}://module/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(
     module,
   )}`;
 }
 
-export function crateUri(version, crateName) {
-  return `${SCHEME}://crate/${encodeURIComponent(version)}/${encodeURIComponent(
+export function crateUri(version: string | null | undefined, crateName: string) {
+  return `${SCHEME}://crate/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(
     crateName,
   )}`;
 }
 
-export function ownerUri(version, owner) {
-  return `${SCHEME}://owner/${encodeURIComponent(version)}/${encodeURIComponent(
+export function ownerUri(version: string | null | undefined, owner: string) {
+  return `${SCHEME}://owner/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(
     owner,
   )}`;
 }
 
-export function fileUri(version, file) {
-  return `${SCHEME}://doc/${encodeURIComponent(version)}/${encodeURIComponent(
+export function fileUri(version: string | null | undefined, file: string) {
+  return `${SCHEME}://doc/${encodeURIComponent(version ?? "unknown")}/${encodeURIComponent(
     file,
   )}`;
 }
@@ -58,7 +60,7 @@ export function fileUri(version, file) {
 export const indexUri = `${SCHEME}://index/versions`;
 
 /** Is this a URI this server handles? */
-export function isBevyUri(uri) {
+export function isBevyUri(uri: unknown): uri is string {
   return typeof uri === "string" && uri.startsWith(`${SCHEME}://`);
 }
 
@@ -66,43 +68,43 @@ export function isBevyUri(uri) {
  * Parse a bevy:// URI into a query descriptor.
  * Returns null when the URI is not one of ours or is malformed.
  */
-export function parseUri(uri) {
+export function parseUri(uri: unknown): ResourceQuery | null {
   if (!isBevyUri(uri)) return null;
-  let rest;
+  let rest: URL;
+  let segs: string[];
   try {
     rest = new URL(uri);
+    segs = rest.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
   } catch {
     return null;
   }
   // `new URL` puts bevy in host and the path in pathname.
   const kind = rest.hostname;
-  const segs = rest.pathname
-    .split("/")
-    .filter(Boolean)
-    .map((s) => decodeURIComponent(s));
+  const version = segs[0];
+  if (kind !== "index" && !version) return null;
 
   switch (kind) {
     case "api":
     case "path":
       if (segs.length < 2) return null;
-      return { type: "api", version: segs[0], path: segs.slice(1).join("/") };
+      return { type: "api", version: version!, path: segs.slice(1).join("/") };
     case "kind":
-      if (segs.length < 2) return null;
-      return { type: "kind", version: segs[0], kind: segs[1] };
+      if (segs.length !== 2 || !segs[1]) return null;
+      return { type: "kind", version: version!, kind: segs[1] };
     case "module":
       if (segs.length < 2) return null;
-      return { type: "module", version: segs[0], module: segs.slice(1).join("/") };
+      return { type: "module", version: version!, module: segs.slice(1).join("/") };
     case "crate":
-      if (segs.length < 2) return null;
-      return { type: "crate", version: segs[0], crate: segs[1] };
+      if (segs.length !== 2 || !segs[1]) return null;
+      return { type: "crate", version: version!, crate: segs[1] };
     case "owner":
-      if (segs.length < 2) return null;
-      return { type: "owner", version: segs[0], owner: segs[1] };
+      if (segs.length !== 2 || !segs[1]) return null;
+      return { type: "owner", version: version!, owner: segs[1] };
     case "doc":
       if (segs.length < 2) return null;
-      return { type: "doc", version: segs[0], file: segs.slice(1).join("/") };
+      return { type: "doc", version: version!, file: segs.slice(1).join("/") };
     case "index":
-      return { type: "index" };
+      return segs.length === 1 && segs[0] === "versions" ? { type: "index" } : null;
     default:
       return null;
   }
@@ -116,7 +118,7 @@ export function parseUri(uri) {
  * absurd, and pagination alone does not solve discovery. Templates let a client
  * ask for the shape it wants.
  */
-export function templates(activeVersion) {
+export function templates(activeVersion: string | null) {
   const v = encodeURIComponent(activeVersion || "unknown");
   return [
     {

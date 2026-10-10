@@ -45,7 +45,7 @@ node scripts/fetch-docs.mjs 0.20.0
 ```
 
 ```json
-{ "bevyVersion": "0.20.0", "docDir": "~/.cache/bevy-mcp/bevy-0.20.0" }
+{ "bevyVersion": "0.20.0", "docDir": "~/.cache/bevy-mcp/0.20.0" }
 ```
 
 This downloads ~7,900 rustdoc pages for the `bevy` facade, which re-exports the

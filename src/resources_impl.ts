@@ -23,16 +23,16 @@ import { queryRecords, findByPath, cratesIn } from "./store.js";
 import { paginate } from "./pagination.js";
 import { formatRecord } from "./format.js";
 import { bumpBetween } from "./store.js";
+import { ErrorCode, McpError, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import type { BevyIndex } from "./store.js";
+import type { ResourceQuery } from "./types.js";
 
 /** JSON-RPC "invalid params", used for a URI that parses but names nothing. */
-function invalidParams(message, data) {
-  const err = new Error(message);
-  err.code = -32602;
-  if (data) err.data = data;
-  return err;
+function invalidParams(message: string, data?: unknown) {
+  return new McpError(ErrorCode.InvalidParams, message, data);
 }
 
-function textContent(uri, text) {
+function textContent(uri: string, text: string): ReadResourceResult {
   return {
     contents: [
       {
@@ -45,7 +45,7 @@ function textContent(uri, text) {
 }
 
 /** Strip any query string; the query parser only looks at the path. */
-function bareUri(uri) {
+function bareUri(uri: string) {
   const s = String(uri);
   const i = s.indexOf("?");
   return i === -1 ? s : s.slice(0, i);
@@ -57,12 +57,29 @@ function bareUri(uri) {
  * @param resolveVersion  async (version) => index | null
  * @param activeVersion   the project's pinned version
  */
-export function createResources({ resolveVersion, activeVersion, versions }) {
+export interface ResourceDependencies {
+  resolveVersion: (version: string | null | undefined) => Promise<BevyIndex | null>;
+  activeVersion: string | null;
+  versions: () => string[];
+}
+export type ResourceReadResult = ReadResourceResult & { nextCursor?: string; ttlMs?: number; cacheScope?: string };
+function queryValue(query: ResourceQuery): string {
+  switch (query.type) {
+    case "api": return query.path;
+    case "kind": return query.kind;
+    case "module": return query.module;
+    case "crate": return query.crate;
+    case "owner": return query.owner;
+    case "doc": return query.file;
+    case "index": return "versions";
+  }
+}
+export function createResources({ resolveVersion, activeVersion, versions }: ResourceDependencies) {
   /**
    * Handle one resources/read request.
    * Throws a JSON-RPC-shaped error for a bad or unknown URI.
    */
-  async function read(uri, { cursor } = {}) {
+  async function read(uri: string, { cursor }: { cursor?: string; variables?: unknown } = {}): Promise<ResourceReadResult> {
     if (!isBevyUri(uri)) {
       throw invalidParams(`Not a bevy resource URI: ${uri}`, { uri });
     }
@@ -73,8 +90,7 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
     // A cursor may arrive as a `?cursor=` query parameter on the URI itself,
     // which is how a paginated listing is continued.
     if (!cursor && typeof uri === "string") {
-      const qIdx = uri.indexOf("?cursor=");
-      if (qIdx !== -1) cursor = decodeURIComponent(uri.slice(qIdx + 8).split("&")[0]);
+      cursor = new URL(uri).searchParams.get("cursor") ?? undefined;
     }
 
     if (q.type === "index") {
@@ -134,7 +150,7 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
         const matches = queryRecords(index, q);
         if (!matches.length) {
           throw invalidParams(
-            `No items matched ${q.type}="${q[q.type]}" in Bevy ${q.version}.`,
+            `No items matched ${q.type}="${queryValue(q)}" in Bevy ${q.version}.`,
             { uri },
           );
         }
@@ -143,7 +159,7 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
         const page = paginate(matches, q, cursor);
 
         const listing = [
-          `# Bevy ${q.version} - ${q.type}: ${q[q.type]}`,
+          `# Bevy ${q.version} - ${q.type}: ${queryValue(q)}`,
           "",
           `_${page.total} item(s), showing ${page.items.length}. ` +
             `Paged; re-read with \`cursor\` to continue._`,
@@ -166,8 +182,6 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
         };
       }
 
-      default:
-        throw invalidParams(`Unsupported bevy URI type: ${q.type}`, { uri });
     }
   }
 
@@ -175,27 +189,39 @@ export function createResources({ resolveVersion, activeVersion, versions }) {
    * Completion for the resource templates, so an interactive client can
    * discover valid version / kind / crate values as the user types.
    */
-  async function complete(uriTemplate, { argument, value }) {
+  async function complete(uriTemplate: string, { argument, value, context }: {
+    argument: string;
+    value: string;
+    context?: { arguments?: Record<string, string> };
+  }): Promise<string[]> {
     const all = versions();
     const v = String(value ?? "");
 
-    if (uriTemplate.includes("{version}")) {
+    if (!uriTemplate.includes(`{${argument}}`)) return [];
+    if (argument === "version") {
       const matches = all.filter((x) => x.toLowerCase().startsWith(v.toLowerCase()));
       return matches;
     }
-    if (uriTemplate.includes("{kind}")) {
+    if (argument === "kind") {
       const kinds = [
         "struct", "enum", "trait", "fn", "method",
-        "associated_type", "associated_const", "type", "constant", "macro",
+        "associated_type", "associated_const", "type", "constant", "macro", "field", "variant",
       ];
       return kinds.filter((k) => k.startsWith(v.toLowerCase()));
     }
-    if (uriTemplate.includes("{crate}")) {
-      const idx = await resolveVersion(activeVersion);
-      const crates = idx ? cratesIn(idx) : [];
-      return crates.filter((c) => c.toLowerCase().startsWith(v.toLowerCase()));
+    const selectedVersion = context?.arguments?.version ?? activeVersion;
+    const idx = await resolveVersion(selectedVersion);
+    if (!idx) return [];
+    let candidates: string[];
+    switch (argument) {
+      case "crate": candidates = cratesIn(idx); break;
+      case "path": candidates = idx.records.filter((r) => r.source === "rustdoc").map((r) => r.full_path); break;
+      case "module": candidates = idx.records.map((r) => r.module); break;
+      case "owner": candidates = idx.records.flatMap((r) => r.owner ? [r.owner] : []); break;
+      case "file": candidates = idx.records.map((r) => r.file); break;
+      default: return [];
     }
-    return [];
+    return [...new Set(candidates)].filter((candidate) => candidate.toLowerCase().startsWith(v.toLowerCase())).sort();
   }
 
   return { read, complete, templates: () => templates(activeVersion), indexUri };

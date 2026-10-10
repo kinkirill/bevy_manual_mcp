@@ -8,7 +8,7 @@
  * regression this script is built to catch.
  *
  * Usage:
- *   node test/ranking-snapshot.mjs capture > test/fixtures/ranking-snapshot.json
+ *   node test/ranking-snapshot.mjs capture  # writes test/fixtures/ranking-snapshot.json
  *   node test/ranking-snapshot.mjs verify  # exits 1 on any difference
  *
  * Not part of `npm test`: it needs the full rustdoc-derived index in data/,
@@ -18,14 +18,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { REPO_ROOT } from "./helpers.mjs";
+import { parseJson } from "../src/types.js";
 
 import { resolveConfig } from "../src/config.js";
 import { VersionRegistry } from "../src/registry.js";
 import { hybridSearch } from "../src/store.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SNAPSHOT_PATH = path.join(HERE, "fixtures", "ranking-snapshot.json");
+const SNAPSHOT_PATH = path.join(REPO_ROOT, "test", "fixtures", "ranking-snapshot.json");
+interface Snapshot { bevy_version: string; generated_for: string; queries: Record<string, string[]> }
 
 // A fixed query set spanning the ranking paths that matter: exact-symbol hits,
 // intent-verb + subject noun, prose-only, filters, and field-name lookups.
@@ -45,7 +46,7 @@ const QUERIES = [
   { q: "scale", limit: 15 },
 ];
 
-async function capture(version) {
+async function capture(version: string | null): Promise<Snapshot> {
   const config = resolveConfig();
   const target = version || config.bevyVersion;
   if (!target) {
@@ -55,7 +56,7 @@ async function capture(version) {
   const registry = new VersionRegistry(config);
   const index = await registry.get(target);
 
-  const out = { bevy_version: target, generated_for: "ranking-stability", queries: {} };
+  const out: Snapshot = { bevy_version: target, generated_for: "ranking-stability", queries: {} };
   for (const { q, limit, kind } of QUERIES) {
     const res = hybridSearch(index, q, { limit: limit ?? 8, filters: kind ? { kind } : {} });
     out.queries[q + (kind ? ` [${kind}]` : "")] = res.map((r) => r.record.full_path);
@@ -63,7 +64,7 @@ async function capture(version) {
   return out;
 }
 
-function compare(expected, actual) {
+function compare(expected: Snapshot, actual: Snapshot): string[] {
   const diffs = [];
   const keys = new Set([...Object.keys(expected.queries), ...Object.keys(actual.queries)]);
   for (const k of keys) {
@@ -86,6 +87,19 @@ function compare(expected, actual) {
   return diffs;
 }
 
+function readSnapshot(text: string): Snapshot {
+  const value = parseJson(text);
+  if (typeof value !== "object" || value === null || !("bevy_version" in value) || typeof value.bevy_version !== "string" || !("queries" in value) || typeof value.queries !== "object" || value.queries === null) {
+    throw new Error("Invalid ranking snapshot");
+  }
+  const queries: Record<string, string[]> = {};
+  for (const [key, items] of Object.entries(value.queries)) {
+    if (!Array.isArray(items) || !items.every((item: unknown) => typeof item === "string")) throw new Error("Invalid ranking snapshot query");
+    queries[key] = items as string[];
+  }
+  return { bevy_version: value.bevy_version, generated_for: "ranking-stability", queries };
+}
+
 const mode = process.argv[2] || "capture";
 const version = process.argv[3] || process.env.BEVY_VERSION || null;
 
@@ -99,7 +113,7 @@ if (mode === "capture") {
     console.error(`No snapshot at ${SNAPSHOT_PATH}. Capture one first.`);
     process.exit(2);
   }
-  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, "utf8"));
+  const expected = readSnapshot(fs.readFileSync(SNAPSHOT_PATH, "utf8"));
   const actual = await capture(version);
   if (expected.bevy_version !== actual.bevy_version) {
     console.error(

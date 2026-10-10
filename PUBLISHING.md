@@ -24,6 +24,14 @@ asset. The Release asset is what keeps the first run to a ~67 MB download instea
 of a
 ~30 minute docs mirror plus build.
 
+The repository contains TypeScript sources. `npm ci` and Git dependency
+installation run `prepare`, which compiles into `build/` and generates the
+legacy JavaScript launchers. Do not commit generated launchers or build output.
+Before releasing, run `npm run typecheck`, `npm test`, and
+`npm run test:package -- --git` on Node.js 22 or newer. The packed artifact
+contains executable JavaScript and vendored prose, with no compiler needed
+at runtime.
+
 ## Adding a new Bevy minor (e.g. 0.21)
 
 1. **Bump the version**
@@ -84,8 +92,6 @@ gh release create v0.21.0 dist/bevy-index-0.21.0.tar.gz \
   --title "Bevy 0.21 index" \
   --notes "Prebuilt Bevy 0.21 search index for bevy-mcp."
 ```
-
-## Publishing to npm (trusted publishing)
 
 ## Publishing to npm (optional)
 
