@@ -337,6 +337,26 @@ try {
     assert.match(id.signature, /^id:\s*u32$/, `signature was ${JSON.stringify(id.signature)}`);
   });
 
+  await test("tuple struct members are not indexed as fields and retain their type declaration", () => {
+    // rustdoc names them `structfield.0`, `structfield.1`. Numeric leaf keys
+    // would pollute the symbol table, so they are skipped; the declaration
+    // itself remains on the type record.
+    const tuplePage = path.join(docDir, "rdfixture", "struct.TupleWidget.html");
+    const $ = cheerio.load(fs.readFileSync(tuplePage, "utf8"));
+    assert.equal($("span.structfield[id^='structfield.']").length, 2, "fixture must exercise tuple field headers");
+    const tuple = records.find((record) => record.kind === "struct" && record.name === "TupleWidget");
+    assert.ok(tuple, "tuple struct must retain its type record");
+    assert.equal(tuple.full_path, "rdfixture::TupleWidget");
+    assert.match(tuple.signature, /pub struct TupleWidget\s*\(/);
+    assert.match(tuple.signature, /u32/);
+    assert.match(tuple.signature, /String/);
+    assert.equal(
+      records.filter((r) => r.kind === "field" && /^\d+$/.test(r.name)).length,
+      0,
+      "tuple members must not become field records",
+    );
+  });
+
   await test("each field keeps its OWN documentation", () => {
     const id = records.find((r) => r.kind === "field" && r.name === "id");
     assert.ok(id);

@@ -65,6 +65,29 @@ That command is headless: it builds and exits. Starting the server
 (`node index.js`) builds lazily too, but it then blocks on stdio, so it is the
 wrong tool for a script or CI.
 
+### Rebuild several existing mirrors
+
+```bash
+npm run rebuild-all -- 0.19.1 0.20.0
+npm run rebuild-all -- --mirror-root /path/to/mirrors --data /path/to/data
+```
+
+With no versions, this rebuilds 0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and
+0.20.0 in that order. Each build runs offline with `--force`; it never downloads
+documentation. Missing mirrors are reported and skipped. Failed builds are
+reported, the remaining versions are attempted, and the command exits nonzero.
+
+The command uses `docDir`, `mirrorDir` and `dataDir` from the normal configuration
+(including their environment overrides). It also checks `bevy-docs-<version>`
+inside the package and the legacy `~/.cache/bevy-mcp/bevy-<version>` mirrors.
+`--mirror-root` limits lookup to `<root>/<version>`, `<root>/bevy-<version>` and
+`<root>/bevy-docs-<version>`. `--data` overrides the configured index directory.
+For several versions, a shared configured documentation directory is used only
+for its detected documentation version or the configured project's version;
+untagged shared mirrors require an explicit single version.
+The legacy `scripts/rebuild-all-indexes.sh` command remains available after
+`npm run build`; Windows users can run the npm command or its `.mjs` launcher.
+
 ### Add the engine examples (optional)
 
 `bevy_examples` prefers real engine examples. Without an engine checkout you get

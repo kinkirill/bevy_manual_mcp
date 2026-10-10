@@ -356,6 +356,9 @@ export class BevyIndex {
    */
   addRecords(records: Iterable<BevyRecord>) {
     for (const r of records) {
+      // Older v5 bundles contain tuple members under numeric field names.
+      // Keep those bundles readable while matching current rustdoc ingestion.
+      if (r.source === "rustdoc" && r.kind === "field" && /^\d+$/.test(r.name)) continue;
       if (!r.id) {
         const versionScoped = isVersionSpecificSource(r.source) ? r.bevy_version || "?" : "";
         r.id = crypto

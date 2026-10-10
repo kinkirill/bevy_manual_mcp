@@ -64,6 +64,8 @@ pub struct Widget {
     pub label: String,
 }
 
+/// A widget stored in tuple form.
+pub struct TupleWidget(pub u32, pub String);
 
 impl Widget {
     /// Creates a widget.

@@ -454,6 +454,49 @@ try {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  await test("source-less v5 tuple-field caches load without numeric symbols and still detect torn counts", async () => {
+    const root = tempDir();
+    try {
+      const docs = path.join(root, "docs");
+      fs.cpSync(docDir, docs, { recursive: true });
+      const config = fixtureConfig(root, { docDir: docs });
+      const registry = new VersionRegistry(config);
+      const original = await registry.get("9.9.9");
+      const tuple = original.records.find((record) => record.kind === "struct" && record.name === "TupleWidget");
+      assert.ok(tuple, "fixture must contain a genuine tuple struct");
+      const numeric = fixtureRecord({
+        source: "rustdoc", kind: "field", name: "0", full_path: "rdfixture::TupleWidget::0",
+        owner: "TupleWidget", module: "rdfixture", file: tuple.file, signature: "0: u32",
+        bevy_version: "9.9.9", id: "legacy-tuple-field",
+      });
+      const recordsPath = path.join(registry.dirFor("9.9.9"), "records.ndjson");
+      const metaPath = path.join(registry.dirFor("9.9.9"), "meta.json");
+      const meta = parseObject(fs.readFileSync(metaPath, "utf8"));
+      assert.equal(meta.cache_version, CACHE_VERSION);
+      assert.ok(typeof meta.api_records === "number");
+      const originalCount = meta.api_records;
+      fs.appendFileSync(recordsPath, JSON.stringify(numeric) + "\n");
+      meta.api_records = originalCount + 1;
+      fs.writeFileSync(metaPath, JSON.stringify(meta));
+      fs.rmSync(docs, { recursive: true, force: true });
+      const loaded = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+      // API resources read this collection: only the legacy numeric row is omitted.
+      assert.deepEqual(loaded.records, original.records);
+      assert.ok(loaded.lookupSymbol("Widget::label").some((hit) => hit.record.kind === "field"));
+      assert.match(loaded.lookupSymbol("TupleWidget")[0]!.record.signature, /pub struct TupleWidget\s*\(/);
+      assert.equal(loaded.lookupSymbol("0").length, 0);
+      assert.equal(loaded.lookupSymbol(numeric.full_path).length, 0);
+      assert.equal(loaded.byId.has("legacy-tuple-field"), false);
+      // A count equal to admitted records is still torn against the raw bundle rows.
+      meta.api_records = originalCount;
+      fs.writeFileSync(metaPath, JSON.stringify(meta));
+      const files = [recordsPath, metaPath, path.join(config.dataDir, "registry.json")];
+      const before = files.map((file) => fs.readFileSync(file));
+      await assert.rejects(new VersionRegistry({ ...config, docDir: null }).get("9.9.9"));
+      for (let i = 0; i < files.length; i++) assert.deepEqual(fs.readFileSync(files[i]!), before[i]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   await test("current source-less API cache loads and stale source-less cache stays recoverable", async () => {
     const root = tempDir();
     try {

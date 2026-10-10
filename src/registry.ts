@@ -215,11 +215,15 @@ export class VersionRegistry {
           throw new Error("Rustdoc inputs changed");
         }
         const index = new BevyIndex();
+        let apiCount = 0;
         for await (const record of readNdjson(recordPath)) {
           if (record.source !== "rustdoc" || record.bevy_version !== version) throw new Error("Persisted API record has incorrect provenance");
+          apiCount++;
           index.addRecords([record]);
         }
-        if (metadata.api_records !== undefined && index.records.length !== metadata.api_records) {
+        // The count describes the persisted corpus, including legacy tuple fields
+        // that addRecords omits. Validate it before accepting a filtered index.
+        if (metadata.api_records !== undefined && apiCount !== metadata.api_records) {
           throw new Error("Persisted API record count does not match metadata");
         }
         this.supplement(index, cfg);

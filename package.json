@@ -18,6 +18,7 @@
     "build/src/",
     "build/scripts/",
     "scripts/*.mjs",
+    "scripts/rebuild-all-indexes.sh",
     "vendor/",
     "README.md",
     "GETTING-API-DOCS.md",
@@ -39,6 +40,7 @@
     "publish-index": "node scripts/publish-index.mjs",
     "build-index": "node scripts/build-index.mjs",
     "reindex": "node scripts/build-index.mjs --force",
+    "rebuild-all": "node scripts/rebuild-all-indexes.mjs",
     "test": "npm run build && node build/test/index.mjs",
     "test:unit": "npm run build && node build/test/run-tests.mjs",
     "test:package": "npm run build && node build/scripts/package-smoke.mjs"

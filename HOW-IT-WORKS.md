@@ -77,6 +77,7 @@ src/ingest/owner.ts           impl-header parsing (owner type, trait)
 scripts/fetch-docs.mts        docs.rs mirror with rate-limit handling
 scripts/fetch-index.mts       download the prebuilt index from GitHub Releases
 scripts/build-index.mts       build the index headlessly (CI / manual)
+scripts/rebuild-all-indexes.mts rebuild existing mirrors sequentially, offline
 scripts/publish-index.mts     package an index bundle for a Release
 scripts/fetch-website.mts     refresh vendor/bevy-website (sparse, prose only)
 test/run-tests.mts            unit tests (uses real cargo doc output)
@@ -87,7 +88,9 @@ test/mcp-e2e.mts              protocol-level test over stdio
 `npm ci` builds the strict TypeScript sources into `build/`. The build also
 generates compatibility launchers at `index.js`, `bin/bevy-mcp.js`, and the
 previous `scripts/*.mjs` and `test/*.mjs` paths. These launchers are ignored by
-Git and included where needed in the distributable package. Existing MCP
+Git. The legacy `scripts/rebuild-all-indexes.sh` path is also generated and
+forwards to the compiled TypeScript maintenance command. Launchers are included
+where needed in the distributable package. Existing MCP
 client commands continue to work; the runtime needs Node.js 22 or newer.
 
 ---

@@ -171,6 +171,13 @@ function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, own
   const name = id.replace(/^structfield\./, "");
   if (!name) return null;
 
+  // Tuple struct members are indexed by rustdoc as `structfield.0`, `structfield.1`,
+  // ... They carry no name an agent can use, and admitting them would put numeric
+  // leaf keys ("0", "1") into the symbol table, where a lookup for a bare digit
+  // would return arbitrary members. The declaration itself stays on the type
+  // record, so `ActionRequest` still shows `ActionRequest(u32, u32)`.
+  if (/^\d+$/.test(name)) return null;
+
   const code = $(el).children("code").first();
   if (!code.length) return null;
   // `translation: Vec3` -- the type may itself be wrapped in a link, so read the

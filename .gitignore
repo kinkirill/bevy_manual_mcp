@@ -6,6 +6,7 @@ node_modules/
 /index.js
 /bin/*.js
 /scripts/*.mjs
+/scripts/rebuild-all-indexes.sh
 /test/*.mjs
 
 # built search index (large, version-specific) - distributed via GitHub Releases
