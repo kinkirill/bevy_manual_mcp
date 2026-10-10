@@ -97,7 +97,7 @@ function truncate(s, n) {
 }
 
 /** One compact rendering of a single record. */
-export function formatRecord(r, { docsChars = 700 } = {}) {
+export function formatRecord(r, { docsChars = 700, exampleChars = 1200, exampleLimit = 2 } = {}) {
   const parts = [];
   const icon = iconFor(r);
   const label = SOURCE_LABEL[r.source] || r.source;
@@ -134,6 +134,34 @@ export function formatRecord(r, { docsChars = 700 } = {}) {
     parts.push(`_Section: ${r.breadcrumb.join(" > ")}_`);
   } else if (r.heading) {
     parts.push(`_Section: ${r.heading}_`);
+  }
+
+  // Doctest examples, extracted at ingest time into a separate field so the
+  // `docs` string (which feeds the search index) stays byte-identical.
+  //
+  // These are the highest-value part of an API answer for anything an agent has
+  // to write, and before this they reached the model as run-on prose with
+  // rustdoc's line-number gutter spliced into the source.
+  if (r.examples?.length) {
+    const shown = r.examples.slice(0, exampleLimit);
+    for (const ex of shown) {
+      if (!ex.code.trim()) continue;
+      const note = ex.compile_fail
+        ? "> This example does **not** compile - it demonstrates a mistake.\n"
+        : ex.ignored
+          ? "> Shown for illustration; not a compiling example.\n"
+          : null;
+      if (note) parts.push(note.trim());
+      if (ex.source_file) {
+        parts.push(`_Example scraped from \`${ex.source_file}_\``);
+      }
+      parts.push("```rust\n" + trimCode(ex.code, exampleChars) + "\n```");
+    }
+    if (r.examples.length > shown.length) {
+      parts.push(
+        `_${r.examples.length - shown.length} further example(s) not shown._`,
+      );
+    }
   }
 
   const docs = r.docs && r.docs.trim();

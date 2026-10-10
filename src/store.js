@@ -16,7 +16,16 @@ import { ingestWebsite } from "./ingest/markdown.js";
 import { ingestExamples } from "./ingest/examples.js";
 import { log } from "./config.js";
 
-export const CACHE_VERSION = 4;
+/**
+ * Bump whenever the *shape or content* of a persisted record changes, so a
+ * previously built index is rebuilt instead of being served as current.
+ *
+ * History: 4 = rustdoc records streamed to NDJSON, per-version registry. 5 =
+ * struct fields added to the corpus (they are not reachable by an older index,
+ * and their weights changed, so serving a v4 index would answer field queries
+ * as "no such item" while the server claimed to be current).
+ */
+export const CACHE_VERSION = 5;
 
 /**
  * Serialize the FlexSearch index to a plain object.
@@ -164,6 +173,12 @@ const SOURCE_WEIGHT = {
 };
 
 const KIND_WEIGHT = {
+  // Struct fields are indexed but deliberately low weight. Without an entry
+  // here they would fall through to SOURCE_WEIGHT.rustdoc = 1.0, and ~10-15k
+  // full-weight records named `x`, `y`, `z`, `translation` or `scale` would
+  // crowd real API out of concept queries. They stay reachable by exact lookup
+  // and `bevy://owner/...`, which is where "what fields does X have" resolves.
+  field: 0.45,
   book: 0.7,
   tutorial: 0.7,
   migration_guide: 0.7,
@@ -421,14 +436,6 @@ export class BevyIndex {
   }
 
   /**
-   * Build the full-text index.
-   *
-   * FlexSearch indexes asynchronously, so searching immediately after add()
-   * silently returns nothing. addAsync() returns a promise per record and
-   * awaiting them all guarantees the queue has drained. Measured at ~185ms for
-   * 4k records, the same as the un-awaited path but deterministic.
-   */
-  async /**
    * Ingest rustdoc into this index.
    *
    * Split out from buildTextIndex so the registry can add records *before* the
@@ -446,6 +453,7 @@ export class BevyIndex {
     // whole payload array (a full second copy of the corpus) in flight.
     if (this.text) {
       for (const r of records) {
+        if (!this._isIndexed(r)) continue;
         this.text.add(this._flexPayload(r));
       }
     }
@@ -498,6 +506,21 @@ export class BevyIndex {
   /** Search only within a set of ids (used to isolate one version's items). */
   searchTextScoped(query, { limit = 20, allowedIds = null } = {}) {
     return this.searchText(query, { limit, allowedIds });
+  }
+
+  /**
+   * Is this record worth a full-text posting list?
+   *
+   * Fields are excluded deliberately. They are ~10-15k records with very short,
+   * highly repetitive text (`translation: Vec3`, `x: f32`), and indexing them
+   * adds posting-list weight to common words without adding real intent signal
+   * -- a concept query for "scale" gains nothing from `Transform::scale` and
+   * loses ranking precision against real API. They remain fully reachable by
+   * exact symbol lookup and by `bevy://owner/{v}/{Type}`, which is the access
+   * path that actually answers "what fields does this type have".
+   */
+  _isIndexed(r) {
+    return r.kind !== "field";
   }
 
   _flexPayload(r) {
@@ -554,12 +577,15 @@ export class BevyIndex {
     // i.e. a complete second copy of the corpus in flight on top of
     // `this.records` and the growing index - that was the OOM trigger. A plain
     // loop keeps peak memory to one payload at a time.
+    let added = 0;
     for (const r of targets) {
+      if (!this._isIndexed(r)) continue;
       this.text.add(this._flexPayload(r));
+      added++;
     }
 
-    this.searchableIds = new Set(targets.map((r) => r.id));
-    return targets.length;
+    this.searchableIds = new Set(targets.filter((r) => this._isIndexed(r)).map((r) => r.id));
+    return added;
   }
 
   /** Exact symbol lookup. Returns records, best match first. */

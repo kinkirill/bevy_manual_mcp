@@ -18,6 +18,7 @@ import { _internal as mdInternal } from "../src/ingest/markdown.js";
 import { _internal as exInternal } from "../src/ingest/examples.js";
 import * as ownerInternal from "../src/ingest/owner.js";
 import { _internal as storeInternal } from "../src/store.js";
+import { formatRecord } from "../src/format.js";
 
 let passed = 0;
 let failed = 0;
@@ -301,7 +302,16 @@ test("traitFromImplText distinguishes inherent from trait impls", () => {
 });
 
 console.log("\nend-to-end on real rustdoc output");
-const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-mcp-test-"));
+// The caller (test/index.mjs) can supply the directory, so the fixture survives
+// this process and can be handed to the spawned-server resource tests after it
+// exits. Otherwise it is a private temp dir removed in `finally`.
+const fixtureDir = (() => {
+  if (!process.env.RESOURCE_FIXTURE_OUT) {
+    return fs.mkdtempSync(path.join(os.tmpdir(), "bevy-mcp-test-"));
+  }
+  fs.mkdirSync(process.env.RESOURCE_FIXTURE_OUT, { recursive: true });
+  return process.env.RESOURCE_FIXTURE_OUT;
+})();
 try {
   const crateDir = path.join(fixtureDir, "rdfixture");
   fs.mkdirSync(path.join(crateDir, "src"), { recursive: true });
@@ -312,11 +322,27 @@ try {
   fs.writeFileSync(
     path.join(crateDir, "src", "lib.rs"),
     `/// A widget resource.
-pub struct Widget { pub id: u32 }
+///
+/// # Example
+///
+/// \`\`\`
+/// let w = Widget::new(7);
+/// assert_eq!(w.id(), 7);
+/// \`\`\`
+pub struct Widget {
+    /// The widget's unique id.
+    pub id: u32,
+    /// The widget's display label.
+    pub label: String,
+}
 
 impl Widget {
     /// Creates a widget.
-    pub fn new(id: u32) -> Self { Self { id } }
+    ///
+    /// \`\`\`
+    /// let w = Widget::new(1);
+    /// \`\`\`
+    pub fn new(id: u32) -> Self { Self { id, label: String::new() } }
     /// Reads the id.
     pub fn id(&self) -> u32 { self.id }
 }
@@ -325,6 +351,9 @@ impl Widget {
 pub struct WithWidget;
 
 pub fn spawn_widget() {}
+
+${Array.from({ length: 60 }, (_, i) => `/// Generates a widget variant ${i}.
+pub fn widget_variant_${i}(id: u32) -> u32 { id }`).join("\n\n")}
 `,
   );
   execFileSync("cargo", ["doc", "--no-deps", "-q"], { cwd: crateDir, stdio: "pipe" });
@@ -344,13 +373,16 @@ pub fn spawn_widget() {}
   test("each method keeps its OWN documentation (regression: off-by-one)", () => {
     const n = records.find((r) => r.name === "new");
     const i = records.find((r) => r.name === "id");
-    assert.equal(n.docs, "Creates a widget.");
+    // Assert attribution, not exact text: blockToText flattens a docblock's
+    // <pre> into prose, so a method that documents an example has that example
+    // inline in `docs` as well as in `examples`.
+    assert.match(n.docs, /^Creates a widget\./);
     assert.equal(i.docs, "Reads the id.");
   });
 
   test("struct-level docs are attributed to the struct", () => {
     const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
-    assert.equal(s.docs, "A widget resource.");
+    assert.match(s.docs, /^A widget resource\./);
     assert.equal(s.full_path, "rdfixture::Widget");
   });
 
@@ -363,6 +395,85 @@ pub fn spawn_widget() {}
 
   test("free functions are indexed", () => {
     assert.ok(records.some((r) => r.kind === "fn" && r.name === "spawn_widget"));
+  });
+
+  console.log("\nstruct fields");
+  test("fields are indexed with owner, type and their own docs", () => {
+    // rustdoc renders fields as `span.structfield`, not `section[id^="field."]`,
+    // so these were structurally unreachable before the dedicated walk.
+    const id = records.find((r) => r.kind === "field" && r.name === "id");
+    assert.ok(id, "expected a field record named `id`");
+    assert.equal(id.owner, "Widget");
+    assert.equal(id.full_path, "rdfixture::Widget::id");
+    assert.match(id.signature, /^id:\s*u32$/, `signature was ${JSON.stringify(id.signature)}`);
+  });
+
+  test("each field keeps its OWN documentation", () => {
+    const id = records.find((r) => r.kind === "field" && r.name === "id");
+    const label = records.find((r) => r.kind === "field" && r.name === "label");
+    assert.match(id.docs, /unique id/);
+    assert.match(label.docs, /display label/);
+    assert.ok(!id.docs.includes("display label"), "field docs must not bleed together");
+  });
+
+  test("field docs are attributed to the struct, not the field", () => {
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    assert.match(s.docs, /^A widget resource\./);
+  });
+
+  console.log("\ndoctest examples");
+  test("doctests are extracted with their source intact", () => {
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    assert.ok(s.examples?.length, "expected an extracted example on Widget");
+    const code = s.examples[0].code;
+    assert.match(code, /let w = Widget::new\(7\)/);
+    assert.match(code, /assert_eq!\(w\.id\(\), 7\)/);
+  });
+
+  test("examples carry no rustdoc line-number gutter", () => {
+    // `<span data-nosnippet>165</span>` is chrome, not code. Left in, it
+    // produces sources like "61fn speed(" that cannot be read or copied.
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    for (const ex of s.examples) {
+      assert.ok(!/^\d+(fn|let|pub|use)/m.test(ex.code), `line numbers leaked: ${ex.code}`);
+    }
+  });
+
+  test("extraction does not mutate docs (the search-safety guarantee)", () => {
+    // `docs` feeds _flexPayload -> FlexSearch -> ranking, so it must be exactly
+    // what blockToText produced before this change -- example source included,
+    // because flattening the docblock into prose is pre-existing behaviour that
+    // this work deliberately does not touch. What must NOT happen is the string
+    // changing: that would silently move every ranking in the index.
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    assert.ok(
+      s.docs.startsWith("A widget resource."),
+      `docs must be unchanged prose, got ${JSON.stringify(s.docs.slice(0, 60))}`,
+    );
+    assert.equal(
+      s.docs,
+      "A widget resource.\n§Example\nlet w = Widget::new(7);\nassert_eq!(w.id(), 7);",
+      "docs must stay byte-identical to what blockToText produced before examples existed",
+    );
+  });
+
+  test("a method's doctest is attributed to the method", () => {
+    const newFn = records.find((r) => r.name === "new");
+    assert.ok(newFn.examples?.length, "expected Widget::new to own its doctest");
+    assert.match(newFn.examples[0].code, /Widget::new\(1\)/);
+    // and the type must not have inherited it
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    assert.ok(
+      !s.examples.some((e) => /Widget::new\(1\)/.test(e.code)),
+      "the method's example must not also land on the struct",
+    );
+  });
+
+  test("formatRecord renders examples as fenced rust", () => {
+    const s = records.find((r) => r.kind === "struct" && r.name === "Widget");
+    const out = formatRecord(s, { docsChars: 200 });
+    assert.ok(out.includes("```rust"), "expected a fenced rust block");
+    assert.ok(out.includes("Widget::new(7)"), "example source must survive formatting");
   });
 
   // Now exercise the store end to end.
@@ -399,6 +510,51 @@ pub fn spawn_widget() {}
     const res = hybridSearch(idx, "Widget::id");
     assert.ok(res.length);
     assert.equal(res[0].record.name, "id");
+  });
+
+  test("a method outranks a same-named field on the exact-symbol path", () => {
+    // `Widget` now has both a field `id` and a method `id`, so the bare leaf key
+    // `id` points at both. The method must lead, or "read the id" style lookups
+    // start answering with a field declaration.
+    const hits = idx.lookupSymbol("id");
+    assert.ok(hits.length >= 2, "expected both the method and the field to share the key");
+    assert.equal(hits[0].record.kind, "method");
+  });
+
+  test("fields are reachable by exact lookup and by kind filter", () => {
+    assert.ok(
+      idx.lookupSymbol("Widget::label").some((h) => h.record.kind === "field"),
+      "Widget::label must resolve to the field",
+    );
+    const res = hybridSearch(idx, "label", { limit: 10, filters: { kind: "field" } });
+    assert.ok(res.length > 0, "a kind=field query must still return fields");
+    assert.ok(res.every((r) => r.record.kind === "field"));
+  });
+
+  test("fields are weighted below real API", () => {
+    // Without a KIND_WEIGHT entry these would fall through to rustdoc's 1.0 and
+    // ~10-15k records named x/y/z/translation would crowd out real API.
+    assert.ok(
+      storeInternal.recordWeight({ source: "rustdoc", kind: "field" }) < 0.6,
+      "a field must not carry near-full weight",
+    );
+    assert.ok(
+      storeInternal.recordWeight({ source: "rustdoc", kind: "field" }) >
+        storeInternal.recordWeight({ source: "website", kind: "news" }),
+      "a field must still outrank a news post",
+    );
+  });
+
+  test("dependency-typed pages contribute no fields", () => {
+    // The mirrored facade tree carries a page per re-exported dependency type;
+    // gating on the page's source link is what keeps glam fields out.
+    assert.equal(rustdocInternal.depCrateOfPage(null, "https://docs.rs/glam/0.32.1/src/glam/f32/vec3.rs.html#34"), "glam");
+    assert.equal(
+      rustdocInternal.depCrateOfPage(null, "https://docs.rs/bevy_app/0.19.1/src/bevy_app/app.rs.html#1609"),
+      "bevy_app",
+    );
+    assert.ok(rustdocInternal.DEP_CRATES.has("glam"));
+    assert.ok(!rustdocInternal.DEP_CRATES.has("bevy_app"));
   });
 
   test("filters narrow results and do not starve", () => {
@@ -439,8 +595,46 @@ pub fn spawn_widget() {}
     assert.equal(res.length, 1);
     assert.equal(res[0].record.heading, "About scheduling");
   });
+
+  // Leave the fixture's data dir in place and point resource-conformance tests
+  // at it. They spawn the server, which needs a real persisted index; building
+  // it here means `npm test` covers the resource layer without a rustdoc mirror
+  // or a downloaded release bundle.
+  console.log(`\nresource-layer fixture`);
+  // Built at top level rather than inside test(), which is synchronous, so the
+  // spawned server in resources-test.mjs has a real persisted index to load.
+  const { VersionRegistry } = await import("../src/registry.js");
+  const fixtureRegistry = new VersionRegistry({
+    projectRoot: fixtureDir,
+    bevyVersion: "9.9.9",
+    versionSource: "test",
+    docDir,
+    websiteDir: null,
+    examplesDir: null,
+    dataDir: path.join(fixtureDir, "data-registry"),
+  });
+  const fixtureIndex = await fixtureRegistry.get("9.9.9");
+  fs.writeFileSync(
+    path.join(fixtureDir, "resource-fixture.json"),
+    JSON.stringify({ dataDir: fixtureRegistry.config.dataDir, version: "9.9.9" }),
+  );
+
+  test("fixture index is populated (guards against a vacuous resource test)", () => {
+    assert.ok(
+      fixtureIndex.records.length > 5,
+      `fixture index looks empty: ${fixtureIndex.records.length} records`,
+    );
+    assert.ok(
+      fixtureIndex.records.some((r) => r.kind === "field"),
+      "fixture must contain field records for the resource layer to serve",
+    );
+  });
 } finally {
-  fs.rmSync(fixtureDir, { recursive: true, force: true });
+  // Keep the fixture when RESOURCE_FIXTURE_OUT asks for it; the spawned server
+  // in resources-test.mjs needs it after this process exits.
+  if (!process.env.RESOURCE_FIXTURE_OUT) {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

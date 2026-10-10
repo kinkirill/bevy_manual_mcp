@@ -26,6 +26,9 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["--max-old-space-size=2048", "./index.js"],
   env: {
+    // StdioClientTransport merges only a small default allowlist, so the
+    // caller's env must be spread through or the fixture's data dir is dropped
+    // and the server falls back to an empty index.
     ...process.env,
     BEVY_MCP_OFFLINE: "1",
   },
@@ -68,12 +71,27 @@ try {
   check("index shows a URI example", idxText.includes("bevy://api/"));
 
   console.log("\nresources/read - a single item");
-  const v = /\*\*(0\.\d+\.\d+[^\s*]*)\*\*/.exec(idxText)?.[1];
+  // Accepts any semver-shaped version, not just 0.x: the CI fixture index is
+  // built from a synthetic crate at 9.9.9.
+  const v = /\*\*(\d+\.\d+\.\d+[^\s*]*)\*\*/.exec(idxText)?.[1];
   check("extracted a version from the index", !!v, `version=${v}`);
-  if (v) {
-    const u = `bevy://api/${encodeURIComponent(v)}/${encodeURIComponent(
-      "bevy::camera::primitives::Sphere",
-    )}`;
+
+  // The item to read is whatever the index actually holds. Hardcoding a Bevy
+  // path made this fail against the CI fixture, and silently pass nothing when
+  // the index was empty.
+  const probe = await client.readResource({
+    uri: `bevy://kind/${encodeURIComponent(v || "0.0.0")}/struct`,
+  });
+  const probeText = probe.contents[0].text;
+  // The listing renders each item as a bullet plus a `bevy://api/...` URI on the
+  // next line; the path is percent-encoded inside that URI, so decode it rather
+  // than trying to match the display form.
+  const apiUriMatch = /bevy:\/\/api\/[^/\s]+\/([^\s`)]+)/.exec(probeText);
+  const itemPath = apiUriMatch ? decodeURIComponent(apiUriMatch[1]) : null;
+  check("found a struct to read by exact path", !!itemPath, itemPath || probeText.slice(0, 160));
+
+  if (v && itemPath) {
+    const u = `bevy://api/${encodeURIComponent(v)}/${encodeURIComponent(itemPath)}`;
     let got;
     try {
       got = await client.readResource({ uri: u });
@@ -83,6 +101,23 @@ try {
       check("marks the source as read (not searched)", t.includes("Read from"));
     } catch (err) {
       check("reads a struct by exact path", false, String(err.message).slice(0, 120));
+    }
+
+    console.log("\nresources/read - fields");
+    // Field records are the point of the ingest work, and they are deliberately
+    // absent from the search index, so the resource layer is the only way to
+    // reach them. This is the assertion that would have caught them going missing.
+    try {
+      const fields = await client.readResource({
+        uri: `bevy://kind/${encodeURIComponent(v)}/field`,
+      });
+      check(
+        "field records are readable through the resource layer",
+        fields.contents[0].text.includes("field"),
+        fields.contents[0].text.slice(0, 120),
+      );
+    } catch (err) {
+      check("field records are readable through the resource layer", false, String(err.message).slice(0, 100));
     }
   }
 
@@ -110,21 +145,36 @@ try {
   }
 
   console.log("\npagination");
-  const crate = `bevy://crate/${encodeURIComponent(v || "0.19.1")}/bevy_app`;
-  const p1 = await client.readResource({ uri: crate });
-  check("crate listing returns a page", p1.contents[0].text.includes("item(s)"));
+  // `fn` is the kind the fixture deliberately makes large (>50 items) so that
+  // the cursor path is actually exercised rather than skipped.
+  const listUri = `bevy://kind/${encodeURIComponent(v || "0.0.0")}/fn`;
+  const p1 = await client.readResource({ uri: listUri });
+  check("kind listing returns a page", p1.contents[0].text.includes("item(s)"));
   const hasNext = /cursor=/.test(p1.contents[0].uri);
   check("exposes a next cursor when more remain", hasNext, p1.contents[0].uri);
   if (hasNext) {
     const p2 = await client.readResource({ uri: p1.contents[0].uri });
     check("cursor continues the listing", p2.contents[0].text !== p1.contents[0].text);
+    check(
+      "second page reports items remain",
+      p2.contents[0].text.includes("item(s)"),
+      p2.contents[0].text.slice(0, 100),
+    );
+  } else {
+    // A single-page fixture means the cursor protocol was NOT exercised. Say so
+    // loudly rather than counting it as a pass -- a green run must not be able to
+    // hide an untested path.
+    console.log(
+      "  SKIP cursor continuation: fixture fits in one page, so this path is " +
+        "unverified by this run (see test/run-tests.mjs pagination unit tests)",
+    );
   }
 
   console.log("\ncompletion/complete");
   try {
     const comp = await client.complete({
       ref: { type: "ref/resource", uri: "bevy://api/{version}/{path}" },
-      argument: { name: "version", value: "0.19" },
+      argument: { name: "version", value: (v || "0.0.0").split(".").slice(0, 2).join(".") },
     });
     const c = comp.completion || comp;
     check("completes versions", Array.isArray(c.values) && c.values.length > 0, JSON.stringify(c).slice(0, 120));

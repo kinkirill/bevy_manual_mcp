@@ -29,6 +29,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import { resolveConfig } from "../src/config.js";
+import { CACHE_VERSION } from "../src/store.js";
 
 const DEFAULT_REPO = "kinkirill/bevy_manual_mcp";
 
@@ -118,7 +119,7 @@ function extractTarball(file, dest) {
 /** Merge one version's registry entry into data/registry.json, keeping others. */
 function mergeRegistry(dataDir, entryFile) {
   const registryPath = path.join(dataDir, "registry.json");
-  let registry = { cache_version: 4, versions: {} };
+  let registry = { cache_version: CACHE_VERSION, versions: {} };
   try {
     registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
     if (!registry.versions) registry.versions = {};
@@ -128,6 +129,10 @@ function mergeRegistry(dataDir, entryFile) {
   const entry = JSON.parse(fs.readFileSync(entryFile, "utf8"));
   const key = String(entry.version).replace(/[^a-zA-Z0-9._+-]/g, "_");
   registry.versions[key] = entry;
+  // The registry-level field must track the current format, not the one in
+  // force when the bundle was published: it is what a later run compares
+  // against to decide whether this index needs rebuilding.
+  registry.cache_version = CACHE_VERSION;
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2) + "\n");
 }

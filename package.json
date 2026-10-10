@@ -30,7 +30,8 @@
     "publish-index": "node scripts/publish-index.mjs",
     "build-index": "node scripts/build-index.mjs",
     "reindex": "node scripts/build-index.mjs --force",
-    "test": "node test/run-tests.mjs"
+    "test": "node test/index.mjs",
+    "test:unit": "node test/run-tests.mjs"
   },
   "keywords": [
     "mcp",

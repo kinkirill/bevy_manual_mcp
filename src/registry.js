@@ -110,6 +110,28 @@ export class VersionRegistry {
     return path.join(this.root, sanitize(version));
   }
 
+  /**
+   * The CACHE_VERSION a persisted index was written with, or null if unknown.
+   *
+   * Read from the registry entry first and from meta.json second: a bundle
+   * unpacked by fetch-index.mjs carries its own registry entry, while a local
+   * build writes both. Either is authoritative for "what format is this?", so
+   * disagreeing means we cannot trust it.
+   */
+  readPersistedCacheVersion(version) {
+    const entry = this.registry.versions[sanitize(version)];
+    if (entry && typeof entry.cache_version === "number") return entry.cache_version;
+
+    try {
+      const metaPath = path.join(this.dirFor(version), "meta.json");
+      if (!fs.existsSync(metaPath)) return null;
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      return typeof meta.cache_version === "number" ? meta.cache_version : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Versions we have an index for, newest last. */
   versions() {
     return Object.keys(this.registry.versions).sort(compareVersions);
@@ -134,9 +156,24 @@ export class VersionRegistry {
     const metaPath = path.join(dir, "meta.json");
     const recPath = path.join(dir, "records.ndjson");
 
+    // A persisted index is only reusable if it was produced by THIS shape of
+    // the ingester. CACHE_VERSION was previously written but never compared, so
+    // an index built by an older parser loaded silently and answered current
+    // questions with stale records -- the worst failure mode for a server whose
+    // entire promise is accuracy. Compare before taking the fast path.
+    const persistedCacheVersion = this.readPersistedCacheVersion(version);
+    const cacheIsCurrent = persistedCacheVersion === CACHE_VERSION;
+    if (!force && persistedCacheVersion !== null && !cacheIsCurrent) {
+      log(
+        `version ${version}: persisted index is format v${persistedCacheVersion}, ` +
+          `this build is v${CACHE_VERSION} - rebuilding`,
+      );
+    }
+
     // Fast path: a previously persisted index for this exact version.
     if (
       !force &&
+      cacheIsCurrent &&
       fs.existsSync(textPath) &&
       fs.existsSync(recPath) &&
       fs.existsSync(metaPath)
@@ -218,6 +255,9 @@ export class VersionRegistry {
 
     idx.meta = {
       bevy_version: version,
+      // Also recorded in meta.json so the version can be established from the
+      // version directory alone, even if registry.json is missing or stale.
+      cache_version: CACHE_VERSION,
       version_source: cfg.versionSource,
       doc_dir: cfg.docDir,
       website_dir: cfg.websiteDir,
@@ -271,6 +311,9 @@ export class VersionRegistry {
       fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(idx.meta, null, 2));
       this.registry.versions[sanitize(version)] = {
         version,
+        // Recorded per version, not just at the top level, so a directory built
+        // by an older ingest can be detected after new versions are added.
+        cache_version: CACHE_VERSION,
         built_at: idx.meta.built_at,
         records: idx.records.length,
         symbols: idx.symbols.size,

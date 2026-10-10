@@ -23,8 +23,22 @@ const NOISE_LISTS = [
   "#blanket-implementations-list",
 ];
 
+/**
+ * Dependency crates whose types surface on Bevy types but are not Bevy API.
+ *
+ * Mirrors DEP_CRATES in src/store.js, which filters dependency-defined
+ * *methods*. Fields need the same treatment for a different reason: the mirrored
+ * facade tree contains a page per re-exported dependency type, so a glam type
+ * contributes its fields to the corpus unless the page is gated.
+ */
+const DEP_CRATES = new Set(["glam", "bevy_reflect", "bevy_math"]);
+
+// NOTE: `field` is intentionally absent. rustdoc does not render struct fields
+// as `section[id^="field."]` -- it uses `span.structfield[id^="structfield."]`.
+// They are walked separately in `fieldFromSpan`'s caller. Keeping `field` here
+// matched nothing and hid the real shape of the markup.
 const ITEM_SECTION_RE =
-  /^(method|tymethod|structmethod|structassocfn|associatedconstant|associatedtype|structassociatedconstant|structassociatedtype|tyassociatedconst|tyassociatedtype|assocconst|field|variant)\./;
+  /^(method|tymethod|structmethod|structassocfn|associatedconstant|associatedtype|structassociatedconstant|structassociatedtype|tyassociatedconst|tyassociatedtype|assocconst|variant)\./;
 
 const TOP_LEVEL_KINDS = [
   "struct",
@@ -125,6 +139,130 @@ function defaultImplDoc($, skipSelector) {
   // which carries no type-specific information and only adds noise.
   if (!text || /^returns the .?default value.? for a type/i.test(text)) return "";
   return text;
+}
+
+/**
+ * Parse one `<span class="structfield">` header into a field record.
+ *
+ * Struct fields are NOT sections. rustdoc renders them as:
+ *
+ *   <span id="structfield.translation" class="structfield section-header">
+ *     <a class="anchor field">§</a>
+ *     <code>translation: <a class="struct" href="...">Vec3</a></code>
+ *   </span>
+ *   <div class="docblock"><p>Position of the entity...</p></div>
+ *
+ * so the `section[id]` walk used for methods and variants structurally cannot
+ * match them -- that is why fields were entirely absent from the index despite
+ * `ITEM_SECTION_RE` listing `field`. They need their own walk over spans.
+ *
+ * Returns null when the span does not carry a `name: Type` code header, which
+ * is the only reliable place the field name lives (the id prefix is
+ * `structfield.`, not `field.`).
+ */
+function fieldFromSpan($, el, { crate, module, file, relFile, owner, bevyVersion }) {
+  const id = $(el).attr("id") || "";
+  const name = id.replace(/^structfield\./, "");
+  if (!name) return null;
+
+  const code = $(el).children("code").first();
+  if (!code.length) return null;
+  // `translation: Vec3` -- the type may itself be wrapped in a link, so read the
+  // rendered text rather than the raw attribute.
+  const decl = normalizeSpace(code.text());
+  if (!decl.includes(":")) return null;
+
+  const docEl = docblockFor($, el, NOISE_LISTS.join(", "));
+  const docs = docEl && docEl.length ? normalizeSpace(blockToText(docEl)) : "";
+
+  return {
+    source: "rustdoc",
+    kind: "field",
+    name,
+    full_path: owner && owner !== "?" ? `${module}::${owner}::${name}` : `${module}::${name}`,
+    owner: owner || null,
+    crate,
+    module,
+    signature: decl,
+    docs,
+    file: relFile,
+    // Fields have no per-item source link of their own; the page's link is what
+    // identifies the defining crate (see depCrateOf below).
+    source_ref: null,
+    bevy_version: bevyVersion,
+    title: "",
+  };
+}
+
+/**
+ * The dependency crate a whole rustdoc page belongs to, or null if local.
+ *
+ * Re-exported items land in the mirrored `bevy` facade tree under their
+ * original filename, so `bevy/prelude/struct.Vec3.html` is actually glam's
+ * Vec3. Its page-level source link is the only reliable signal. Filtering the
+ * page once is both cheaper and more accurate than filtering each field: every
+ * field on a glam page is a glam field.
+ */
+function depCrateOfPage($, srcLink) {
+  const ref = String(srcLink || "");
+  if (ref.includes("rust-lang.org")) return "std";
+  const m = ref.match(/docs\.rs\/([a-z0-9_]+)\//);
+  return m ? m[1] : null;
+}
+
+/**
+ * The item a doctest belongs to, as { owner, name }.
+ *
+ * An item's docblock is a SIBLING of its <section>, not a descendant (the
+ * nesting quirk documented at the top of this file):
+ *
+ *   <details class="method-toggle">
+ *     <summary><section id="method.new">..</section></summary>
+ *     <div class="docblock">..<div class="example-wrap">..
+ *
+ * So `closest("section[id]")` reaches only `main-content`, and every example
+ * would be mis-attributed to the page's top item. The owning section is found
+ * by walking up to the enclosing <details> and reading the section inside its
+ * <summary>. Returns null for an example in the type-level docblock, which
+ * genuinely belongs to the page's own item.
+ */
+function itemForExample($, el) {
+  // Walk out to the innermost <details> that wraps an item, then read its summary.
+  let sec = null;
+  let node = $(el);
+  for (let depth = 0; depth < 8 && node.length; depth++) {
+    const details = node.is("details") ? node : node.closest("details");
+    if (details.length && details.is("details")) {
+      const candidate = details.children("summary").find("section[id]").first();
+      if (candidate.length && ITEM_SECTION_RE.test(candidate.attr("id") || "")) {
+        sec = candidate;
+        break;
+      }
+    }
+    node = node.parent();
+    if (!node.length) break;
+    if (node.is("section#main-content")) break;
+  }
+  if (!sec) return null;
+
+  const name = sectionName(sec.attr("id") || "");
+  if (!name) return null;
+
+  // The type comes from the enclosing impl block, whose header is a preceding
+  // sibling section (`<section id="impl-Query-for-X">`).
+  let owner = ownerFromImpl($, sec[0]);
+  if (!owner) {
+    const impl = sec.closest("details").prevAll("section.impl").first();
+    if (impl.length) {
+      const hdr = impl.children("h3.code-header").first();
+      if (hdr.length) {
+        const $c = hdr.clone();
+        $c.find(".where").remove();
+        owner = ownerFromImplText($c.text());
+      }
+    }
+  }
+  return { owner: owner || null, name };
 }
 
 function itemKindFromSectionId(id) {
@@ -364,7 +502,31 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
     });
   });
 
-  // ---- 3. Enum variants get their own records ---------------------------
+  // ---- 3. Struct fields ---------------------------------------------------
+  //
+  // Gate the whole page on its source link. The mirrored `bevy` facade tree
+  // re-exports dependency types under their own filenames, so
+  // `bevy/prelude/struct.Vec3.html` is really glam's Vec3 and its three fields
+  // (`x`, `y`, `z`) are not Bevy API. Filtering per page is both cheaper and more
+  // accurate than filtering per field, and it mirrors the existing DEP_CRATES
+  // treatment of dependency-defined methods.
+  const pageSrcLink = $("a.src.rightside").first().attr("href") || null;
+  const pageDep = depCrateOfPage($, pageSrcLink);
+  if (!pageDep || !DEP_CRATES.has(pageDep)) {
+    $("span.structfield[id^='structfield.']").each((_, el) => {
+      const rec = fieldFromSpan($, el, {
+        crate,
+        module,
+        file,
+        relFile,
+        owner: fileName || null,
+        bevyVersion,
+      });
+      if (rec) records.push(rec);
+    });
+  }
+
+  // ---- 4. Enum variants get their own records ---------------------------
   $("section[id^='variant.']").each((_, el) => {
     const id = $(el).attr("id");
     const name = sectionName(id);
@@ -385,6 +547,80 @@ function parsePage(html, file, docRoot, bevyVersion, { docsChars = 4000 } = {}) 
       title: "",
     });
   });
+
+  // ---- 5. Doctest examples ------------------------------------------------
+  //
+  // Extracted into a SEPARATE `examples` field rather than being folded into
+  // `docs`. That separation is the whole safety property: `docs` feeds
+  // _flexPayload -> FlexSearch -> ranking, so rewriting it would change recall
+  // for every query in the index. Adding a field cannot.
+  //
+  // `blockToText` flattens a docblock to `.text()`, which turns a doctest into
+  // run-on prose with line numbers spliced into it
+  // ("fn post_process_system(\n76 view: ViewQuery<("). Reading the inner <code>
+  // of the <pre> recovers the source exactly, because the syntax-highlighting
+  // <span>s are the only markup inside it.
+  const examples = [];
+  // Scoped deliberately. A bare `pre.rust` selector also matches
+  // `pre.rust.item-decl` -- the type's own declaration (`pub struct
+  // MinimalPlugins;`) -- which is not an example. Real doctests live inside
+  // `.example-wrap`, carry `rust-example-rendered`, or are `ignore` /
+  // `compile_fail` blocks.
+  //
+  // Examples are attached to their nearest owning item rather than dumped on
+  // the page's top record. rustdoc scrapes a matching snippet out of the repo's
+  // examples/ into *each method's* docblock, so `struct.App` yields 116 scraped
+  // snippets that belong to 116 different methods -- attributing them all to
+  // `App` would be wrong and would bloat one record enormously.
+  $("pre.rust-example-rendered, pre.ignore, pre.compile_fail, .example-wrap pre.rust").each(
+    (_, el) => {
+      const $pre = $(el);
+      const code = $pre.children("code").first();
+      const $code = code.length ? code : $pre;
+      // rustdoc's line-number gutter is `<span data-nosnippet>165</span>`, and
+      // `.text()` would splice those digits into the source ("61fn speed(").
+      // It is presentational chrome, not code, so it is removed before reading.
+      $code.find("span[data-nosnippet]").remove();
+      const src = $code.text().replace(/\r/g, "");
+      if (!src.trim()) return;
+      // "Examples found in repository" blocks are scraped from Bevy's own
+      // examples/ files and are prefixed with the file they came from. That
+      // provenance is worth keeping -- it says the snippet is real, runnable
+      // engine code rather than something the author wrote inline.
+      const scraped = $pre.closest(".scraped-example");
+      const title = scraped
+        ? scraped.find(".scraped-example-title").first().text().trim()
+        : null;
+      const example = {
+        lang: "rust",
+        // `compile_fail` examples demonstrate code that must NOT compile; the
+        // marker is the entire point of them, so it is preserved rather than lost.
+        compile_fail: $pre.hasClass("compile_fail"),
+        ignored: $pre.hasClass("ignore"),
+        scraped: !!scraped,
+        source_file: title,
+        code: src.replace(/\n+$/, ""),
+      };
+      examples.push({ example, $el: $(el) });
+    },
+  );
+
+  // Attach each example to the item whose docblock contains it. Examples in the
+  // type-level docblock belong to the page's own record. Records are keyed by
+  // full_path, which is unique per item within a page.
+  const byPath = new Map(records.map((r) => [r.full_path, r]));
+  for (const { example, $el } of examples) {
+    const item = itemForExample($, $el[0]);
+    const target = item
+      ? byPath.get(
+          item.owner
+            ? `${module}::${item.owner}::${item.name}`
+            : `${module}::${item.name}`,
+        )
+      : null;
+    const rec = target || records[0];
+    if (rec) (rec.examples ||= []).push(example);
+  }
 
   return records;
 }
@@ -498,4 +734,7 @@ export const _internal = {
   moduleFromPath,
   docblockFor,
   normalizeSpace,
+  fieldFromSpan,
+  depCrateOfPage,
+  DEP_CRATES,
 };

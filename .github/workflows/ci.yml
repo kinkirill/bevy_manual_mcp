@@ -23,6 +23,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # The test suite builds its rustdoc fixture with a real `cargo doc`, so the
+      # ingest tests run against genuine rustdoc markup rather than a hand-written
+      # HTML string. Without this the suite fails at the fixture step.
+      - name: Report rust toolchain
+        run: cargo --version || echo "cargo missing - ingest tests will fail"
+
       - run: npm test
+
       - name: Validate server.json against the MCP registry schema
         run: node -e "JSON.parse(require('fs').readFileSync('server.json','utf8')); console.log('server.json parses')"
