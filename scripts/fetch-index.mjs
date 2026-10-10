@@ -44,6 +44,9 @@ function parseArgs(argv) {
     out: opt("--out"),
     from: opt("--from"),
     force: argv.includes("--force"),
+    // Escape hatch for the "format unknown -> re-download" branch, for anyone
+    // who deliberately wants to keep an index built locally.
+    noRecheck: argv.includes("--no-recheck"),
   };
 }
 
@@ -166,10 +169,49 @@ async function main() {
   console.log(`bevy-mcp fetch-index - bevy ${version}`);
   console.log(`  data dir: ${dataDir}`);
 
-  if (already && !args.force) {
-    console.log(`  index already present for ${version}. Nothing to do.`);
+  // Present-but-old is the interesting case. A republished index has the same
+  // version and therefore the same install path, so without this check a user
+  // who installed the previous build would be told "nothing to do" and keep
+  // using a stale corpus forever. Compare the format version the same way
+  // VersionRegistry does on load.
+  let installedCacheVersion = null;
+  try {
+    const metaPath = path.join(versionDir, "meta.json");
+    if (fs.existsSync(metaPath)) {
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      if (typeof meta.cache_version === "number") installedCacheVersion = meta.cache_version;
+    }
+    if (installedCacheVersion === null) {
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(dataDir, "registry.json"), "utf8"),
+      );
+      const entry = registry?.versions?.[sanitized];
+      if (entry && typeof entry.cache_version === "number") {
+        installedCacheVersion = entry.cache_version;
+      }
+    }
+  } catch {
+    /* unreadable registry or meta: fall through to the "already" check */
+  }
+
+  const stale = already && installedCacheVersion !== null && installedCacheVersion !== CACHE_VERSION;
+  const unknownFormat = already && installedCacheVersion === null && !args.noRecheck;
+
+  if (already && !args.force && !stale && !unknownFormat) {
+    console.log(`  index already present for ${version} (format v${CACHE_VERSION}). Nothing to do.`);
     console.log(`  (use --force to re-download)`);
     return;
+  }
+  if (stale) {
+    console.log(
+      `  installed index is format v${installedCacheVersion}, this build ships v${CACHE_VERSION}.`,
+    );
+    console.log(`  Re-downloading so you get the republished index.`);
+  } else if (unknownFormat) {
+    console.log(
+      `  installed index does not record a format version, so it may predate this build.`,
+    );
+    console.log(`  Re-downloading to be safe. (use --no-recheck to keep it)`);
   }
 
   const url = args.from || assetUrl(repo, version);
