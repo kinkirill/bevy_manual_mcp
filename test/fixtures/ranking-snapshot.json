@@ -4,33 +4,53 @@
   "queries": {
     "spawn camera": [
       "bevy::camera::prelude::Camera",
-      "bevy::camera::Camera",
       "bevy::gltf::gltf::camera::Camera",
       "bevy::gltf::gltf::json::camera::Camera",
       "bevy::gltf::gltf::json::extensions::camera::Camera",
-      "bevy::gltf::gltf::json::Camera",
-      "bevy::gltf::gltf::Camera",
-      "bevy::prelude::Camera"
+      "bevy::gltf::gltf::iter::Cameras",
+      "bevy::core_pipeline::schedule::camera_driver",
+      "bevy::render::camera::camera_system",
+      "bevy::core_pipeline::core_3d::extract_camera_prepass_phase"
+    ],
+    "How to spawn a sphere": [
+      "bevy::shape::prelude::Sphere",
+      "bevy::camera::primitives::Sphere",
+      "bevy::mesh::primitives::SphereMeshBuilder",
+      "bevy::prelude::BoundingSphere",
+      "bevy::prelude::BoundingSphereCast",
+      "bevy::mesh::SphereKind",
+      "bevy::gizmos::circles::SphereBuilder",
+      "bevy::shape::prelude::Sphere::bounding_sphere"
+    ],
+    "Difference between message and event": [
+      "bevy::ecs::message::Message",
+      "bevy::ecs::event::Event",
+      "bevy::ecs::message::Messages",
+      "bevy::ecs::message::Message",
+      "bevy::ecs::prelude::Message",
+      "bevy::ecs::event::Event",
+      "bevy::ecs::event::EventPattern::Event",
+      "bevy::ecs::label::Box::Event"
     ],
     "system ordering": [
       "bevy::ecs::prelude::System",
-      "bevy::app::ctrlc::Error::System",
-      "bevy::ecs::system::System",
-      "bevy::dev_tools::schedule_data::serde::ScheduleIndex::System",
-      "bevy::ecs::error::ErrorContext::System",
+      "bevy::platform::sync::atomic::Ordering",
+      "bevy::ecs::schedule::Systems",
       "bevy::ecs::prelude::IntoSystem::System",
-      "bevy::prelude::System",
-      "bevy::ecs::schedule::NodeId::System"
+      "bevy::ecs::system::system_value",
+      "bevy::ecs::system::command::run_system",
+      "bevy::ecs::system::command::run_system_cached",
+      "bevy::ecs::system::command::run_system_cached_with"
     ],
     "Query::iter": [
-      "bevy::ecs::entity::hash_set::Iter",
-      "bevy::ecs::entity::index_map::Iter",
-      "bevy::ecs::entity::index_set::Iter",
-      "bevy::gltf::gltf::accessor::Iter",
-      "bevy::gltf::gltf::accessor::util::Iter",
-      "bevy::log::tracing::field::Iter",
-      "bevy::log::tracing_subscriber::filter::targets::Iter",
-      "bevy::platform::collections::hash_map::Iter"
+      "bevy::ecs::prelude::Query::iter",
+      "bevy::ecs::system::Query::iter",
+      "bevy::prelude::Query::iter",
+      "bevy::ecs::prelude::Query",
+      "bevy::ecs::prelude::QueryState::query",
+      "bevy::ecs::prelude::World::query",
+      "bevy::ecs::system::ParamBuilder::query",
+      "bevy::ecs::system::QueryLens::query"
     ],
     "add_systems": [
       "bevy::app::prelude::App::add_systems",
@@ -58,21 +78,23 @@
       "bevy::prelude::App",
       "bevy::app::prelude::App::sub_app",
       "bevy::app::prelude::App::sub_app_mut",
-      "bevy::app::App::sub_app",
-      "bevy::app::App::sub_app_mut",
-      "bevy::prelude::App::sub_app"
+      "bevy::winit::WinitSettings::desktop_app",
+      "bevy::app::prelude::App::get_sub_app",
+      "bevy::app::prelude::App::get_sub_app_mut"
     ],
     "render world": [
       "bevy::asset::RenderAssetUsages::RENDER_WORLD",
+      "bevy::render::sync_world::SyncToRenderWorld",
       "bevy::render::Render",
-      "bevy::gizmos::stroke_text::StrokeTextLayout::render",
-      "bevy::pbr::DrawMesh::render",
-      "bevy::pbr::SetMaterialBindGroup::render",
-      "bevy::pbr::SetMeshBindGroup::render",
-      "bevy::pbr::SetMeshViewBindGroup::render",
-      "bevy::pbr::SetMeshViewBindingArrayBindGroup::render"
+      "bevy::ecs::prelude::World",
+      "bevy::render::MainWorld",
+      "bevy::render::sync_world::RenderEntity",
+      "bevy::render::sync_world::TemporaryRenderEntity",
+      "bevy::gizmos::stroke_text::StrokeTextLayout::render"
     ],
     "keyboard input": [
+      "bevy::input::keyboard::KeyboardInput",
+      "bevy::window::WindowEvent::KeyboardInput",
       "bevy::input::keyboard::keyboard_input_system",
       "bevy::winit::converters::convert_keyboard_input",
       "bevy::gltf::gltf::animation::Sampler::input",
@@ -80,21 +102,19 @@
       "bevy::picking::PickingSystems::Input",
       "bevy::input::common_conditions::input_just_pressed",
       "bevy::input::common_conditions::input_just_released",
-      "bevy::input::common_conditions::input_pressed",
-      "bevy::input::common_conditions::input_toggle_active",
-      "bevy::feathers::controls::color_input_self_update"
+      "bevy::input::common_conditions::input_pressed"
     ],
     "commands spawn": [
-      "bevy::ecs::relationship::RelatedSpawnerCommands::commands",
+      "bevy::ecs::relationship::RelatedSpawnerCommands",
+      "bevy::ecs::hierarchy::ChildSpawnerCommands",
+      "bevy::ecs::prelude::ChildSpawnerCommands",
+      "bevy::prelude::ChildSpawnerCommands",
       "bevy::ecs::prelude::Commands",
-      "bevy::ecs::system::Commands",
-      "bevy::prelude::Commands",
+      "bevy::ecs::prelude::Command",
       "bevy::ecs::prelude::EntityCommands::commands",
       "bevy::ecs::prelude::World::commands",
-      "bevy::ecs::relationship::RelatedSpawnerCommands::commands_mut",
-      "bevy::ecs::system::EntityCommands::commands",
-      "bevy::ecs::world::DeferredWorld::commands",
-      "bevy::ecs::world::World::commands"
+      "bevy::ecs::relationship::RelatedSpawnerCommands::commands",
+      "bevy::ecs::world::DeferredWorld::commands"
     ],
     "Camera [struct]": [
       "bevy::camera::prelude::Camera",
@@ -112,9 +132,9 @@
       "bevy::shape::prelude::Sphere",
       "bevy::shape::Sphere",
       "bevy::mesh::primitives::SphereMeshBuilder",
-      "bevy::mesh::SphereMeshBuilder",
-      "bevy::render::mesh::SphereMeshBuilder",
-      "bevy::prelude::BoundingSphere"
+      "bevy::prelude::BoundingSphere",
+      "bevy::prelude::BoundingSphereCast",
+      "bevy::mesh::SphereKind"
     ],
     "translation": [
       "bevy::prelude::GlobalTransform::translation",
