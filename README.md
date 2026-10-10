@@ -51,7 +51,7 @@ and the search index comes from the GitHub Releases of this repository.
 # npm 12 disables fetching git dependencies by default, hence the opt-in flag
 npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
 
-bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~67 MB)
+bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~74 MB)
 bevy-mcp status               # show what was auto-detected
 bevy-mcp                      # start the stdio server
 ```
@@ -344,7 +344,7 @@ One command, for the version in your `Cargo.lock`:
 bevy-mcp fetch-index 0.20.0
 ```
 
-That downloads the prebuilt index (~67 MB) and unpacks it into `data/`. Indexes
+That downloads the prebuilt index (~74 MB) and unpacks it into `data/`. Indexes
 are published for Bevy **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
 
 To build an index yourself instead - mirroring rustdoc from docs.rs, using your
@@ -405,7 +405,7 @@ To keep the first run cheap, the pieces are distributed separately:
 | Piece | Where | Size |
 |---|---|---|
 | Server code + bundled Book/migration prose | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
-| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~67 MB |
+| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~74 MB |
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
 
 The index holds API metadata, documentation strings, migration guides and

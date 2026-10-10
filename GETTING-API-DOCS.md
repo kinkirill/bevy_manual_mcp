@@ -16,7 +16,7 @@ Back to the [README](README.md).
 ## Install the prebuilt index
 
 The index for a released Bevy minor is identical for everyone, so it is built
-once and published as a GitHub Release asset (~67 MB compressed). This is the
+once and published as a GitHub Release asset (~74 MB compressed). This is the
 fast path:
 
 ```bash
