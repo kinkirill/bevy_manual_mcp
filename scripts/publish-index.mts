@@ -16,6 +16,7 @@
  * Usage:
  *   node scripts/publish-index.mjs 0.20.0
  *   node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist
+ *   node scripts/publish-index.mjs 0.20.0 --revision 1
  */
 
 import { spawnSync } from "node:child_process";
@@ -29,7 +30,7 @@ import { INDEX_FILES, readRegistry, validateIndex } from "./index-artifacts.mjs"
 import { CACHE_VERSION } from "../src/store.js";
 
 async function main(): Promise<void> {
-  const args = versionArgs(process.argv.slice(2), { data: { type: "string" }, out: { type: "string" } });
+  const args = versionArgs(process.argv.slice(2), { data: { type: "string" }, out: { type: "string" }, revision: { type: "string" } });
   const config = resolveConfig({ bevyVersion: args.version });
   const version = args.version || config.bevyVersion;
   if (!version) {
@@ -38,6 +39,8 @@ async function main(): Promise<void> {
   }
 
   stableVersion(version);
+  const revision = stringOption(args.values.revision);
+  if (revision !== undefined && !/^(?:0|[1-9]\d*)$/.test(revision)) throw new Error("Index revision must be a nonnegative integer.");
   const dataDir = path.resolve(stringOption(args.values.data) || config.dataDir);
   const outDir = path.resolve(stringOption(args.values.out) || path.join(process.cwd(), "dist"));
   const sanitized = String(version).replace(/[^a-zA-Z0-9._+-]/g, "_");
@@ -81,7 +84,7 @@ async function main(): Promise<void> {
     );
 
     fs.mkdirSync(outDir, { recursive: true });
-    const bundle = path.join(outDir, `bevy-index-${version}.tar.gz`);
+    const bundle = path.join(outDir, `bevy-index-${version}${revision !== undefined ? `+${revision}` : ""}.tar.gz`);
     const r = spawnSync(
       "tar",
       ["-czf", bundle, "-C", staging, "versions", "registry-entry.json"],

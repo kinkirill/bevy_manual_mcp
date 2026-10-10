@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
-import { BevyIndex, CACHE_VERSION, cmpVersion, exportTextIndex, importTextIndex, recordWeightOf } from "./store.js";
+import { BevyIndex, CACHE_VERSION, TEXT_FIELDS, TEXT_RESOLUTION, cmpVersion, encodeTextTokens, exportTextIndex, importTextIndex, recordWeightOf, type TextIndexDump } from "./store.js";
 import { streamRustdoc } from "./ingest/rustdoc.js";
 import { ingestWebsite } from "./ingest/markdown.js";
 import { ingestExamples } from "./ingest/examples.js";
@@ -93,6 +93,128 @@ function atomicWrite(file: string, value: unknown): void {
     fs.writeFileSync(temporary, JSON.stringify(value, null, 2));
     fs.renameSync(temporary, file);
   } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary); }
+}
+
+function textFingerprint(text: string): string { return createHash("sha256").update(text).digest("hex"); }
+
+/** Tie repaired search payloads to the merged API corpus, including raw row count. */
+function apiTextFingerprint(index: BevyIndex, apiCount: number): string {
+  const hash = createHash("sha256").update(`bevy-api-text-v1:${apiCount}\n`);
+  for (const record of index.records) {
+    if (record.source === "rustdoc" && index._isIndexed(record)) hash.update(JSON.stringify(index._flexPayload(record)) + "\n");
+  }
+  return hash.digest("hex");
+}
+
+/** Keep API postings in one pass: imported FlexSearch remove/update scans every term per id. */
+function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boolean, trustedPayloads: boolean): boolean {
+  if (!isObject(value) || !Object.values(value).every((part) => typeof part === "string")) {
+    throw new Error("Invalid persisted text index");
+  }
+  const required = new Set(index.records.filter((record) => record.source === "rustdoc" && index._isIndexed(record)).map((record) => record.id));
+  const current = new Set(index.records.filter((record) => index._isIndexed(record)).map((record) => record.id));
+  const keep = new Set(supplementsChanged ? required : current);
+  const repair = trustedPayloads ? new Set<string>() : index.repairedIds;
+  for (const id of repair) keep.delete(id);
+  const registered = new Set<string>();
+  const dump: TextIndexDump = {};
+  let pruned = false;
+  for (const [key, part] of Object.entries(value)) {
+    if (!/^\d+\.reg$/.test(key)) continue;
+    const ids: unknown = parseJson(String(part));
+    if (!Array.isArray(ids)) throw new Error("Invalid persisted text registration");
+    const retained: string[] = [];
+    for (const id of ids as unknown[]) {
+      if (typeof id !== "string") throw new Error("Invalid persisted text record id");
+      registered.add(id);
+      if (keep.has(id)) retained.push(id);
+      else pruned = true;
+    }
+    dump[key] = JSON.stringify(retained);
+  }
+  for (const id of required) if (!registered.has(id)) throw new Error("Persisted text index omits an API record");
+  if (!supplementsChanged) {
+    for (const id of current) if (!registered.has(id)) throw new Error("Persisted text index omits a supplemental record");
+  }
+  const parts = new Map<(typeof TEXT_FIELDS)[number], [string, string][]>(TEXT_FIELDS.map((field) => [field, []]));
+  for (const [key, part] of Object.entries(value)) {
+    if (/^\d+\.reg$/.test(key)) continue;
+    const field = TEXT_FIELDS.find((candidate) => key.startsWith(`${candidate}.`));
+    if (!field || !/^(?:name|signature|docs)\.\d+\.map$/.test(key)) throw new Error(`Unsupported persisted text part ${key}`);
+    parts.get(field)!.push([key, String(part)]);
+  }
+  // Validate one field at a time, consuming its required postings as they are
+  // encountered. Matching corpus/export hashes avoid encoding millions of
+  // unchanged payload terms again on later warm loads.
+  for (const field of TEXT_FIELDS) {
+    const expected = new Map<string, Set<string>>();
+    if (!trustedPayloads) {
+      for (const record of index.records) {
+        if (!keep.has(record.id)) continue;
+        for (const token of encodeTextTokens(index._flexPayload(record)[field])) {
+          let ids = expected.get(token);
+          if (!ids) { ids = new Set(); expected.set(token, ids); }
+          ids.add(record.id);
+        }
+      }
+    }
+    const fieldParts = parts.get(field)!;
+    if (expected.size && !fieldParts.length) throw new Error(`Persisted text index omits the ${field} field`);
+    const tokens = new Set<string>();
+    for (const [key, part] of fieldParts) {
+      const entries: unknown = parseJson(part);
+      if (!Array.isArray(entries)) throw new Error("Invalid persisted text postings");
+      const retained: unknown[] = [];
+      for (const entry of entries as unknown[]) {
+        if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !Array.isArray(entry[1])) {
+          throw new Error("Invalid persisted text posting entry");
+        }
+        const token = entry[0];
+        if (tokens.has(token)) throw new Error(`Duplicate persisted ${field} token: ${token}`);
+        tokens.add(token);
+        const remaining = expected.get(token);
+        const slots = entry[1] as unknown[];
+        if (slots.length > TEXT_RESOLUTION) throw new Error("Persisted text posting exceeds the score resolution");
+        let nonempty = false;
+        for (let position = 0; position < slots.length; position++) {
+          const slot: unknown = slots[position];
+          if (slot === null) continue;
+          if (!Array.isArray(slot)) throw new Error("Invalid persisted text posting list");
+          const ids = slot as unknown[];
+          let count = 0;
+          for (const id of ids) {
+            if (typeof id !== "string" || !registered.has(id)) throw new Error("Persisted text posting has an unregistered record");
+            if (keep.has(id)) {
+              ids[count++] = id;
+              remaining?.delete(id);
+            } else pruned = true;
+          }
+          ids.length = count;
+          slots[position] = count ? ids : null;
+          nonempty ||= count > 0;
+        }
+        if (remaining?.size === 0) expected.delete(token);
+        if (nonempty) retained.push(entry);
+      }
+      dump[key] = JSON.stringify(retained);
+    }
+    if (expected.size) throw new Error(`Persisted text index omits required ${field} token postings`);
+  }
+  if (current.size > 0 && Object.keys(dump).length === 0) throw new Error("Persisted text index is empty for a nonempty corpus");
+  index.text = importTextIndex(dump);
+  // Publisher prose and repaired duplicate API rows were removed above before
+  // fresh payloads are added, avoiding expensive updates of an imported index.
+  const added = new Set<string>();
+  for (const record of index.records) {
+    if (index._isIndexed(record) && !added.has(record.id) &&
+        (repair.has(record.id) || (supplementsChanged && record.source !== "rustdoc"))) {
+      index.text.add(index._flexPayload(record));
+      added.add(record.id);
+    }
+  }
+  for (const id of required) if (!index.text.contain(id)) throw new Error("Imported text index omits an API record");
+  index.searchableIds = current;
+  return pruned;
 }
 
 export class VersionRegistry {
@@ -206,7 +328,7 @@ export class VersionRegistry {
     const supplemental = sourceFingerprint([cfg.websiteDir, cfg.examplesDir]);
     const currentFormat = this.readPersistedCacheVersion(version) === CACHE_VERSION;
     let cacheError: unknown;
-    if (!force && currentFormat && fs.existsSync(recordPath) && fs.existsSync(textPath) && fs.existsSync(metaPath)) {
+    if (!force && currentFormat && fs.existsSync(recordPath) && fs.existsSync(metaPath)) {
       try {
         const started = Date.now();
         const metadata = parseMetadata(parseJson(fs.readFileSync(metaPath, "utf8")));
@@ -230,16 +352,25 @@ export class VersionRegistry {
         index.buildSymbolTable();
         index.meta = metadata;
         index.stats = index.stats_();
-        if (metadata.supplemental_fingerprint === supplemental) {
-          const dump = parseJson(fs.readFileSync(textPath, "utf8"));
-          index.text = importTextIndex(dump);
-          index.searchableIds = new Set(index.records.filter((record) => index._isIndexed(record)).map((record) => record.id));
-          if (index.searchableIds.size > 0 && (!isObject(dump) || Object.keys(dump).length === 0)) {
-            throw new Error("Persisted text index is empty for a nonempty corpus");
-          }
-        } else {
+        const supplementsChanged = metadata.supplemental_fingerprint !== supplemental;
+        const apiFingerprint = apiTextFingerprint(index, apiCount);
+        let trustedPayloads = false;
+        let textChanged = false;
+        try {
+          const persistedText = fs.readFileSync(textPath, "utf8");
+          trustedPayloads = metadata.api_text_fingerprint === apiFingerprint &&
+            metadata.text_index_fingerprint === textFingerprint(persistedText);
+          textChanged = restoreText(index, parseJson(persistedText), supplementsChanged, trustedPayloads);
+        }
+        catch (error) {
+          log(`version ${version}: rebuilding incompatible text index (${errorMessage(error)})`);
+          await index.buildTextIndex();
+          textChanged = true;
+        }
+        if (supplementsChanged || textChanged || !trustedPayloads) {
+          index.meta.api_text_fingerprint = apiFingerprint;
           index.meta.supplemental_fingerprint = supplemental;
-          index.meta.text_indexed = await index.buildTextIndex();
+          index.meta.text_indexed = index.records.filter((record) => index._isIndexed(record)).length;
           index.meta.website_dir = cfg.websiteDir;
           index.meta.examples_dir = cfg.examplesDir;
           index.meta.symbols = index.symbols.size;
@@ -273,11 +404,14 @@ export class VersionRegistry {
       const textCount = await index.buildTextIndex();
       index.meta = { bevy_version: cfg.bevyVersion, cache_version: CACHE_VERSION,
         fingerprint: sourceFingerprint([cfg.docDir]), supplemental_fingerprint: supplemental,
+        api_text_fingerprint: apiTextFingerprint(index, apiCount),
         version_source: cfg.versionSource, doc_dir: cfg.docDir, website_dir: cfg.websiteDir,
         examples_dir: cfg.examplesDir, project_root: cfg.projectRoot, built_at: new Date().toISOString(),
         build_ms: Date.now() - started, symbols: index.symbols.size, api_records: apiCount, text_indexed: textCount };
       index.stats = index.stats_();
-      fs.writeFileSync(path.join(staging, "text-index.json"), JSON.stringify(exportTextIndex(index.text!)));
+      const text = JSON.stringify(exportTextIndex(index.text!));
+      index.meta.text_index_fingerprint = textFingerprint(text);
+      fs.writeFileSync(path.join(staging, "text-index.json"), text);
       fs.writeFileSync(path.join(staging, "meta.json"), JSON.stringify(index.meta, null, 2));
       this.commitIndex(version, index, staging);
       this.indices.set(version, index);
@@ -292,7 +426,10 @@ export class VersionRegistry {
     try {
       fs.copyFileSync(path.join(this.dirFor(version), "records.ndjson"), path.join(staging, "records.ndjson"), fs.constants.COPYFILE_FICLONE);
       if (!index.text) throw new Error("Cannot persist an index without search data");
-      fs.writeFileSync(path.join(staging, "text-index.json"), JSON.stringify(exportTextIndex(index.text)));
+      if (!index.meta) throw new Error("Cannot persist an index without metadata");
+      const text = JSON.stringify(exportTextIndex(index.text));
+      index.meta.text_index_fingerprint = textFingerprint(text);
+      fs.writeFileSync(path.join(staging, "text-index.json"), text);
       fs.writeFileSync(path.join(staging, "meta.json"), JSON.stringify(index.meta, null, 2));
       this.commitIndex(version, index, staging);
     } finally { if (fs.existsSync(staging)) this.removeDirectory(staging); }

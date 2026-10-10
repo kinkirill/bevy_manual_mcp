@@ -43,6 +43,7 @@
     "rebuild-all": "node scripts/rebuild-all-indexes.mjs",
     "test": "npm run build && node build/test/index.mjs",
     "test:unit": "npm run build && node build/test/run-tests.mjs",
+    "test:corpus": "npm run build && node build/test/corpus-questions.mjs",
     "test:package": "npm run build && node build/scripts/package-smoke.mjs"
   },
   "keywords": [

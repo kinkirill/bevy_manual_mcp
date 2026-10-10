@@ -79,8 +79,16 @@ async function verifyIndexBundle(packageRoot: string, cwd: string, env: NodeJS.P
   const bundles = path.join(cwd, "bundles");
   execFileSync(process.execPath, [path.join(packageRoot, "scripts", "publish-index.mjs"), "--out", bundles, "--data", path.join(cwd, "data"), "9.9.9"], { cwd, env, stdio: "pipe" });
   const bundle = path.join(bundles, "bevy-index-9.9.9.tar.gz");
+  const publisher = path.join(packageRoot, "scripts", "publish-index.mjs");
+  execFileSync(process.execPath, [publisher, "9.9.9", "--out", bundles, "--data", path.join(cwd, "data"), "--revision", "1"], { cwd, env, stdio: "pipe" });
+  const revisedBundle = path.join(bundles, "bevy-index-9.9.9+1.tar.gz");
+  const listing = execFileSync("tar", ["-tzf", revisedBundle], { encoding: "utf8" });
+  assert.match(listing, /versions\/9\.9\.9\/records\.ndjson/);
+  assert.ok(!listing.includes("9.9.9+1"), "Asset revisions must not change the indexed Bevy version.");
+  assert.throws(() => execFileSync(process.execPath, [publisher, "9.9.9", "--revision", "../invalid"], { cwd, env, stdio: "pipe" }), /Index revision must be a nonnegative integer/);
   const server = createServer((request, response) => {
     if (request.url === "/valid") fs.createReadStream(bundle).pipe(response);
+    else if (request.url === "/revised") fs.createReadStream(revisedBundle).pipe(response);
     else response.end("invalid archive");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -101,6 +109,9 @@ async function verifyIndexBundle(packageRoot: string, cwd: string, env: NodeJS.P
     assert.equal(fetched.code, 0, fetched.output);
     const metadataPath = path.join(destination, "versions", "9.9.9", "meta.json");
     const before = fs.readFileSync(metadataPath, "utf8");
+    const revised = await runNode([...fetchCommand, `${source}/revised`, "--force"], cwd, detectionEnv);
+    assert.equal(revised.code, 0, revised.output);
+    assert.equal(fs.readFileSync(metadataPath, "utf8"), before);
     const failed = await runNode([...fetchCommand, `${source}/corrupt`, "--force"], cwd, detectionEnv);
     assert.equal(failed.code, 1, failed.output);
     assert.equal(fs.readFileSync(metadataPath, "utf8"), before, "Failed replacement must preserve the installed index.");

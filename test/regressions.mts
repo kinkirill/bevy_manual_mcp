@@ -9,7 +9,7 @@ import { REPO_ROOT, resolveConfig, detectBevyVersion, detectDocVersion } from ".
 import { paginate, completionResult, _internal as pagination } from "../src/pagination.js";
 import { VersionRegistry, writeNdjson } from "../src/registry.js";
 import type { RustdocRecord } from "../src/types.js";
-import { CACHE_VERSION, hybridSearch } from "../src/store.js";
+import { BevyIndex, CACHE_VERSION, TEXT_RESOLUTION, exportTextIndex, hybridSearch } from "../src/store.js";
 import { createVersionChecker, fetchVersionInfo } from "../src/versions.js";
 import { buildRustdocFixture, fixtureConfig, fixtureRecord, fixtureEnv, tempDir, writeFixture, parseObject, errorCode } from "./helpers.mjs";
 import { versionArgs, stableVersion, validateOutputTarget } from "../scripts/cli-utils.mjs";
@@ -339,6 +339,189 @@ const ownFixture = !process.env.RESOURCE_FIXTURE_DIR;
 const fixtureRoot = process.env.RESOURCE_FIXTURE_DIR ?? tempDir();
 const docDir = ownFixture ? buildRustdocFixture(fixtureRoot) : path.join(fixtureRoot, "rdfixture", "target", "doc");
 try {
+  await test("warm supplement refresh preserves API postings without rebuilding the full text index", async (t) => {
+    const root = tempDir();
+    try {
+      const website = path.join(root, "website");
+      const edited = path.join(website, "content", "learn", "book", "edited.md");
+      const removed = path.join(website, "content", "learn", "book", "removed.md");
+      const added = path.join(website, "content", "learn", "book", "added.md");
+      writeFixture(edited, "# Stable chapter\noldpostingwidget explains deterministic scheduling behavior with engine systems and documented examples.\n");
+      writeFixture(removed, "# Removed chapter\nremovedpostingwidget explains deterministic scheduling behavior with engine systems and documented examples.\n");
+      const config = fixtureConfig(root, { docDir, websiteDir: website });
+      const registry = new VersionRegistry(config);
+      const cold = await registry.get("9.9.9");
+      const api = cold.records.find((record) => record.source === "rustdoc" && record.name === "widget_variant_17");
+      const field = cold.records.find((record) => record.kind === "field" && record.name === "label");
+      const deleted = cold.records.find((record) => record.docs.includes("removedpostingwidget"));
+      assert.ok(api && field && deleted && cold.text);
+      assert.equal(cold.repairedIds.has(api.id), false);
+      cold.text.add(cold._flexPayload({ ...api, docs: api.docs + " preservedapipostingwidget" }));
+      cold.text.add(cold._flexPayload({ ...field, docs: "excludedfieldpostingwidget" }));
+      const dump = exportTextIndex(cold.text);
+      const ids: unknown = JSON.parse(dump["1.reg"]!);
+      assert.ok(Array.isArray(ids));
+      const middle = Math.ceil(ids.length / 2);
+      dump["1.reg"] = JSON.stringify(ids.slice(0, middle));
+      dump["2.reg"] = JSON.stringify(ids.slice(middle));
+      fs.writeFileSync(path.join(registry.dirFor("9.9.9"), "text-index.json"), JSON.stringify(dump));
+      writeFixture(edited, "# Stable chapter\nnewpostingwidget explains updated deterministic scheduling behavior with engine systems and documented examples.\n");
+      fs.rmSync(removed);
+      writeFixture(added, "# Added chapter\naddedpostingwidget explains deterministic scheduling behavior with engine systems and documented examples.\n");
+      t.mock.method(BevyIndex.prototype, "buildTextIndex", async () => { throw new Error("Unexpected full corpus text rebuild"); });
+      const warm = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+      assert.ok(hybridSearch(warm, "preservedapipostingwidget").some((hit) => hit.record.id === api.id));
+      assert.ok(hybridSearch(warm, "newpostingwidget").length);
+      assert.ok(hybridSearch(warm, "addedpostingwidget").length);
+      for (const token of ["oldpostingwidget", "removedpostingwidget", "excludedfieldpostingwidget"]) assert.equal(hybridSearch(warm, token).length, 0, token);
+      assert.ok(warm.lookupSymbol("Widget::label").some((hit) => hit.record.id === field.id));
+      assert.equal(warm.text?.contain(field.id), false);
+      assert.equal(warm.text?.contain(deleted.id), false);
+      assert.ok(warm.searchableIds.has(api.id));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  await test("warm API duplicate enrichment replaces stale postings without a full rebuild", async (t) => {
+    const root = tempDir();
+    try {
+      const config = fixtureConfig(root, { docDir });
+      const registry = new VersionRegistry(config);
+      const cold = await registry.get("9.9.9");
+      const api = cold.records.find((record) => record.source === "rustdoc" && record.name === "widget_variant_17");
+      assert.ok(api);
+      const duplicate = fixtureRecord({ ...api, docs: api.docs + " repairedpostingwidget demonstrates richer duplicate API documentation and preserves its runnable example.",
+        examples: [{ lang: "rust", code: "widget_variant_17(17);", compile_fail: false, ignored: false, scraped: false, source_file: null }] });
+      const recordsPath = path.join(registry.dirFor("9.9.9"), "records.ndjson");
+      const metaPath = path.join(registry.dirFor("9.9.9"), "meta.json");
+      const meta = parseObject(fs.readFileSync(metaPath, "utf8"));
+      assert.ok(typeof meta.api_records === "number");
+      meta.api_records++;
+      fs.appendFileSync(recordsPath, JSON.stringify(duplicate) + "\n");
+      fs.writeFileSync(metaPath, JSON.stringify(meta));
+      t.mock.method(BevyIndex.prototype, "buildTextIndex", async () => { throw new Error("Unexpected full corpus text rebuild"); });
+      const warm = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+      assert.equal(warm.records.filter((record) => record.id === api.id).length, 1);
+      assert.ok(hybridSearch(warm, "repairedpostingwidget").some((hit) => hit.record.id === api.id));
+      assert.ok(warm.byId.get(api.id)?.examples?.some((example) => example.code === "widget_variant_17(17);"));
+      assert.equal(warm.meta?.api_records, meta.api_records, "API metadata must still count every raw persisted row");
+      const snapshots = [recordsPath, metaPath, path.join(registry.dirFor("9.9.9"), "text-index.json")].map((file) => ({ file, data: fs.readFileSync(file), modified: fs.statSync(file).mtimeMs }));
+      let repeatedWrites = 0;
+      t.mock.method(VersionRegistry.prototype, "persist", () => { repeatedWrites++; throw new Error("Unexpected repeated cache write"); });
+      const second = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+      assert.ok(hybridSearch(second, "repairedpostingwidget").some((hit) => hit.record.id === api.id));
+      for (const snapshot of snapshots) {
+        assert.deepEqual(fs.readFileSync(snapshot.file), snapshot.data);
+        assert.equal(fs.statSync(snapshot.file).mtimeMs, snapshot.modified);
+      }
+      assert.equal(repeatedWrites, 0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  await test("cold duplicate corpus persists repaired search once and unchanged warm loads perform no writes", async (t) => {
+    const root = tempDir();
+    try {
+      const api = fixtureRecord({ source: "rustdoc", kind: "struct", name: "FingerprintWidget", full_path: "bevy::FingerprintWidget", bevy_version: "9.9.9",
+        docs: "fingerprintpostingwidget retains the complete documentation.", signature: "pub struct FingerprintWidget;" });
+      assert.ok(api.source === "rustdoc");
+      const apiRecord: RustdocRecord = api;
+      class DuplicateRegistry extends VersionRegistry {
+        override *versionedRustdoc(): Generator<RustdocRecord> {
+          yield { ...apiRecord };
+          yield { ...apiRecord, docs: "" };
+          yield { ...apiRecord };
+        }
+      }
+      const config = fixtureConfig(root, { docDir });
+      const registry = new DuplicateRegistry(config);
+      const cold = await registry.get("9.9.9");
+      assert.equal(cold.records.length, 1);
+      assert.equal(cold.meta?.api_records, 3);
+      assert.match(cold.meta?.api_text_fingerprint ?? "", /^[a-f0-9]{64}$/);
+      assert.match(cold.meta?.text_index_fingerprint ?? "", /^[a-f0-9]{64}$/);
+      const files = ["records.ndjson", "meta.json", "text-index.json"].map((name) => path.join(registry.dirFor("9.9.9"), name));
+      const modified = files.map((file) => fs.statSync(file).mtimeMs);
+      let writes = 0;
+      t.mock.method(VersionRegistry.prototype, "persist", () => { writes++; throw new Error("Unexpected warm cache write"); });
+      t.mock.method(BevyIndex.prototype, "buildTextIndex", async () => { throw new Error("Unexpected text rebuild"); });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const warm = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+        assert.equal(warm.records.length, 1);
+        assert.ok(warm.repairedIds.size);
+        assert.ok(hybridSearch(warm, "fingerprintpostingwidget").length);
+        assert.equal(warm.meta?.api_records, 3);
+      }
+      assert.equal(writes, 0);
+      assert.deepEqual(files.map((file) => fs.statSync(file).mtimeMs), modified);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  await test("source-less API records repair malformed or incomplete text caches locally", async (t) => {
+    const root = tempDir();
+    try {
+      const config = fixtureConfig(root, { docDir });
+      const registry = new VersionRegistry(config);
+      const cold = await registry.get("9.9.9");
+      assert.ok(cold.text);
+      const textPath = path.join(registry.dirFor("9.9.9"), "text-index.json");
+      const recordsPath = path.join(registry.dirFor("9.9.9"), "records.ndjson");
+      const records = fs.readFileSync(recordsPath);
+      const missingRegistration = exportTextIndex(cold.text);
+      missingRegistration["1.reg"] = "[]";
+      const missingNames = exportTextIndex(cold.text);
+      missingNames["name.1.map"] = "[]";
+      const malformed: (string | null)[] = ["{}", "invalid JSON", JSON.stringify(missingRegistration), JSON.stringify(missingNames), null];
+      for (const field of ["docs", "signature"] as const) {
+        const missingField = exportTextIndex(cold.text);
+        for (const key of Object.keys(missingField)) if (key.startsWith(`${field}.`)) delete missingField[key];
+        malformed.push(JSON.stringify(missingField));
+        const emptiedField = exportTextIndex(cold.text);
+        for (const key of Object.keys(emptiedField)) if (key.startsWith(`${field}.`)) emptiedField[key] = "[]";
+        malformed.push(JSON.stringify(emptiedField));
+        const wrongTokens = exportTextIndex(cold.text);
+        for (const key of Object.keys(wrongTokens)) {
+          if (!key.startsWith(`${field}.`)) continue;
+          const entries: unknown = JSON.parse(wrongTokens[key]!);
+          assert.ok(Array.isArray(entries));
+          // Retain every ID and its score bucket, replacing only the tokens.
+          // Field/record coverage alone must not accept this broken export.
+          wrongTokens[key] = JSON.stringify(entries.map((entry: unknown, i: number) => {
+            assert.ok(Array.isArray(entry));
+            return [`wrong${field}token${i}`, entry[1]];
+          }));
+        }
+        malformed.push(JSON.stringify(wrongTokens));
+      }
+      const duplicateTokens = exportTextIndex(cold.text);
+      const names: unknown = JSON.parse(duplicateTokens["name.1.map"]!);
+      assert.ok(Array.isArray(names) && names.length);
+      duplicateTokens["name.2.map"] = JSON.stringify([names[0]]);
+      malformed.push(JSON.stringify(duplicateTokens));
+      const unreachableScores = exportTextIndex(cold.text);
+      const scoredNames: unknown = JSON.parse(unreachableScores["name.1.map"]!);
+      assert.ok(Array.isArray(scoredNames));
+      const first: unknown = scoredNames[0];
+      assert.ok(Array.isArray(first) && Array.isArray(first[1]));
+      first[1] = [...Array.from({ length: TEXT_RESOLUTION }, () => null), first[1].flat().filter((id: unknown) => typeof id === "string")];
+      unreachableScores["name.1.map"] = JSON.stringify(scoredNames);
+      malformed.push(JSON.stringify(unreachableScores));
+      const build = BevyIndex.prototype.buildTextIndex;
+      let rebuilds = 0;
+      t.mock.method(BevyIndex.prototype, "buildTextIndex", async function (this: BevyIndex, options?: Parameters<typeof build>[0]) {
+        rebuilds++;
+        return build.call(this, options);
+      });
+      for (const text of malformed) {
+        if (text === null) fs.rmSync(textPath);
+        else fs.writeFileSync(textPath, text);
+        const warm = await new VersionRegistry({ ...config, docDir: null }).get("9.9.9");
+        assert.ok(hybridSearch(warm, "widget_variant_17").length);
+        assert.ok(warm.lookupSymbol("Widget::new").length);
+        assert.deepEqual(fs.readFileSync(recordsPath), records);
+      }
+      assert.equal(rebuilds, malformed.length);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   await test("concurrent version loads share one index and one rustdoc ingest", async () => {
     const root = tempDir();
     try {

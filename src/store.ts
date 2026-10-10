@@ -23,6 +23,12 @@ import { errorMessage, isObject, parseJson, parseMetadata, parseRecord,
 interface TextPayload { [key: string]: string; id: string; name: string; full_path: string; signature: string; docs: string }
 export type TextIndex = Document<TextPayload, false, false>;
 export type TextIndexDump = Record<string, string>;
+export const TEXT_FIELDS = ["name", "signature", "docs"] as const;
+export const TEXT_RESOLUTION = 9;
+// Share FlexSearch's default encoder with persisted-posting validation. Strict
+// tokenization indexes each encoded term without generating prefix variants.
+const textEncoder = new FlexSearch.Encoder();
+export function encodeTextTokens(text: string): string[] { return textEncoder.encode(text); }
 type WeightedRecord = Partial<BevyRecord> & { kind: string };
 
 /**
@@ -66,6 +72,7 @@ export function importTextIndex(dump: unknown): TextIndex {
       store: false,
     },
     tokenize: "strict",
+    resolution: TEXT_RESOLUTION,
   });
   for (const [key, data] of Object.entries(dump || {})) {
     flexIndex.import(key, String(data));
@@ -109,23 +116,76 @@ const QUERY_STOPWORDS = new Set([
   "these", "those", "can", "could", "should", "would", "will", "make", "makes",
   "made", "use", "uses", "used", "using", "get", "gets", "getting", "want",
   "need", "there", "here", "if", "then", "than", "so", "but", "not", "no",
-  "yes", "please", "help",
+  "yes", "please", "help", "between",
 ]);
 
 /** Keep only the tokens of a query that carry intent. */
 function meaningfulTerms(query: string) {
+  const comparison = /\b(?:between|versus|vs|compare|comparison)\b/i.test(query);
   return String(query || "")
     .toLowerCase()
     .split(/[^a-z0-9_]+/)
-    .filter((t) => t.length > 1 && !QUERY_STOPWORDS.has(t));
+    .filter((t) => t.length > 1 && !QUERY_STOPWORDS.has(t) &&
+      (!comparison || !["difference", "differences", "compare", "comparison", "versus", "vs"].includes(t)));
 }
 
-/** Normalise a lookup key: drop leading path, generics, whitespace, case. */
+function singularTerm(term: string): string {
+  if (term.endsWith("ies") && term.length > 4) return term.slice(0, -3) + "y";
+  if (/(?:ches|shes|xes|zes)$/.test(term)) return term.slice(0, -2);
+  return term.length > 3 && /s$/.test(term) && !/(?:ss|us)$/.test(term) ? term.slice(0, -1) : term;
+}
+
+interface QueryFocus { terms: string[]; subjects: string[]; context: string[]; action: "read" | "write" | "create" | null; communication: boolean }
+function queryFocus(query: string): QueryFocus {
+  const terms = meaningfulTerms(query).map(singularTerm);
+  const comparison = /\b(?:difference|compare|comparison|versus|vs)\b/i.test(query);
+  const prefix = comparison ? query : query.split(/\b(?:in|with|into|between)\b/i)[0] ?? query;
+  let subjects = meaningfulTerms(prefix).map(singularTerm).filter((term) => !INTENT_VERBS.has(term));
+  const action = /\b(?:read|reads|reading)\b/i.test(query) ? "read"
+    : /\b(?:send|write|emit|sending|writing)\b/i.test(query) ? "write"
+    : /\b(?:spawn|create|make|build)\b/i.test(query) ? "create" : null;
+  const asksCommunication = terms.some((term) => /^(?:communicate|communication|communicating)$/.test(term));
+  const ecsContext = terms.some((term) => term === "system" || term === "ecs");
+  const communication = (asksCommunication && ecsContext) ||
+    (action !== null && action !== "create" && terms.some((term) => term === "message" || term === "event")) ||
+    (comparison && terms.includes("message") && terms.includes("event"));
+  if (asksCommunication && ecsContext) subjects = ["message", "event"];
+  // Buffered events were renamed to messages. Actual candidates, rather than
+  // an assumed version boundary, decide which family this corpus can offer.
+  if (communication && action && subjects.includes("event")) subjects.push("message");
+  if (communication && subjects.some((term) => term === "event" || term === "message")) {
+    subjects = subjects.filter((term) => term !== "system");
+  }
+  if (!subjects.length) subjects = terms.filter((term) => !INTENT_VERBS.has(term));
+  // Keep supporting concepts even when a preposition separates them from the
+  // main subject: a sphere "with a material" needs both API families.
+  const context = terms.filter((term) => !INTENT_VERBS.has(term) && !subjects.includes(term) &&
+    !(communication && (term === "system" || term === "ecs")));
+  return { terms, subjects: [...new Set(subjects)], context: [...new Set(context)], action, communication };
+}
+
+function nameTerms(name: string): string[] {
+  return baseName(name).replace(/([A-Z])([A-Z][a-z])/g, "$1 $2").replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([a-zA-Z])([0-9])/g, "$1 $2")
+    .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(singularTerm);
+}
+
+/** Normalise symbol spelling while retaining every owner and module component. */
 function normKey(s: string) {
-  return String(s || "")
-    .replace(/<\s*[^>]*\s*>/g, "")
+  let withoutGenerics = "";
+  let depth = 0;
+  for (const ch of String(s || "")) {
+    if (ch === "<") {
+      if (depth === 0 && withoutGenerics.trimEnd().endsWith("::")) withoutGenerics = withoutGenerics.trimEnd().slice(0, -2);
+      depth++;
+    }
+    else if (ch === ">" && depth > 0) depth--;
+    else if (depth === 0) withoutGenerics += ch;
+  }
+  return withoutGenerics
     .replace(/\s+/g, "")
-    .replace(/^[a-z_][a-z0-9_]*::/i, "")
+    .replace(/\(\)$/, "")
+    .replace(/^::/, "")
     .toLowerCase();
 }
 
@@ -337,6 +397,9 @@ export class BevyIndex {
   meta: IndexMetadata | null;
   stats: IndexStats;
   searchableIds = new Set<string>();
+  // Published bundles can repeat an identity with less complete documentation.
+  // Its imported text payload must be refreshed from the merged record.
+  readonly repairedIds = new Set<string>();
   constructor() {
     this.records = [];
     this.byId = new Map();
@@ -372,6 +435,25 @@ export class BevyIndex {
           .slice(0, 16);
       }
       const indexed = r as IndexedRecord;
+      const existing = this.byId.get(indexed.id);
+      if (existing) {
+        if (existing.source !== indexed.source || existing.kind !== indexed.kind ||
+          existing.full_path !== indexed.full_path || existing.name !== indexed.name ||
+          existing.bevy_version !== indexed.bevy_version) {
+          throw new Error(`Record ID collision between different API identities: ${indexed.id}`);
+        }
+        this.repairedIds.add(indexed.id);
+        if (indexed.docs.length > existing.docs.length) existing.docs = indexed.docs;
+        if (!existing.signature && indexed.signature) existing.signature = indexed.signature;
+        if (!existing.source_ref && indexed.source_ref) existing.source_ref = indexed.source_ref;
+        if (!existing.defaults && indexed.defaults) existing.defaults = indexed.defaults;
+        if (indexed.examples?.length) {
+          const examples = new Map((existing.examples ?? []).map((example) => [JSON.stringify(example), example]));
+          for (const example of indexed.examples) examples.set(JSON.stringify(example), example);
+          existing.examples = [...examples.values()];
+        }
+        continue;
+      }
       this.records.push(indexed);
       this.byId.set(indexed.id, indexed);
     }
@@ -397,7 +479,7 @@ export class BevyIndex {
       if (!k) return;
       let entry = this.symbols.get(k);
       if (!entry) this.symbols.set(k, (entry = []));
-      if (entry.length < 60) entry.push(id);
+      if (entry.length < 60 && !entry.includes(id)) entry.push(id);
       if (rank !== undefined) {
         let cand = leafCandidates.get(k);
         if (!cand) leafCandidates.set(k, (cand = new Map()));
@@ -430,10 +512,19 @@ export class BevyIndex {
       const owner = baseName(r.owner);
       const rank = rankFor(r);
 
+      // Register concrete full paths before shorthand aliases. Crate-relative
+      // paths are explicit aliases; an arbitrary owner must never be stripped.
+      const addPath = (fullPath: string) => {
+        add(fullPath, r.id, rank);
+        const crate = normKey(r.crate || "");
+        const key = normKey(fullPath);
+        if (crate && key.startsWith(`${crate}::`)) add(key.slice(crate.length + 2), r.id, rank);
+      };
+      addPath(r.full_path);
       if (owner) add(`${owner}::${leaf}`, r.id, rank);
       if (r.module) {
-        add(`${r.module}::${leaf}`, r.id, rank);
-        if (owner) add(`${r.module}::${owner}::${leaf}`, r.id, rank);
+        if (owner) addPath(`${r.module}::${owner}::${leaf}`);
+        else addPath(`${r.module}::${leaf}`);
       }
       add(leaf, r.id, rank);
     }
@@ -592,6 +683,7 @@ export class BevyIndex {
       // lose prefix behaviour because the exact symbol table (lookupSymbol)
       // already handles `Query`/`QueryData`-style lookups separately.
       tokenize: "strict",
+      resolution: TEXT_RESOLUTION,
     });
     const targets = onlySearchable
       ? this.records.filter((r) => isSearchable(r))
@@ -616,45 +708,21 @@ export class BevyIndex {
 
   /** Exact symbol lookup. Returns records, best match first. */
   lookupSymbol(query: string): SearchHit[] {
-    const q = String(query || "").trim();
-    if (!q) return [];
+    const key = normKey(query);
+    if (!key) return [];
     const out: SearchHit[] = [];
     const seen = new Set<string>();
-
-    const push = (ids: string[] | undefined, score: number, exactLeaf = false) => {
-      for (const id of ids || []) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const rec = this.byId.get(id);
-        if (!rec) continue;
-        // A leaf-only key can point at unrelated names (Query -> QueryData), so
-        // require a real name match before treating it as an exact hit.
-        if (exactLeaf) {
-          const leafName = baseName(rec.name).toLowerCase();
-          const wanted = baseName(q).toLowerCase();
-          const ownerName = baseName(rec.owner || "").toLowerCase();
-          if (leafName !== wanted && !ownerName.includes(wanted)) continue;
-        }
-        out.push({ record: rec, score });
-      }
-    };
-
-    // Try progressively shorter keys: most specific first.
-    const candidates = [q];
-    const stripped = q.replace(/^[a-z_][a-z0-9_]*::/i, "");
-    if (stripped !== q) candidates.push(stripped);
-    const noParens = q.replace(/\(\s*\)$/, "");
-    if (noParens !== q && noParens !== stripped) candidates.push(noParens);
-
-    candidates.forEach((c, i) => {
-      const qualified = c.includes("::");
-      push(this.symbols.get(normKey(c)), 1000 - i * 10, !qualified);
-    });
-
-    // If the user pasted a full generic signature, retry on the base name.
-    const bn = baseName(q);
-    if (bn !== q) push(this.symbols.get(normKey(bn)), 900);
-
+    const qualified = key.includes("::");
+    for (const id of this.symbols.get(key) || []) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const record = this.byId.get(id);
+      if (!record) continue;
+      if (!qualified && normKey(baseName(record.name)) !== key) continue;
+      // Full-path matches must lead even when a shorthand alias shares a key.
+      const score = qualified && normKey(record.full_path) === key ? 1100 : 1000;
+      out.push({ record, score });
+    }
     return out.sort((a, b) => b.score - a.score);
   }
 
@@ -764,6 +832,11 @@ export function queryRecords(index: BevyIndex, query: ResourceQuery): IndexedRec
  * `bevy::prelude` alias for it.
  */
 export function findByPath(index: BevyIndex, version: string | null, path: string): IndexedRecord | null {
+  // Rust type and derive-macro namespaces can share a full path. Match the
+  // exact API tool's preference for the type before its same-named derive.
+  const symbol = index.lookupSymbol(path).find(({ record }) =>
+    record.full_path === path && (!version || record.bevy_version === version));
+  if (symbol) return symbol.record;
   const exact = index.records.find(
     (r) => r.full_path === path && (!version || r.bevy_version === version),
   );
@@ -781,11 +854,13 @@ export function findByPath(index: BevyIndex, version: string | null, path: strin
   const rank = (r: BevyRecord) =>
     (/^bevy::prelude::/.test(r.full_path) ? 2 : 0) +
     (r.full_path === `bevy::${r.name}` ? 1 : 0);
+  const namespaceRank = (r: BevyRecord) => r.kind === "derive" || r.kind === "macro" ? 1 : 0;
 
   return matches
     .slice()
     .sort(
       (a, b) =>
+        namespaceRank(a) - namespaceRank(b) ||
         rank(a) - rank(b) ||
         a.full_path.length - b.full_path.length ||
         a.full_path.localeCompare(b.full_path),
@@ -811,6 +886,7 @@ const INTENT_VERBS = new Set([
   "get", "set", "apply", "update", "build", "load", "open", "close", "play",
   "run", "start", "stop", "use", "attach", "register", "send", "emit", "read",
   "write", "enable", "disable", "toggle", "bind", "handle", "process",
+  "turn", "communicate", "communication", "communicating", "compare", "difference",
 ]);
 
 /**
@@ -822,28 +898,34 @@ const INTENT_VERBS = new Set([
  * for, and a type (struct/enum/trait/fn) answers "spawn X" better than a method
  * that merely mentions X, so both are boosted here on top of the field weights.
  */
-function relevanceBoost(r: BevyRecord, terms: string[]) {
-  if (!terms?.length) return 1;
-  const leaf = baseName(r.name || "").toLowerCase();
-  const leafWords = leaf.split(/[^a-z0-9]+/).filter(Boolean);
-  const path = String(r.full_path || "").toLowerCase();
+function relevanceBoost(r: BevyRecord, focus: QueryFocus) {
+  if (!focus.terms.length) return 1;
+  const leaf = singularTerm(baseName(r.name || "").toLowerCase());
+  const leafWords = nameTerms(r.name);
+  const ownerWords = nameTerms(r.owner ?? "");
+  const pathWords = nameTerms(r.full_path);
   let boost = 1;
   let matched = 0;
-  for (const t of terms) {
+  for (const t of new Set([...focus.terms, ...focus.subjects])) {
     // In a multi-term query the intent verb is not the subject ("spawn camera"
     // asks about `Camera`, not about `Spawn`), so it contributes little.
-    const intent = terms.length > 1 && INTENT_VERBS.has(t);
+    const intent = focus.terms.length > 1 && (INTENT_VERBS.has(t) ||
+      (!focus.subjects.includes(t) && !focus.context.includes(t)));
     if (leaf === t) {
       boost += intent ? 0.6 : 3;
       matched++;
     } else if (leafWords.includes(t)) {
       boost += intent ? 0.5 : 2.2;
       matched++;
-    } else if (leaf.includes(t)) {
+    } else if (t.length > 3 && leaf.includes(t)) {
       boost += intent ? 0.3 : 1.4;
       matched++;
-    } else if (path.includes(t)) {
+    } else if (pathWords.includes(t)) {
       boost += 0.8;
+    } else if (focus.context.includes(t) && new RegExp(`\\b${t}(?:s)?\\b`, "i").test(r.docs)) {
+      // Documentation can connect a supporting concept to the API: material
+      // types explaining a red base color are more useful than empty helpers.
+      boost += 0.9;
     }
   }
   // A record matching several query terms in its name (`add_systems` for "add
@@ -853,7 +935,21 @@ function relevanceBoost(r: BevyRecord, terms: string[]) {
   if (["struct", "enum", "trait", "fn", "type", "primitive"].includes(r.kind)) {
     boost += 0.5;
   }
+  const subjectMatch = focus.subjects.some((term) => leafWords.includes(term) || ownerWords.includes(term) || (term.length > 3 && leaf.includes(term)));
+  if (subjectMatch && focus.action === "read" && /read/.test(`${leaf} ${r.owner ?? ""}`.toLowerCase())) boost += 3;
+  if (subjectMatch && focus.action === "write" && /writ|send|emit/.test(`${leaf} ${r.owner ?? ""}`.toLowerCase())) boost += 3;
+  if (focus.communication && r.source === "rustdoc" && /::ecs::/.test(r.full_path)) boost += 2;
+  const createsSubject = (["struct", "enum", "trait", "fn", "type", "primitive"].includes(r.kind) && focus.subjects.includes(leaf)) ||
+    focus.subjects.includes(singularTerm(baseName(r.owner).toLowerCase()));
+  if (subjectMatch && createsSubject && focus.action === "create" && /::(?:math::primitives|mesh::primitives|shape)(?:::|$)/.test(r.full_path)) boost += 2;
   return boost;
+}
+
+function definitionKey(record: IndexedRecord): string {
+  if (record.source === "rustdoc" && record.source_ref) {
+    return [record.source, record.source_ref, record.kind, baseName(record.owner), record.name].join("|");
+  }
+  return record.id;
 }
 
 export function hybridSearch(
@@ -875,7 +971,7 @@ export function hybridSearch(
   // a wide pool and narrow it ourselves.
   const pool = hasFilters ? Math.max(limit * 100, 3000) : Math.max(limit * 100, 2000);
 
-  const terms = meaningfulTerms(query);
+  const focus = queryFocus(query);
   const exact = applyFilters(index.lookupSymbol(query), filters);
   const seen = new Set();
   const scored: SearchHit[] = [];
@@ -899,22 +995,51 @@ export function hybridSearch(
   // ~900-1000), so an exact match always leads no matter how strong a prose hit
   // looks. Normalising by the best raw score keeps the band meaningful without
   // hard-coding a ceiling.
-  const rawFuzzy: { record: IndexedRecord; raw: number }[] = [];
+  const rawById = new Map<string, { record: IndexedRecord; raw: number }>();
   for (const hit of fuzzy) {
     if (seen.has(hit.record.id)) continue;
-    seen.add(hit.record.id);
-    rawFuzzy.push({
+    const raw = hit.score * weightOf(hit.record) * relevanceBoost(hit.record, focus);
+    if (raw <= (rawById.get(hit.record.id)?.raw ?? 0)) continue;
+    rawById.set(hit.record.id, {
       record: hit.record,
-      raw: hit.score * weightOf(hit.record) * relevanceBoost(hit.record, terms),
+      raw,
     });
   }
+  // A long corpus can exhaust FlexSearch's candidate budget on one query word.
+  // Add subject-name matches directly, including CamelCase reader/writer types.
+  const candidateTerms = [...focus.subjects, ...focus.context];
+  const includesApi = !filters.source || filters.source.split(",").some((source) => source.trim() === "rustdoc");
+  if (!exact.length && candidateTerms.length && includesApi) {
+    const names = index.records.filter((record) => {
+      if (record.source !== "rustdoc" || record.kind === "field" || seen.has(record.id) || !scoped(record)) return false;
+      const words = nameTerms(record.name);
+      const owner = nameTerms(record.owner ?? "");
+      return candidateTerms.some((term) => words.includes(term) || owner.includes(term));
+    });
+    for (const record of applyFilters(names.map((record) => ({ record, score: 0 })), filters).map((hit) => hit.record)) {
+      const ownMatch = candidateTerms.some((term) => nameTerms(record.name).includes(term));
+      const definition = ["struct", "enum", "trait", "fn", "type", "primitive"].includes(record.kind);
+      // A helper such as another shape's `bounding_sphere` is weaker than a
+      // definition of the requested shape or of its supporting material.
+      const raw = (ownMatch && definition ? 240 : 90) * weightOf(record) * relevanceBoost(record, focus);
+      if (raw > (rawById.get(record.id)?.raw ?? 0)) rawById.set(record.id, { record, raw });
+    }
+  }
+  const rawFuzzy = [...rawById.values()];
   const maxRaw = rawFuzzy.reduce((m, f) => Math.max(m, f.raw), 0) || 1;
   for (const f of rawFuzzy) {
     scored.push({ record: f.record, score: (f.raw / maxRaw) * 850 });
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit);
+  const definitions = new Set<string>();
+  return scored.filter(({ record }) => {
+    if (seen.has(record.id)) return true;
+    const key = definitionKey(record);
+    if (definitions.has(key)) return false;
+    definitions.add(key);
+    return true;
+  }).slice(0, limit);
 }
 
 function buildFromSource(config: IndexConfig) {

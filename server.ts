@@ -65,11 +65,6 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
     log("  ", config.versionNote || "");
     log("   Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
   }
-  if (!config.docDir) {
-    log("WARNING: no cargo rustdoc found - API search will be limited to the book/examples.");
-    log("   Run `cargo doc -p bevy` inside your Bevy project (can take several minutes).");
-    log("   Or run `npm run fetch-docs` to mirror docs.rs instead.");
-  }
 
   // The single most damaging failure mode for this server is answering with one
   // version's API while claiming another. Detect it loudly rather than silently.
@@ -94,6 +89,11 @@ export async function createBevyServer(config: ResolvedConfig = resolveConfig(),
   const index = await registry.get(config.bevyVersion ?? "unversioned", {
     force,
   });
+  if (!config.docDir && !index.stats.by_source.rustdoc) {
+    log("WARNING: no API index is installed - search is limited to the book/examples.");
+    log("   Run `bevy-mcp fetch-index <version>` to install a published index.");
+    log("   Or run `npm run fetch-docs` to mirror docs.rs and build it locally.");
+  }
   const checkVersions = createVersionChecker({ offline: config.env.offline });
 
   // Extra versions, if the operator pointed us at their doc directories.

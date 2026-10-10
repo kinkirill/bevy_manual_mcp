@@ -83,6 +83,8 @@ export interface IndexMetadata {
   cache_version?: number;
   fingerprint?: string;
   supplemental_fingerprint?: string;
+  api_text_fingerprint?: string;
+  text_index_fingerprint?: string;
   version_source?: string | null;
   doc_dir?: string | null;
   website_dir?: string | null;
@@ -150,6 +152,7 @@ export function parseRecord(value: unknown): BevyRecord { return recordSchema.pa
 const metadataSchema = z.object({
   bevy_version: z.string().nullable(), cache_version: z.number().int().optional(),
   fingerprint: z.string().optional(), supplemental_fingerprint: z.string().optional(),
+  api_text_fingerprint: z.string().optional(), text_index_fingerprint: z.string().optional(),
   version_source: nullableString, doc_dir: nullableString, website_dir: nullableString,
   examples_dir: nullableString, project_root: z.string().optional(), built_at: z.string().optional(),
   build_ms: z.number().optional(), symbols: z.number().optional(), api_records: z.number().optional(),

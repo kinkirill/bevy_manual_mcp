@@ -16,7 +16,7 @@ Back to the [README](README.md).
 ## Install the prebuilt index
 
 The index for a released Bevy minor is identical for everyone, so it is built
-once and published as a GitHub Release asset (~67 MB compressed). This is the
+once and published as a GitHub Release asset (~78 MB compressed for 0.20.0). This is the
 fast path:
 
 ```bash
@@ -31,6 +31,30 @@ so you can keep several versions side by side and compare them with
 Indexes are published for **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
 If `fetch-index` reports no asset for a version, build it yourself (below) or ask
 for a release.
+
+Rebuilt indexes can be published with a numeric asset suffix, for example
+`bevy-index-0.20.0+1.tar.gz` under release `v0.20.0`. The downloader selects the
+highest revision and verifies GitHub's SHA-256 digest when provided. The suffix
+does not change the Bevy version or installation directory. Refresh an existing
+installation explicitly:
+
+```bash
+bevy-mcp fetch-index 0.20.0 --force
+```
+
+To test installed bundles through actual MCP tools and resources, run from a
+source checkout:
+
+```bash
+npm run test:corpus -- --data data --out data/corpus-questions.json
+# Or test one installed version:
+npm run test:corpus -- --data data 0.20.0
+```
+
+The optional harness checks sphere questions, event/message communication,
+exact signatures, resources and version provenance. Missing message APIs in
+0.15 and 0.16 are expected. Its JSON report records the returned passages and
+failures; it requires installed indexes and runs separately from `npm test`.
 
 ---
 
@@ -127,8 +151,10 @@ contain the same public API, so **the mirror is strictly better**. Reach for
 A cold build of the full corpus takes roughly 5-7 minutes at a 2 GB heap and is
 then persisted. For Bevy 0.19.1 that is ~270k records: 265,741 rustdoc items,
 3,389 website prose chunks and 445 examples. You can skip the build entirely by
-installing a prebuilt index; otherwise every later run streams `records.ndjson`
-and imports `text-index.json` in about 2-5 seconds.
+installing a prebuilt index. Later runs validate `records.ndjson` and import
+`text-index.json`; the six current bundles took roughly 7-15 seconds each on
+the Windows validation machine. A changed or damaged text export is repaired
+locally from the validated API records without downloading a rustdoc mirror.
 
 Deleting `data/` forces a cold rebuild. The rustdoc mirrors under
 `~/.cache/bevy-mcp/` are only needed to rebuild - roughly 1.6 GB each - so they

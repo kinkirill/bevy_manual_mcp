@@ -2,10 +2,9 @@
 /**
  * Capture a ranking snapshot of the real Bevy index.
  *
- * Purpose: prove that an ingest-side change (adding struct fields) did not
- * perturb search results. Fields are ~10-15k new records; if they leak into the
- * text index at full weight they would flood results, which is exactly the
- * regression this script is built to catch.
+ * Guard exact owner lookup, natural-question relevance and field exclusion
+ * against the full published corpus. Update the snapshot only after reviewing
+ * intentional ranking changes and passing the semantic corpus harness.
  *
  * Usage:
  *   node test/ranking-snapshot.mjs capture  # writes test/fixtures/ranking-snapshot.json
@@ -32,6 +31,8 @@ interface Snapshot { bevy_version: string; generated_for: string; queries: Recor
 // intent-verb + subject noun, prose-only, filters, and field-name lookups.
 const QUERIES = [
   { q: "spawn camera" },
+  { q: "How to spawn a sphere" },
+  { q: "Difference between message and event" },
   { q: "system ordering" },
   { q: "Query::iter" },
   { q: "add_systems" },

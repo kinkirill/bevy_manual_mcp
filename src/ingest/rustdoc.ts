@@ -164,8 +164,8 @@ function defaultImplDoc($: CheerioAPI, skipSelector: string) {
  * is the only reliable place the field name lives (the id prefix is
  * `structfield.`, not `field.`).
  */
-function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, owner, bevyVersion }: {
-  crate: string; module: string; file: string; relFile: string; owner: string | null; bevyVersion: string | null;
+function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, owner, bevyVersion, sourceRef }: {
+  crate: string; module: string; file: string; relFile: string; owner: string | null; bevyVersion: string | null; sourceRef: string | null;
 }): RustdocRecord | null {
   const id = $(el).attr("id") || "";
   const name = id.replace(/^structfield\./, "");
@@ -201,7 +201,7 @@ function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, own
     file: relFile,
     // Fields have no per-item source link of their own; the page's link is what
     // identifies the defining crate (see depCrateOf below).
-    source_ref: null,
+    source_ref: sourceRef,
     bevy_version: bevyVersion,
     title: "",
   };
@@ -534,6 +534,7 @@ function parsePage(html: string, file: string, docRoot: string, bevyVersion: str
         relFile,
         owner: fileName || null,
         bevyVersion,
+        sourceRef: pageSrcLink,
       });
       if (rec) records.push(rec);
     });
@@ -602,7 +603,7 @@ function parsePage(html: string, file: string, docRoot: string, bevyVersion: str
       // engine code rather than something the author wrote inline.
       const scraped = $pre.closest(".scraped-example");
       const title = scraped.length
-        ? scraped.find(".scraped-example-title").first().text().trim()
+        ? scraped.find(".scraped-example-title").first().text().trim() || null
         : null;
       const example = {
         lang: "rust",

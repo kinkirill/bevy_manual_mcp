@@ -50,6 +50,21 @@ signature.
 Results are cached in `data/` and invalidated by a fingerprint of the input
 directories, so startup is fast after the first run.
 
+Downloaded API records are reused when local website or example sources change.
+The registry replaces their supplemental postings, merges richer duplicate API
+rows, and validates required name, signature and documentation tokens before
+accepting an unfamiliar search export. Missing or damaged search exports can be
+rebuilt from valid API records without downloading rustdoc again. Persisted
+corpus and search hashes let later loads retain repaired postings without
+rewriting unchanged caches or repeating token validation.
+
+In an isolated Windows/Node.js 24 measurement, the Bevy 0.20.0 API corpus
+(249,353 unique records, with no supplemental sources) loaded in about 14
+seconds for first validation and 10–11 seconds on the next warm load. Both
+passed with `--max-old-space-size=2048`; peak process RSS was about 2.4 GB and
+1.6 GB respectively. The heap setting does not cap total process memory.
+Startup time varies with the corpus, disk and machine.
+
 ---
 
 ## Repository layout
