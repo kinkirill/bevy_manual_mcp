@@ -55,8 +55,23 @@ function mb(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-function assetUrl(repo, version) {
-  return `https://github.com/${repo}/releases/download/v${version}/bevy-index-${version}.tar.gz`;
+/**
+ * Candidate download URLs for one version, newest first.
+ *
+ * A republished index keeps the same Bevy version and therefore the same tag, so
+ * the only way to distinguish "the bundle from last month" from "the one we
+ * shipped today" is the filename. A rebuild is published as
+ * `bevy-index-<version>+1.tar.gz`, so the suffix doubles as a build marker:
+ * users can see which build they have, and a stale asset left in place is
+ * obvious rather than indistinguishable.
+ *
+ * The unsuffixed name is kept as a fallback so an index published before this
+ * convention still downloads, and so a reader following an older URL is not
+ * left with a 404.
+ */
+function assetUrls(repo, version) {
+  const base = `https://github.com/${repo}/releases/download/v${version}/bevy-index-${version}`;
+  return [`${base}+1.tar.gz`, `${base}.tar.gz`];
 }
 
 /** Stream a URL to a file, painting a simple progress line on stderr. */
@@ -214,22 +229,38 @@ async function main() {
     console.log(`  Re-downloading to be safe. (use --no-recheck to keep it)`);
   }
 
-  const url = args.from || assetUrl(repo, version);
-  console.log(`  source  : ${url}`);
-
+  // With an explicit --from there is nothing to fall back from, so use it as
+  // given. Otherwise try the "+1" rebuild marker first, then the unsuffixed
+  // name for indexes published before that convention.
+  const candidates = args.from ? [args.from] : assetUrls(repo, version);
   const tmpFile = path.join(os.tmpdir(), `bevy-index-${sanitized}-${process.pid}.tar.gz`);
-  let result;
-  try {
-    result = await download(url, tmpFile);
-  } catch (err) {
-    console.error(`\n  download failed: ${err.message}`);
-    result = { ok: false, reason: err.message };
+  let result = null;
+  let usedUrl = null;
+  const failures = [];
+
+  for (const url of candidates) {
+    console.log(`  source  : ${url}`);
+    try {
+      const r = await download(url, tmpFile);
+      if (r.ok) {
+        result = r;
+        usedUrl = url;
+        break;
+      }
+      failures.push(`${url} -> ${r.reason}`);
+      // A 404 on the "+1" name is expected for an index that has not been
+      // republished; anything else (network, 5xx) is worth trying the other
+      // candidate for, since the unsuffixed asset may still exist.
+    } catch (err) {
+      failures.push(`${url} -> ${err.message}`);
+    }
   }
 
-  if (!result.ok) {
+  if (!result?.ok) {
     console.error(
-      `\nCould not download a prebuilt index for ${version} (${result.reason}).\n\n` +
-        `Build it locally instead:\n` +
+      `\nCould not download a prebuilt index for ${version}.\n` +
+        (failures.length ? `  tried:\n${failures.map((f) => `    ${f}`).join("\n")}\n` : "") +
+        `\nBuild it locally instead:\n` +
         `  node scripts/fetch-docs.mjs ${version}\n` +
         `  node scripts/build-index.mjs ${version} --force\n\n` +
         `If you maintain this project, publish one with:\n` +
@@ -239,7 +270,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`  received: ${mb(result.bytes)}`);
+  console.log(`  received: ${mb(result.bytes)} from ${usedUrl.split("/").pop()}`);
   fs.mkdirSync(dataDir, { recursive: true });
   try {
     extractTarball(tmpFile, dataDir);
