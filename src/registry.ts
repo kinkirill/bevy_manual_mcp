@@ -45,6 +45,10 @@ const entrySchema = z.object({
   version: z.string(), cache_version: z.number().int().optional(), built_at: z.string().optional(),
   records: z.number().int().nonnegative().optional(), symbols: z.number().int().nonnegative().optional(),
   by_kind: z.record(z.string(), z.number().int().nonnegative()).optional(), doc_dir: z.string().nullable().optional(),
+  // Download provenance, recorded by `fetch-index` so an update check can compare
+  // the installed revision with the release manifest. Never shipped in a bundle.
+  asset: z.string().nullable().optional(), revision: z.number().int().nonnegative().nullable().optional(),
+  sha256: z.string().nullable().optional(),
 }).passthrough();
 const registrySchema = z.object({ cache_version: z.number().int(), versions: z.record(z.string(), entrySchema) });
 export type RegistryEntry = z.infer<typeof entrySchema>;

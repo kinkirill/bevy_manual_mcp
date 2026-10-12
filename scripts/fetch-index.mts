@@ -8,8 +8,8 @@ import { pipeline } from "node:stream/promises";
 import { resolveConfig } from "../src/config.js";
 import { CACHE_VERSION } from "../src/store.js";
 import { errorMessage, isObject, stableVersion, stringOption, versionArgs } from "./cli-utils.mjs";
-import { INDEX_FILES, indexPresent, installIndex, readEntry, validateIndex } from "./index-artifacts.mjs";
-import { resolveIndexAsset, verifyArchiveDigest } from "./index-release.mjs";
+import { INDEX_FILES, indexPresent, installIndex, readEntry, readRegistry, validateIndex, type RegistryEntry } from "./index-artifacts.mjs";
+import { planIndexFetch, resolveIndexRelease, verifyArchiveDigest, type IndexRelease } from "./index-release.mjs";
 
 type DownloadResult = { ok: true; bytes: number; sha256: string } | { ok: false; reason: string };
 
@@ -35,6 +35,23 @@ function hasInstalledFiles(dataDir: string, version: string): boolean {
   try {
     return ["records.ndjson", "text-index.json"].every((file) => fs.statSync(path.join(dataDir, "versions", version, file)).isFile());
   } catch { return false; }
+}
+
+/** Revision of the currently installed bundle, or null when it predates manifests. */
+function installedRevision(dataDir: string, version: string): number | null {
+  const entry = readRegistry(dataDir).versions[version];
+  if (!entry) return null;
+  if (typeof entry.revision === "number") return entry.revision;
+  if (typeof entry.asset === "string") {
+    const match = entry.asset.match(/\+(\d+)\.tar\.gz$/);
+    if (match?.[1]) return Number(match[1]);
+  }
+  return null;
+}
+
+function revisionFromName(name: string): number {
+  const match = name.match(/\+(\d+)\.tar\.gz$/);
+  return match?.[1] ? Number(match[1]) : 0;
 }
 
 async function download(url: string, dest: string): Promise<DownloadResult> {
@@ -104,7 +121,7 @@ async function main(): Promise<void> {
   if (values.help === true) {
     console.log("Usage: bevy-mcp fetch-index [version] [--out <data-dir>] [--from <archive-url>] [--force] [--no-recheck]\n" +
       "  --force       Re-download an installed index.\n" +
-      "  --no-recheck  Keep an installed index whose format version is unknown; known stale formats still update.");
+      "  --no-recheck  Keep an installed index and skip the newer-revision check; known stale formats still update.");
     return;
   }
   const config = resolveConfig({ bevyVersion: requested });
@@ -114,25 +131,67 @@ async function main(): Promise<void> {
   const dataDir = path.resolve(stringOption(values.out) || config.dataDir);
   const repo = process.env.BEVY_MCP_REPO || "kinkirill/bevy_manual_mcp";
   console.log(`bevy-mcp fetch-index - bevy ${version}\n  data dir: ${dataDir}`);
-  const already = hasInstalledFiles(dataDir, version);
-  const format = already ? installedFormat(dataDir, version) : null;
-  const stale = already && format !== null && format !== CACHE_VERSION;
-  const unknownFormat = already && format === null;
-  if (values.force !== true && (indexPresent(dataDir, version) || (unknownFormat && values["no-recheck"] === true))) {
-    console.log(unknownFormat ? "  index already present with an unknown format; keeping it because --no-recheck was supplied."
-      : `  index already present for ${version} (format v${CACHE_VERSION}). Nothing to do.`);
-    console.log("  Use --force to re-download.");
+
+  const explicitSource = stringOption(values.from) || undefined;
+  const installed = hasInstalledFiles(dataDir, version);
+  const format = installed ? installedFormat(dataDir, version) : null;
+  const formatKnown = format !== null;
+  const formatCurrent = format === CACHE_VERSION;
+  const valid = indexPresent(dataDir, version);
+
+  // Only consult the release when the install is otherwise current; a stale or
+  // missing index downloads regardless, so the network call would be wasted.
+  let release: IndexRelease | null = null;
+  let manifestRevision: number | null = null;
+  const checkRemote = valid && values.force !== true && values["no-recheck"] !== true && !explicitSource;
+  if (checkRemote) {
+    try {
+      release = await resolveIndexRelease(repo, version);
+      manifestRevision = release.manifest?.revision ?? null;
+    } catch (error) {
+      console.error(`[bevy-mcp] could not check for a newer index revision: ${errorMessage(error)}`);
+    }
+  }
+
+  const plan = planIndexFetch({
+    installed, valid, formatKnown, formatCurrent,
+    force: values.force === true,
+    noRecheck: values["no-recheck"] === true,
+    manifestRevision,
+    installedRevision: installed ? installedRevision(dataDir, version) : null,
+  });
+
+  if (plan.action === "skip") {
+    if (plan.reason === "up-to-date") {
+      console.log(`  index already present and up to date${manifestRevision !== null ? ` (revision ${manifestRevision})` : ""}.`);
+    } else if (plan.reason === "no-recheck") {
+      console.log(formatKnown
+        ? `  index already present for ${version} (format v${CACHE_VERSION}). Nothing to do.`
+        : "  index already present with an unknown format; keeping it because --no-recheck was supplied.");
+    } else {
+      console.log(`  index already present for ${version} (format v${CACHE_VERSION}). Could not check for a newer revision.`);
+      console.log("  Use --force to re-download.");
+    }
     return;
   }
-  if (stale) {
+
+  if (plan.reason === "stale-format") {
     console.log(`  installed index is format v${format}, this build ships v${CACHE_VERSION}.\n  Re-downloading so you get the republished index.`);
-  } else if (unknownFormat) {
-    console.log("  installed index does not record a format version, so it may predate this build.\n" +
-      "  Re-downloading to be safe. (use --no-recheck to keep it)");
+  } else if (plan.reason === "unknown-format") {
+    console.log("  installed index does not record a format version, so it may predate this build.\n  Re-downloading to be safe. (use --no-recheck to keep it)");
+  } else if (plan.reason === "damaged") {
+    console.log(`  installed index for ${version} is incomplete or damaged.\n  Re-downloading to repair it.`);
+  } else if (plan.reason === "newer-revision") {
+    console.log(`  a newer index revision is available (revision ${manifestRevision}). Downloading.`);
+  } else if (plan.reason === "forced") {
+    console.log("  re-downloading because --force was supplied.");
   }
-  const explicitSource = stringOption(values.from) || undefined;
-  const asset = explicitSource ? null : await resolveIndexAsset(repo, version);
-  const url = explicitSource ?? asset!.url;
+
+  if (!release && !explicitSource) release = await resolveIndexRelease(repo, version);
+  const asset = explicitSource
+    ? { name: explicitSource.split("/").pop() || `bevy-index-${version}.tar.gz`, url: explicitSource, sha256: null }
+    : release!.asset;
+  const url = asset.url;
   console.log(`  source  : ${url}`);
   fs.mkdirSync(dataDir, { recursive: true });
   const staging = fs.mkdtempSync(path.join(dataDir, ".bevy-index-stage-"));
@@ -140,12 +199,18 @@ async function main(): Promise<void> {
     const tarball = path.join(staging, "index.tar.gz");
     const result = await download(url, tarball);
     if (!result.ok) throw new Error(`No index available for ${version} (${result.reason}). Build it with bevy-mcp fetch-docs ${version}, then npm run build-index -- ${version} --force.`);
-    verifyArchiveDigest(asset?.sha256 ?? null, result.sha256);
+    verifyArchiveDigest(asset.sha256, result.sha256);
     console.log(`  received: ${mb(result.bytes)}`);
     extractTarball(tarball, staging, version);
     const entry = readEntry(path.join(staging, "registry-entry.json"), version);
     await validateIndex(path.join(staging, "versions", version), version);
-    installIndex(staging, dataDir, entry);
+    const installedEntry: RegistryEntry = {
+      ...entry,
+      asset: explicitSource ? null : asset.name,
+      revision: explicitSource ? null : release?.manifest?.revision ?? revisionFromName(asset.name),
+      sha256: result.sha256,
+    };
+    installIndex(staging, dataDir, installedEntry);
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }

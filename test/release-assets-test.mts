@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveIndexAsset, selectIndexAsset, verifyArchiveDigest } from "../scripts/index-release.mjs";
+import { parseIndexManifest, planIndexFetch, resolveIndexAsset, resolveIndexRelease, selectIndexAsset, verifyArchiveDigest } from "../scripts/index-release.mjs";
 
 const version = "0.20.0";
 const digest = "a".repeat(64);
@@ -70,4 +70,64 @@ await test("release lookup failures request an explicit source instead of silent
     await assert.rejects(resolveIndexAsset("example/fork", version), /timeout.*--from/);
     await assert.rejects(resolveIndexAsset("invalid/repo/extra", version), /owner\/repo/);
   } finally { globalThis.fetch = previous; }
+});
+
+await test("index manifest parsing validates the version and digest", () => {
+  const valid = { manifest_version: 1, bevy_version: version, asset: "bevy-index.tar.gz", revision: 3, sha256: "a".repeat(64), cache_version: 5 };
+  assert.equal(parseIndexManifest(valid, version).revision, 3);
+  assert.throws(() => parseIndexManifest({ ...valid, bevy_version: "0.21.0" }, version), /expected/);
+  assert.throws(() => parseIndexManifest({ ...valid, sha256: "nope" }, version));
+  assert.throws(() => parseIndexManifest({ ...valid, manifest_version: 2 }, version));
+});
+
+await test("index manifest selects the named bundle and its digest over the highest revision", async () => {
+  const previous = globalThis.fetch;
+  const chosen = asset(`bevy-index-${version}+7.tar.gz`, { digest: `sha256:${"d".repeat(64)}` });
+  const manifestAsset = asset("index-manifest.json");
+  const manifest = { manifest_version: 1, bevy_version: version, asset: chosen.name, revision: 7, sha256: "c".repeat(64), cache_version: 5, size: 123 };
+  try {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes("api.github.com")) return new Response(JSON.stringify(release([asset(`bevy-index-${version}+9.tar.gz`), chosen, manifestAsset])), { status: 200 });
+      if (target.endsWith("index-manifest.json")) return new Response(JSON.stringify(manifest), { status: 200 });
+      throw new Error(`unexpected fetch ${target}`);
+    };
+    const resolved = await resolveIndexRelease("example/fork", version);
+    assert.equal(resolved.asset.name, chosen.name, "the manifest names the bundle, not merely the highest +N");
+    assert.equal(resolved.asset.sha256, "c".repeat(64));
+    assert.equal(resolved.manifest?.revision, 7);
+  } finally { globalThis.fetch = previous; }
+});
+
+await test("an unreadable manifest falls back to asset revision selection", async (t) => {
+  const previous = globalThis.fetch;
+  t.mock.method(console, "error", () => {});
+  const bundle = asset(`bevy-index-${version}+3.tar.gz`);
+  try {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes("api.github.com")) return new Response(JSON.stringify(release([bundle, asset("index-manifest.json")])), { status: 200 });
+      return new Response("boom", { status: 500 });
+    };
+    const resolved = await resolveIndexRelease("example/fork", version);
+    assert.equal(resolved.asset.name, bundle.name);
+    assert.equal(resolved.manifest, null);
+  } finally { globalThis.fetch = previous; }
+});
+
+await test("fetch plan downloads only when needed and keeps an inconclusive install", () => {
+  const base = { installed: true, valid: true, formatKnown: true, formatCurrent: true, force: false, noRecheck: false, manifestRevision: 2, installedRevision: 2 };
+  assert.deepEqual(planIndexFetch(base), { action: "skip", reason: "up-to-date" });
+  assert.deepEqual(planIndexFetch({ ...base, manifestRevision: 3 }), { action: "download", reason: "newer-revision" });
+  assert.deepEqual(planIndexFetch({ ...base, installedRevision: null }), { action: "download", reason: "newer-revision" });
+  assert.deepEqual(planIndexFetch({ ...base, manifestRevision: null }), { action: "skip", reason: "cannot-check" });
+  assert.deepEqual(planIndexFetch({ ...base, installed: false }), { action: "download", reason: "missing" });
+  assert.deepEqual(planIndexFetch({ ...base, force: true }), { action: "download", reason: "forced" });
+  assert.deepEqual(planIndexFetch({ ...base, valid: false, formatCurrent: false }), { action: "download", reason: "stale-format" });
+  assert.deepEqual(planIndexFetch({ ...base, valid: false, formatKnown: false }), { action: "download", reason: "unknown-format" });
+  assert.deepEqual(planIndexFetch({ ...base, noRecheck: true }), { action: "skip", reason: "no-recheck" });
+  // --no-recheck must still upgrade a known-stale format.
+  assert.deepEqual(planIndexFetch({ ...base, noRecheck: true, valid: false, formatCurrent: false }), { action: "download", reason: "stale-format" });
+  // A current but damaged install self-heals.
+  assert.deepEqual(planIndexFetch({ ...base, valid: false }), { action: "download", reason: "damaged" });
 });

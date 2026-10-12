@@ -68,7 +68,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
-          files: dist/bevy-index-*.tar.gz
+          files: |
+            dist/bevy-index-*.tar.gz
+            dist/index-manifest.json
           name: "Bevy ${{ env.VERSION }} index"
           body: |
             Prebuilt Bevy ${{ env.VERSION }} search index for bevy-mcp.

@@ -40,8 +40,14 @@ an existing bundle:
 ```bash
 npm run rebuild-all -- 0.20.0
 node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist --revision 1
-gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz --clobber
+gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz dist/index-manifest.json --clobber
 ```
+
+`publish-index` writes `index-manifest.json` next to the bundle (naming the
+bundle, its revision and its SHA-256) and strips any download provenance from
+`registry-entry.json`. **Always upload the manifest with the bundle** - it is how
+`fetch-index` tells users a newer revision exists. The release workflow already
+attaches it.
 
 The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
 numeric revision from the release metadata; keep the canonical asset if older
@@ -53,10 +59,11 @@ are fingerprinted by **content**, not by path or mtime, so a bundle built here
 matches the same sources on a user's machine and its first load takes the fast
 path. Republish a `+N` when you have refreshed `vendor/bevy-website`,
 `vendor/bevy-meta` or the error-code set; a code-only change needs no new
-bundle. Note that existing users on the current `CACHE_VERSION` are **not**
-re-downloaded automatically - only fresh installs and `fetch-index --force` pick
-up a newer revision. Bump `CACHE_VERSION` only when the record schema or
-required bundle content actually changed.
+bundle. The published `index-manifest.json` is what makes a republish
+discoverable: `fetch-index` compares the manifest revision with the revision
+recorded at install time and downloads only when it is newer, so bump
+`CACHE_VERSION` only when the record schema or required bundle content actually
+changed.
 
 Bump `CACHE_VERSION` in `src/store.ts` when the record schema or required
 content changes. `fetch-index` replaces stale or unknown installed cache formats

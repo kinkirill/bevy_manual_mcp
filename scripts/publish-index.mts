@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import path from "node:path";
 import { resolveConfig } from "../src/config.js";
 import { versionArgs, stringOption, stableVersion, errorMessage } from "./cli-utils.mjs";
 import { INDEX_FILES, readRegistry, validateIndex } from "./index-artifacts.mjs";
+import { INDEX_MANIFEST_ASSET, type IndexManifest } from "./index-release.mjs";
 import { CACHE_VERSION } from "../src/store.js";
 
 async function main(): Promise<void> {
@@ -58,9 +60,12 @@ async function main(): Promise<void> {
         path.join(staging, "versions", sanitized, f),
       );
     }
+    // Install provenance (which asset a user downloaded) must never be baked
+    // into a bundle: it describes the consumer's install, not this build.
+    const { asset: _installedAsset, revision: _installedRevision, sha256: _installedSha256, ...entryForBundle } = entry;
     fs.writeFileSync(
       path.join(staging, "registry-entry.json"),
-      JSON.stringify(entry, null, 2) + "\n",
+      JSON.stringify(entryForBundle, null, 2) + "\n",
     );
 
     fs.mkdirSync(outDir, { recursive: true });
@@ -73,12 +78,33 @@ async function main(): Promise<void> {
     if (r.error || r.status !== 0) throw new Error(`tar failed: ${r.error?.message ?? r.status}`);
 
     const size = fs.statSync(bundle).size;
+    const sha256 = createHash("sha256").update(fs.readFileSync(bundle)).digest("hex");
+    const meta: unknown = JSON.parse(fs.readFileSync(path.join(versionDir, "meta.json"), "utf8"));
+    const metaObject = typeof meta === "object" && meta !== null ? meta as Record<string, unknown> : {};
+    const manifest: IndexManifest = {
+      manifest_version: 1,
+      bevy_version: version,
+      asset: path.basename(bundle),
+      revision: revision !== undefined ? Number(revision) : 0,
+      sha256,
+      cache_version: CACHE_VERSION,
+      size,
+      ...(typeof metaObject.api_records === "number" ? { api_records: metaObject.api_records } : {}),
+      ...(typeof metaObject.text_indexed === "number" ? { text_indexed: metaObject.text_indexed } : {}),
+      ...(typeof metaObject.built_at === "string" ? { built_at: metaObject.built_at } : {}),
+      generated_at: new Date().toISOString(),
+    };
+    const manifestPath = path.join(outDir, INDEX_MANIFEST_ASSET);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
     console.log(`\nWrote ${bundle} (${(size / 1048576).toFixed(1)} MB)`);
+    console.log(`Wrote ${manifestPath} (revision ${manifest.revision}, sha256 ${sha256.slice(0, 12)}…)`);
     console.log(
-      `\nAttach it to the v${version} GitHub Release:\n` +
-        `  gh release create v${version} ${bundle} --title "Bevy ${version} index" \\\n` +
-        `    --notes "Prebuilt Bevy ${version} index for bevy-mcp."\n` +
-        `or upload via the GitHub web UI.`,
+      `\nAttach them to the v${version} GitHub Release:\n` +
+        `  gh release upload v${version} ${bundle} ${manifestPath} --clobber\n` +
+        `or create the release:\n` +
+        `  gh release create v${version} ${bundle} ${manifestPath} --title "Bevy ${version} index" \\\n` +
+        `    --notes "Prebuilt Bevy ${version} index for bevy-mcp."`,
     );
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });

@@ -92,6 +92,12 @@ with a raised heap limit (for example `--max-old-space-size=4096`); the heap
 setting does not cap total process memory. Startup time varies with the corpus,
 disk and machine.
 
+Each release also carries a small `index-manifest.json` naming the current
+bundle revision and its SHA-256. `fetch-index` reads it (when the install is
+already current) and downloads only when the manifest revision is newer than the
+one recorded at install time, so a republished bundle is discoverable without
+forcing every user to re-download by bumping `CACHE_VERSION`.
+
 ---
 
 ## Repository layout

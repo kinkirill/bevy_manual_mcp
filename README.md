@@ -354,8 +354,11 @@ are published for Bevy **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
 
 The downloader selects the highest numbered asset revision, such as
 `bevy-index-0.20.0+1.tar.gz`, from release `v0.20.0` and checks its advertised
-SHA-256. The indexed Bevy version stays `0.20.0`. Use
-`bevy-mcp fetch-index 0.20.0 --force` to replace an already installed index.
+SHA-256. Each release also carries a small `index-manifest.json` naming the
+current bundle and its digest, so simply re-running `bevy-mcp fetch-index 0.20.0`
+tells you whether a newer revision exists and downloads only when there is one -
+an up-to-date install is left untouched. `--no-recheck` skips that check, and
+`--force` always re-downloads. The indexed Bevy version stays `0.20.0`.
 
 To build an index yourself instead - mirroring rustdoc from docs.rs, using your
 own `cargo doc`, adding engine examples, and what the build costs - see
