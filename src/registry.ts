@@ -111,6 +111,16 @@ function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boole
   if (!isObject(value) || !Object.values(value).every((part) => typeof part === "string")) {
     throw new Error("Invalid persisted text index");
   }
+  // Trusted, unchanged corpora need no pruning, repair or re-validation. The
+  // persisted file hash and API payload hash already match, so import the raw
+  // dump directly instead of re-parsing and re-serializing ~100 MB of postings.
+  if (trustedPayloads && !supplementsChanged) {
+    index.text = importTextIndex(value);
+    index.searchableIds = new Set(
+      index.records.filter((record) => index._isIndexed(record)).map((record) => record.id),
+    );
+    return false;
+  }
   const required = new Set(index.records.filter((record) => record.source === "rustdoc" && index._isIndexed(record)).map((record) => record.id));
   const current = new Set(index.records.filter((record) => index._isIndexed(record)).map((record) => record.id));
   const keep = new Set(supplementsChanged ? required : current);
@@ -209,7 +219,8 @@ function restoreText(index: BevyIndex, value: unknown, supplementsChanged: boole
       added.add(record.id);
     }
   }
-  for (const id of required) if (!index.text.contain(id)) throw new Error("Imported text index omits an API record");
+  // `registered` already covers the registration parts; no per-id FlexSearch
+  // containment scan is needed (it cost seconds across ~250k records).
   index.searchableIds = current;
   return pruned;
 }
@@ -304,8 +315,17 @@ export class VersionRegistry {
     this.shared = { fingerprint, records };
     return records;
   }
+  /** Directories that may hold error-code markdown, in preference order. */
+  private errorCodeDirs(errorsDir: string | null, bevyVersion: string | null): string[] {
+    // A Bevy checkout keeps codes directly in `errors/`; the vendored metadata
+    // nests them under `<metaDir>/<version>/error-codes/`.
+    const vendored = bevyVersion && this.config.metaDir
+      ? path.join(this.config.metaDir, bevyVersion, "error-codes")
+      : null;
+    return [errorsDir, vendored].filter((d): d is string => !!d);
+  }
   ingestErrorCodes({ errorsDir, bevyVersion }: { errorsDir: string | null; bevyVersion: string | null }): BevyRecord[] {
-    const dirs = [errorsDir, this.config.metaDir].filter((d): d is string => !!d);
+    const dirs = this.errorCodeDirs(errorsDir, bevyVersion);
     for (const dir of dirs) {
       let entries: string[] = [];
       try {
@@ -353,7 +373,13 @@ export class VersionRegistry {
     const recordPath = path.join(dir, "records.ndjson");
     const textPath = path.join(dir, "text-index.json");
     const metaPath = path.join(dir, "meta.json");
-    const supplemental = sourceFingerprint([cfg.websiteDir, cfg.examplesDir]);
+    // Supplemental records (website, examples, error codes) are re-ingested on
+    // every load, so their inputs must be part of the fingerprint.
+    const supplemental = sourceFingerprint([
+      cfg.websiteDir,
+      cfg.examplesDir,
+      ...this.errorCodeDirs(cfg.errorsDir, cfg.bevyVersion),
+    ]);
     const currentFormat = this.readPersistedCacheVersion(version) === CACHE_VERSION;
     let cacheError: unknown;
     if (!force && currentFormat && fs.existsSync(recordPath) && fs.existsSync(metaPath)) {

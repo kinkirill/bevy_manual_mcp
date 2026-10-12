@@ -135,20 +135,35 @@ async function main() {
   console.log("Fetching feature graph…");
   const internalToml = await fetchText(`${RAW}/${tag}/crates/bevy_internal/Cargo.toml`);
   if (!internalToml) throw new Error("Could not fetch bevy_internal/Cargo.toml.");
-  const internal = parseToml(internalToml) as { features?: Record<string, unknown> };
+  const internal = parseToml(internalToml) as {
+    features?: Record<string, unknown>;
+    dependencies?: Record<string, unknown>;
+  };
   const rawFeatures = isObject(internal.features) ? internal.features : {};
+  const rawDependencies = isObject(internal.dependencies) ? internal.dependencies : {};
 
+  // Cargo creates an implicit feature for every optional dependency unless the
+  // package suppresses it with `dep:`. Bevy gates plugins on those names
+  // (`bevy_audio`, `bevy_log`, …) and users enable them, so they belong in the
+  // graph even though they are absent from the `[features]` table.
   const featureNames = new Set(Object.keys(rawFeatures));
+  for (const [dep, value] of Object.entries(rawDependencies)) {
+    if (isObject(value) && value.optional === true) featureNames.add(dep);
+  }
+
   const graph: Record<string, string[]> = {};
   for (const [name, val] of Object.entries(rawFeatures)) {
-    if (!Array.isArray(val)) continue;
     const enables = new Set<string>();
-    for (const entry of val) {
-      if (typeof entry !== "string") continue;
-      for (const f of resolveEntry(entry, featureNames)) enables.add(f);
+    if (Array.isArray(val)) {
+      for (const entry of val) {
+        if (typeof entry !== "string") continue;
+        for (const f of resolveEntry(entry, featureNames)) enables.add(f);
+      }
     }
     graph[name] = [...enables].sort();
   }
+  // Implicit features exist but enable nothing directly beyond their own crate.
+  for (const name of featureNames) if (!(name in graph)) graph[name] = [];
 
   // Profiles and default features live in the facade Cargo.toml.
   // Only the four well-known profiles are captured; other facade features

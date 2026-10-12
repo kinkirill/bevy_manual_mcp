@@ -2,185 +2,116 @@
 
 export interface FilterAtom {
   type: "With" | "Without" | "Or" | "Added" | "Changed";
-  entity?: string;     // The entity/type this filter applies to
+  entity?: string;         // The entity/type this filter applies to
   branches?: FilterAtom[]; // For Or<>
 }
 
-/** Parse Query filters into atoms for disjointness checking. */
+/** Parse Query filters (including tuples and `Or<(...)>`) into atoms. */
 export function parseFilters(filters: string[]): FilterAtom[] {
   const atoms: FilterAtom[] = [];
-
-  for (const f of filters) {
-    const trimmed = f.trim();
-    const withMatch = trimmed.match(/^With<([^>]+)>/);
-    if (withMatch) {
-      atoms.push({ type: "With", entity: withMatch[1]!.trim() });
-      continue;
-    }
-
-    const withoutMatch = trimmed.match(/^Without<([^>]+)>/);
-    if (withoutMatch) {
-      atoms.push({ type: "Without", entity: withoutMatch[1]!.trim() });
-      continue;
-    }
-
-    const addedMatch = trimmed.match(/^Added<([^>]+)>/);
-    if (addedMatch) {
-      atoms.push({ type: "Added", entity: addedMatch[1]!.trim() });
-      continue;
-    }
-
-    const changedMatch = trimmed.match(/^Changed<([^>]+)>/);
-    if (changedMatch) {
-      atoms.push({ type: "Changed", entity: changedMatch[1]!.trim() });
-      continue;
-    }
-
-    // Or<(X, Y)> — extract branches
-    const orMatch = trimmed.match(/^Or<\(([^>]+)\)>/);
-    if (orMatch && orMatch[1]) {
-      const inner = orMatch[1];
-      const branchAtoms: FilterAtom[] = [];
-      const parts = splitOrBranches(inner);
-      for (const part of parts) {
-        const subMatches = parseFilters([part.trim()]);
-        branchAtoms.push(...subMatches);
-      }
-      atoms.push({ type: "Or", entity: undefined, branches: branchAtoms });
-    }
-
-    // Unknown filter — conservative: don't claim disjointness
-  }
-
+  for (const filter of filters) atoms.push(...parseFilterExpr(filter));
   return atoms;
 }
 
-/** Split Or<(X, Y)> into individual branches. */
-function splitOrBranches(inner: string): string[] {
+/** Split text on top-level commas, respecting `<>`, `()` and `[]`. */
+function splitTopLevel(text: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
-
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i]!;
-    if (ch === "<" || ch === "(") depth++;
-    else if (ch === ">" || ch === ")") depth--;
-
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
     if (depth === 0 && ch === ",") {
-      parts.push(inner.slice(start, i).trim());
+      parts.push(text.slice(start, i).trim());
       start = i + 1;
     }
   }
-
-  const last = inner.slice(start).trim();
+  const last = text.slice(start).trim();
   if (last) parts.push(last);
-
   return parts;
+}
+
+/** Index of the closer matching the opener at `open`, or -1. */
+function closerIndex(text: string, open: number): number {
+  const closer = text[open] === "(" ? ")" : text[open] === "<" ? ">" : text[open] === "[" ? "]" : null;
+  if (!closer) return -1;
+  const stack: string[] = [closer];
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(") stack.push(")");
+    else if (ch === "<") stack.push(">");
+    else if (ch === "[") stack.push("]");
+    else if (ch === ")" || ch === ">" || ch === "]") {
+      if (stack.pop() !== ch) return -1;
+      if (stack.length === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Unwrap a filter expression, flattening tuples into individual atoms. */
+function parseFilterExpr(expr: string): FilterAtom[] {
+  let s = expr.trim();
+  while (s.startsWith("(") && closerIndex(s, 0) === s.length - 1) s = s.slice(1, -1).trim();
+  if (!s) return [];
+
+  const parts = splitTopLevel(s);
+  if (parts.length > 1) return parts.flatMap(parseFilterExpr);
+
+  const orMatch = s.match(/^Or<\(([\s\S]*)\)>$/);
+  if (orMatch) {
+    const branches = splitTopLevel(orMatch[1]!).flatMap(parseFilterExpr);
+    return branches.length ? [{ type: "Or", branches }] : [];
+  }
+
+  const atom = s.match(/^(With|Without|Added|Changed)<([^<>]*(?:<[^<>]*>[^<>]*)*)>/);
+  if (atom && atom[2]) {
+    return [{ type: atom[1] as "With" | "Without" | "Added" | "Changed", entity: atom[2].trim() }];
+  }
+
+  // Unknown filter — conservative: contributes no disjointness.
+  return [];
+}
+
+/**
+ * Two filter sets are disjoint when no entity can satisfy both. `With<A>` and
+ * `Without<A>` on opposite sides establish disjointness; `Or` is disjoint only
+ * when every branch is.
+ */
+function disjoint(a: FilterAtom[], b: FilterAtom[]): boolean {
+  for (const atom of a) {
+    if (atom.type === "Or" && atom.branches?.length && atom.branches.every((branch) => disjoint([branch], b))) {
+      return true;
+    }
+  }
+  for (const atom of b) {
+    if (atom.type === "Or" && atom.branches?.length && atom.branches.every((branch) => disjoint(a, [branch]))) {
+      return true;
+    }
+  }
+
+  const withA = entities(a, "With");
+  const withoutA = entities(a, "Without");
+  const withB = entities(b, "With");
+  const withoutB = entities(b, "Without");
+  for (const entity of withA) if (withoutB.has(entity)) return true;
+  for (const entity of withoutA) if (withB.has(entity)) return true;
+  return false;
+}
+
+function entities(atoms: FilterAtom[], type: "With" | "Without"): Set<string> {
+  const set = new Set<string>();
+  for (const atom of atoms) if (atom.type === type && atom.entity) set.add(atom.entity);
+  return set;
 }
 
 /** Check two filter sets for disjointness. */
 export function isDisjoint(fromA: FilterAtom[], fromB: FilterAtom[]): boolean {
-  // For each With/Without in A, check against B
-  const withInA = new Map<string, true>();
-  const withoutInA = new Map<string, true>();
-
-  for (const atom of fromA) {
-    if (!atom.entity) continue;
-    switch (atom.type) {
-      case "With": withInA.set(atom.entity!, true); break;
-      case "Without": withoutInA.set(atom.entity!, true); break;
-      // Added/Changed don't create disjointness per plan
-    }
-
-    // Or branches: conservative — treat as non-disjoint unless every branch is disjoint
-    if (atom.type === "Or" && atom.branches) {
-      const allBranchesDisjoint = atom.branches.every((branch) => {
-        if (!branch.entity) return false;
-        switch (branch.type) {
-          case "With": return withInA.has(branch.entity);
-          case "Without": return withoutInA.has(branch.entity);
-          default: return false;
-        }
-      });
-      // If all branches are disjoint, the Or is disjoint too
-      if (!allBranchesDisjoint) return false;
-    }
-  }
-
-  for (const atom of fromB) {
-    if (!atom.entity) continue;
-    switch (atom.type) {
-      case "With":
-        // With<B> conflicts with Without<B> from A
-        if (withoutInA.has(atom.entity)) return true;
-        break;
-      case "Without":
-        // Without<B> conflicts with With<B> from A
-        if (withInA.has(atom.entity)) return true;
-        break;
-    }
-
-    // Or branches: conservative
-    if (atom.type === "Or" && atom.branches) {
-      const allBranchesDisjoint = atom.branches.every((branch) => {
-        if (!branch.entity) return false;
-        switch (branch.type) {
-          case "With": return withoutInA.has(branch.entity);
-          case "Without": return withInA.has(branch.entity);
-          default: return false;
-        }
-      });
-      if (!allBranchesDisjoint) return false;
-    }
-  }
-
-  // Check for mutual With/Without (e.g., A has With<X> and B has Without<X>)
-  // We need to check in both directions
-  let foundConflict = false;
-  for (const [entity] of withInA) {
-    if (withoutInA.has(entity)) {
-      // Same query has With<X> and Without<X> — not a conflict between queries
-      continue;
-    }
-  }
-
-  return false; // No disjointness established by default
+  return disjoint(fromA, fromB);
 }
 
-/** Check whether filters provide disjointness for the same entity. */
+/** Check whether two raw filter lists provide disjointness for the same entity. */
 export function checkFilterDisjointness(filtersA: string[], filtersB: string[]): boolean {
-  const atomsA = parseFilters(filtersA);
-  const atomsB = parseFilters(filtersB);
-
-  // Build entity sets
-  const withEntitiesA = new Set<string>();
-  const withoutEntitiesA = new Set<string>();
-  const withEntitiesB = new Set<string>();
-  const withoutEntitiesB = new Set<string>();
-
-  for (const atom of atomsA) {
-    if (!atom.entity) continue;
-    switch (atom.type) {
-      case "With": withEntitiesA.add(atom.entity); break;
-      case "Without": withoutEntitiesA.add(atom.entity); break;
-    }
-  }
-
-  for (const atom of atomsB) {
-    if (!atom.entity) continue;
-    switch (atom.type) {
-      case "With": withEntitiesB.add(atom.entity); break;
-      case "Without": withoutEntitiesB.add(atom.entity); break;
-    }
-  }
-
-  // Check disjointness: With<A] vs Without[A], and vice versa
-  for (const entity of withEntitiesA) {
-    if (withoutEntitiesB.has(entity)) return true;
-  }
-  for (const entity of withoutEntitiesA) {
-    if (withEntitiesB.has(entity)) return true;
-  }
-
-  return false;
+  return disjoint(parseFilters(filtersA), parseFilters(filtersB));
 }

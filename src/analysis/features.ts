@@ -28,6 +28,9 @@ export function loadFeatures(config: ResolvedConfig, version: string): FeaturesD
       profiles: typeof raw.profiles === "object" && !Array.isArray(raw.profiles) ? raw.profiles : undefined,
       default_features: Array.isArray(raw.default_features) ? raw.default_features : [],
       plugin_gates: Array.isArray(raw.plugin_gates) ? raw.plugin_gates : undefined,
+      panic_sites: typeof raw.panic_sites === "object" && raw.panic_sites !== null && !Array.isArray(raw.panic_sites)
+        ? raw.panic_sites as FeaturesData["panic_sites"]
+        : undefined,
     };
   } catch {
     return null;
@@ -36,20 +39,11 @@ export function loadFeatures(config: ResolvedConfig, version: string): FeaturesD
 
 /** Resolve a Bevy module path (e.g. "bevy::ui") to the subcrate that owns it. */
 export function subcrateOf(modulePath: string): string | null {
-  // Map from known module prefixes to subcrate names
-  const prefixMap: Record<string, string> = {
-    "bevy_ui": "bevy_ui",
-    "bevy_egui": "bevy_egui",
-    "bevy_rapier": "bevy_rapier3d",
-    "bevy_input": "leafwing_input_manager", // approximate
-  };
-
-  for (const [prefix, crate] of Object.entries(prefixMap)) {
-    if (modulePath.startsWith(`bevy::${prefix}::`) || modulePath === `bevy::${prefix}`) {
-      return crate;
-    }
-  }
-  return null;
+  // Bevy's facade re-exports subcrates under `bevy::<segment>`; the owning
+  // subcrate is nearly always `bevy_<segment>` (ui → bevy_ui, ecs → bevy_ecs).
+  // The feature graph is the final authority on whether that crate exists.
+  const match = modulePath.match(/^bevy::([a-z0-9_]+)(?:::|$)/);
+  return match ? `bevy_${match[1]}` : null;
 }
 
 /** Given a symbol path like "bevy::ui::Node", resolve which feature gates it. */

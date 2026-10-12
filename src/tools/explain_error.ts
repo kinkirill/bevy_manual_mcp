@@ -38,19 +38,16 @@ export function extractErrorParts(message: string): {
     }
 
     // Try to extract resource types and access patterns
-    const resTypeMatch = message.match(/ResMut<([^>]+)>/);
+    const resTypeMatch = message.match(/ResMut<([^<>]*(?:<[^<>]*>[^<>]*)*)>/);
     if (resTypeMatch) {
       result.resource_type = resTypeMatch[1];
       result.access_list.push("ResMut");
     } else {
-      const simpleResMatch = message.match(/(?<!M)(?<!&mut\s)&?\s*(\w+<[^>]+>)/);
-      if (simpleResMatch && !message.includes("ResMut")) {
-        result.resource_type = simpleResMatch[1];
-      }
-
-      // Check for Res without Mut
-      const resMatch = message.match(/(?<!Mu)t\s*Res</);
-      if (resMatch) {
+      // Plain `Res<T>` (ResMut is handled above). The lookbehind keeps `Res`
+      // from matching inside a longer identifier.
+      const resOnly = message.match(/(?<![\w:])Res<([^<>]*(?:<[^<>]*>[^<>]*)*)>/);
+      if (resOnly) {
+        result.resource_type = resOnly[1];
         result.access_list.push("Res");
       }
     }

@@ -1,10 +1,18 @@
 {
   "bevy_version": "0.16.1",
   "features": {
-    "trace": [],
-    "trace_chrome": [],
-    "trace_tracy": [],
-    "trace_tracy_memory": [],
+    "trace": [
+      "bevy_log"
+    ],
+    "trace_chrome": [
+      "bevy_log"
+    ],
+    "trace_tracy": [
+      "bevy_log"
+    ],
+    "trace_tracy_memory": [
+      "bevy_log"
+    ],
     "detailed_trace": [],
     "sysinfo_plugin": [],
     "basis-universal": [
@@ -79,17 +87,39 @@
     "smaa_luts": [
       "bevy_core_pipeline"
     ],
-    "flac": [],
-    "mp3": [],
-    "vorbis": [],
-    "wav": [],
-    "minimp3": [],
-    "symphonia-aac": [],
-    "symphonia-all": [],
-    "symphonia-flac": [],
-    "symphonia-isomp4": [],
-    "symphonia-vorbis": [],
-    "symphonia-wav": [],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "minimp3": [
+      "bevy_audio"
+    ],
+    "symphonia-aac": [
+      "bevy_audio"
+    ],
+    "symphonia-all": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-isomp4": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
     "shader_format_glsl": [
       "bevy_render"
     ],
@@ -106,10 +136,18 @@
     "async-io": [
       "std"
     ],
-    "wayland": [],
-    "x11": [],
-    "android-native-activity": [],
-    "android-game-activity": [],
+    "wayland": [
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_winit"
+    ],
     "pbr_transmission_textures": [],
     "pbr_multi_layer_material_textures": [],
     "pbr_anisotropy_texture": [],
@@ -120,7 +158,9 @@
     "bevy_ci_testing": [
       "bevy_dev_tools"
     ],
-    "animation": [],
+    "animation": [
+      "bevy_animation"
+    ],
     "bevy_sprite": [
       "bevy_image",
       "bevy_sprite"
@@ -130,6 +170,7 @@
       "bevy_pbr"
     ],
     "bevy_window": [
+      "bevy_a11y",
       "bevy_window"
     ],
     "bevy_core_pipeline": [
@@ -152,13 +193,18 @@
       "bevy_image"
     ],
     "dynamic_linking": [],
-    "android_shared_stdcxx": [],
-    "accesskit_unix": [],
+    "android_shared_stdcxx": [
+      "bevy_audio"
+    ],
+    "accesskit_unix": [
+      "bevy_winit"
+    ],
     "bevy_text": [
       "bevy_image",
       "bevy_text"
     ],
     "bevy_render": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
@@ -199,7 +245,9 @@
     "track_location": [],
     "reflect_functions": [],
     "reflect_documentation": [],
-    "custom_cursor": [],
+    "custom_cursor": [
+      "bevy_winit"
+    ],
     "ghost_nodes": [
       "bevy_ui"
     ],
@@ -210,33 +258,56 @@
     "async_executor": [
       "std"
     ],
-    "web": []
+    "web": [],
+    "bevy_log": [],
+    "bevy_a11y": [],
+    "bevy_animation": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_gilrs": [],
+    "bevy_input_focus": [],
+    "bevy_scene": [],
+    "bevy_winit": []
   },
   "closure": {
-    "trace": [],
-    "trace_chrome": [],
-    "trace_tracy": [],
-    "trace_tracy_memory": [],
+    "trace": [
+      "bevy_log"
+    ],
+    "trace_chrome": [
+      "bevy_log"
+    ],
+    "trace_tracy": [
+      "bevy_log"
+    ],
+    "trace_tracy_memory": [
+      "bevy_log"
+    ],
     "detailed_trace": [],
     "sysinfo_plugin": [],
     "basis-universal": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "dds": [
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_render"
     ],
     "exr": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "hdr": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "ktx2": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
@@ -280,10 +351,12 @@
       "bevy_image"
     ],
     "spirv_shader_passthrough": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "statically-linked-dxc": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
@@ -295,26 +368,51 @@
       "bevy_core_pipeline",
       "bevy_image"
     ],
-    "flac": [],
-    "mp3": [],
-    "vorbis": [],
-    "wav": [],
-    "minimp3": [],
-    "symphonia-aac": [],
-    "symphonia-all": [],
-    "symphonia-flac": [],
-    "symphonia-isomp4": [],
-    "symphonia-vorbis": [],
-    "symphonia-wav": [],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "minimp3": [
+      "bevy_audio"
+    ],
+    "symphonia-aac": [
+      "bevy_audio"
+    ],
+    "symphonia-all": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-isomp4": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
     "shader_format_glsl": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "shader_format_spirv": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
     "shader_format_wesl": [
+      "bevy_color",
       "bevy_image",
       "bevy_render"
     ],
@@ -325,10 +423,18 @@
     "async-io": [
       "std"
     ],
-    "wayland": [],
-    "x11": [],
-    "android-native-activity": [],
-    "android-game-activity": [],
+    "wayland": [
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_winit"
+    ],
     "pbr_transmission_textures": [],
     "pbr_multi_layer_material_textures": [],
     "pbr_anisotropy_texture": [],
@@ -339,14 +445,18 @@
     "bevy_ci_testing": [
       "bevy_dev_tools"
     ],
-    "animation": [],
+    "animation": [
+      "bevy_animation"
+    ],
     "bevy_sprite": [
       "bevy_image"
     ],
     "bevy_pbr": [
       "bevy_image"
     ],
-    "bevy_window": [],
+    "bevy_window": [
+      "bevy_a11y"
+    ],
     "bevy_core_pipeline": [
       "bevy_image"
     ],
@@ -361,12 +471,17 @@
     ],
     "bevy_image": [],
     "dynamic_linking": [],
-    "android_shared_stdcxx": [],
-    "accesskit_unix": [],
+    "android_shared_stdcxx": [
+      "bevy_audio"
+    ],
+    "accesskit_unix": [
+      "bevy_winit"
+    ],
     "bevy_text": [
       "bevy_image"
     ],
     "bevy_render": [
+      "bevy_color",
       "bevy_image"
     ],
     "glam_assert": [],
@@ -401,7 +516,9 @@
     "track_location": [],
     "reflect_functions": [],
     "reflect_documentation": [],
-    "custom_cursor": [],
+    "custom_cursor": [
+      "bevy_winit"
+    ],
     "ghost_nodes": [
       "bevy_image",
       "bevy_ui"
@@ -413,7 +530,17 @@
     "async_executor": [
       "std"
     ],
-    "web": []
+    "web": [],
+    "bevy_log": [],
+    "bevy_a11y": [],
+    "bevy_animation": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_gilrs": [],
+    "bevy_input_focus": [],
+    "bevy_scene": [],
+    "bevy_winit": []
   },
   "profiles": {},
   "default_features": [

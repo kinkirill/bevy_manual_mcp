@@ -1,7 +1,7 @@
 /** `bevy_validate_systems` tool — lint Bevy system signatures for access rule violations. */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { analyzeSystem, classifyParam, type ParamKind } from "../analysis/rust-fn.js";
+import { analyzeSystem } from "../analysis/rust-fn.js";
 import { checkConflicts, type Finding } from "../analysis/conflicts.js";
 import { formatResult } from "../analysis/report.js";
 import type { ToolContext, VersionResolution } from "./types.js";
@@ -111,7 +111,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
         if (!analysis || !analysis.params.length) continue;
 
         // Run conflict rules
-        const findings = checkConflicts(analysis.params, undefined, undefined);
+        const findings = checkConflicts(analysis.params);
         allFindings.push(...findings);
       }
 

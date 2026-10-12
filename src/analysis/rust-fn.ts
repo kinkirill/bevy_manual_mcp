@@ -1,6 +1,6 @@
 /** Depth-aware Rust function parser — splits parameters at top-level commas. */
 
-/** Split a parameter list on top-level commas, respecting angle brackets. */
+/** Split a parameter list on top-level commas, respecting brackets. */
 export function splitParams(paramList: string): string[] {
   let depth = 0;
   let start = 0;
@@ -13,7 +13,6 @@ export function splitParams(paramList: string): string[] {
 
     if (depth !== 0) continue;
 
-    // Check for comma at top level
     if (ch === ",") {
       const seg = paramList.slice(start, i).trim();
       if (seg.length > 0) segments.push(seg);
@@ -21,29 +20,60 @@ export function splitParams(paramList: string): string[] {
     }
   }
 
-  // Push remaining segment
   const lastSeg = paramList.slice(start).trim();
   if (lastSeg.length > 0) segments.push(lastSeg);
 
   return segments;
 }
 
-/** Strip `mut`, `&`, lifetimes, `pub` from a parameter string. */
+/** Index of the closer matching the opener at `open`, or -1 when unbalanced. */
+function matchingClose(text: string, open: number): number {
+  const opening = text[open];
+  const closer = opening === "(" ? ")" : opening === "<" ? ">" : opening === "[" ? "]" : null;
+  if (!closer) return -1;
+  const stack: string[] = [closer];
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(") stack.push(")");
+    else if (ch === "<") stack.push(">");
+    else if (ch === "[") stack.push("]");
+    else if (ch === ")" || ch === ">" || ch === "]") {
+      if (stack.pop() !== ch) return -1;
+      if (stack.length === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Index of the top-level `:` separating a binding from its type, or -1. */
+function bindingColon(param: string): number {
+  let depth = 0;
+  for (let i = 0; i < param.length; i++) {
+    const ch = param[i]!;
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
+    else if (ch === ":" && depth === 0) {
+      // Skip the `::` path separator inside a type.
+      if (param[i + 1] === ":") { i++; continue; }
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Reduce a parameter to its type expression: drop `name:`, `mut` and `pub`. */
 export function stripParamAttrs(param: string): string {
-  let s = param.trim();
-  // Remove leading mut references: &mut T or just mut
-  s = s.replace(/^&mut\s+/, "");
-  s = s.replace(/^&\s+/, "");
-  s = s.replace(/^mut\s+/, "");
-  s = s.replace(/^pub\s+/, "");
-  return s.trim();
+  const s = param.trim();
+  const colon = bindingColon(s);
+  if (colon !== -1) return s.slice(colon + 1).trim();
+  return s.replace(/^(?:pub\s+)?mut\s+/, "").trim();
 }
 
 /** Classify a parameter into its access pattern. */
 export type ParamKind =
   | { kind: "Query"; data: string; filters?: string[] }
-  | { kind: "Res" }
-  | { kind: "ResMut" }
+  | { kind: "Res"; name?: string }
+  | { kind: "ResMut"; name?: string }
   | { kind: "NonSend"; name: string }
   | { kind: "NonSendMut"; name: string }
   | { kind: "Local"; name: string }
@@ -58,71 +88,57 @@ export type ParamKind =
   | { kind: "MessageWriter"; name: string }
   | { kind: "Other" };
 
+/** Return the text inside `Prefix<...>`, or null when `text` is not that generic. */
+function genericArg(text: string, prefix: string): string | null {
+  if (!text.startsWith(prefix)) return null;
+  const open = prefix.length - 1; // the '<'
+  const close = matchingClose(text, open);
+  return close === -1 ? null : text.slice(open + 1, close).trim();
+}
+
 export function classifyParam(param: string): ParamKind {
-  const cleaned = stripParamAttrs(param);
-  const trimmed = cleaned.trim();
+  const trimmed = stripParamAttrs(param);
+  if (!trimmed) return { kind: "Other" };
 
-  // Query<D, F>
-  if (trimmed.startsWith("Query<")) {
-    const params = splitParams(trimmed.slice(6, -1)); // strip "Query<" and ">"
-    const dataPart = params[0] ?? "";
-    const filterParts: string[] = [];
-    for (let i = 1; i < params.length; i++) {
-      const f = params[i]!;
-      if (f) filterParts.push(f);
-    }
-    return { kind: "Query", data: dataPart, filters: filterParts };
+  const query = genericArg(trimmed, "Query<");
+  if (query !== null) {
+    const parts = splitParams(query);
+    return { kind: "Query", data: parts[0] ?? "", filters: parts.slice(1).filter(Boolean) };
   }
 
-  // ResMut<T>
-  if (/^ResMut</.test(trimmed)) {
-    const inner = trimmed.match(/^ResMut<([^>]+)>/)?.[1];
-    return { kind: "ResMut" };
-  }
+  const resMut = genericArg(trimmed, "ResMut<");
+  if (resMut !== null) return { kind: "ResMut", name: resMut };
+  const res = genericArg(trimmed, "Res<");
+  if (res !== null) return { kind: "Res", name: res };
 
-  // Res<T> (but not ResMut)
-  if (/^Res</.test(trimmed)) {
-    return { kind: "Res" };
-  }
+  const nonSendMut = genericArg(trimmed, "NonSendMut<");
+  if (nonSendMut !== null) return { kind: "NonSendMut", name: nonSendMut };
+  const nonSend = genericArg(trimmed, "NonSend<");
+  if (nonSend !== null) return { kind: "NonSend", name: nonSend };
 
-  // NonSendMut<T>
-  const nonSendMut = trimmed.match(/^NonSendMut<([^>]+)>/);
-  if (nonSendMut) return { kind: "NonSendMut", name: nonSendMut[1]! };
+  const local = genericArg(trimmed, "Local<");
+  if (local !== null) return { kind: "Local", name: local };
 
-  // NonSend<T>
-  const nonSend = trimmed.match(/^NonSend<([^>]+)>/);
-  if (nonSend) return { kind: "NonSend", name: nonSend[1]! };
-
-  // Local<T>
-  const local = trimmed.match(/^Local<([^>]+)>/);
-  if (local) return { kind: "Local", name: local[1]! };
-
-  // Commands
   if (trimmed === "Commands") return { kind: "Commands" };
+  if (/^&?\s*mut\s+World$/.test(trimmed)) return { kind: "WorldMutRef" };
+  if (/^&\s*World$/.test(trimmed)) return { kind: "WorldRef" };
 
-  // &mut World / mut World / WorldMut
-  if (/^(?:&\s+)?mut\s+World$/.test(trimmed) || trimmed.match(/^&?\s*mut\s*World$/)) {
-    return { kind: "WorldMutRef" };
+  const systemParamSet = genericArg(trimmed, "SystemParamSet<");
+  if (systemParamSet !== null) return { kind: "SystemParamSet", params: splitParams(stripOuterParens(systemParamSet)) };
+  const paramSet = genericArg(trimmed, "ParamSet<");
+  if (paramSet !== null) return { kind: "ParamSet", params: splitParams(stripOuterParens(paramSet)) };
+
+  for (const kind of ["MessageReader", "EventReader", "MessageWriter", "EventWriter"] as const) {
+    const arg = genericArg(trimmed, `${kind}<`);
+    if (arg !== null) return { kind, name: arg };
   }
-  if (/^&\s+(?!mut\s+)(World|world)$/.test(trimmed)) {
-    return { kind: "WorldRef" };
-  }
-
-  // SystemParamSet<(…)> / ParamSet<(…)>
-  const paramSet = trimmed.match(/^(SystemParamSet|ParamSet)<((?:[^()>]|<[^>]*>)*)>/);
-  if (paramSet && paramSet[2]) {
-    return { kind: paramSet[1] === "SystemParamSet" ? "SystemParamSet" : "ParamSet", params: splitParams(paramSet[2]) };
-  }
-
-  // EventReader<T> / MessageReader<T>
-  const reader = trimmed.match(/^(EventReader|MessageReader)<([^>]+)>/);
-  if (reader) return { kind: `Event${reader[1] === "Event" ? "Reader" : "Reader"}`, name: reader[2] ?? "unknown" };
-
-  // EventWriter<T> / MessageWriter<T>
-  const writer = trimmed.match(/^(EventWriter|MessageWriter)<([^>]+)>/);
-  if (writer) return { kind: `Event${writer[1] === "Event" ? "Writer" : "Writer"}`, name: writer[2] ?? "unknown" };
 
   return { kind: "Other" };
+}
+
+function stripOuterParens(text: string): string {
+  const s = text.trim();
+  return s.startsWith("(") && matchingClose(s, 0) === s.length - 1 ? s.slice(1, -1) : s;
 }
 
 /** Analyze a full function signature into its parameters. */
@@ -132,19 +148,16 @@ export interface SystemAnalysis {
 }
 
 export function analyzeSystem(code: string): SystemAnalysis | null {
-  // Find the fn keyword and extract parameter list
-  const fnMatch = code.match(/fn\s+(\w+)\s*\(([^)]*)\)/);
+  const fnMatch = /\bfn\s+[A-Za-z0-9_]+\s*(?:<[^<>]*>)?/.exec(code);
   if (!fnMatch) return null;
+  const open = code.indexOf("(", fnMatch.index + fnMatch[0].length);
+  if (open === -1) return null;
+  const close = matchingClose(code, open);
+  if (close === -1) return null;
 
-  const paramStr = fnMatch[2];
-  if (!paramStr || !paramStr.trim()) {
-    // Empty params — still valid but no analysis needed
-    return { params: [], rawParams: [] };
-  }
+  const paramStr = code.slice(open + 1, close);
+  if (!paramStr.trim()) return { params: [], rawParams: [] };
 
-  // Split on top-level commas
   const rawParams = splitParams(paramStr);
-  const params = rawParams.map((p) => classifyParam(p));
-
-  return { params, rawParams };
+  return { params: rawParams.map(classifyParam), rawParams };
 }

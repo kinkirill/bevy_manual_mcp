@@ -1,10 +1,17 @@
 {
   "bevy_version": "0.19.1",
   "features": {
-    "trace": [],
-    "trace_chrome": [],
-    "trace_tracy": [],
+    "trace": [
+      "bevy_log"
+    ],
+    "trace_chrome": [
+      "bevy_log"
+    ],
+    "trace_tracy": [
+      "bevy_log"
+    ],
     "trace_tracy_memory": [
+      "bevy_log",
       "trace",
       "trace_tracy"
     ],
@@ -109,15 +116,33 @@
       "bevy_anti_alias"
     ],
     "force_disable_dlss": [],
-    "flac": [],
-    "mp3": [],
-    "mp4": [],
-    "vorbis": [],
-    "wav": [],
-    "aac": [],
-    "symphonia-flac": [],
-    "symphonia-vorbis": [],
-    "symphonia-wav": [],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "mp4": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "aac": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
     "shader_format_glsl": [
       "bevy_shader"
     ],
@@ -169,6 +194,8 @@
       "bevy_shader"
     ],
     "bevy_image": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "bevy_sprite": [
@@ -194,6 +221,7 @@
     ],
     "bevy_mikktspace": [],
     "bevy_window": [
+      "bevy_a11y",
       "bevy_image",
       "bevy_window"
     ],
@@ -207,6 +235,7 @@
       "bevy_window"
     ],
     "bevy_world_serialization": [
+      "bevy_asset",
       "bevy_world_serialization"
     ],
     "bevy_material": [
@@ -220,6 +249,7 @@
     ],
     "bevy_render": [
       "bevy_camera",
+      "bevy_color",
       "bevy_render",
       "bevy_shader"
     ],
@@ -362,83 +392,147 @@
     "schedule_data": [
       "bevy_dev_tools"
     ],
-    "bevy_settings": []
+    "bevy_settings": [
+      "bevy-settings"
+    ],
+    "bevy_log": [],
+    "bevy_a11y": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_ui_widgets": [],
+    "bevy_gilrs": [],
+    "bevy_input_focus": [],
+    "bevy-settings": [],
+    "bevy_scene": []
   },
   "closure": {
-    "trace": [],
-    "trace_chrome": [],
-    "trace_tracy": [],
+    "trace": [
+      "bevy_log"
+    ],
+    "trace_chrome": [
+      "bevy_log"
+    ],
+    "trace_tracy": [
+      "bevy_log"
+    ],
     "trace_tracy_memory": [
+      "bevy_log",
       "trace",
       "trace_tracy"
     ],
     "detailed_trace": [],
     "sysinfo_plugin": [],
     "compressed_image_saver": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "zlib": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "zstd": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "zstd_rust": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "zstd_c": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "basis-universal": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "bmp": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "ff": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "gif": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "ico": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "jpeg": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "png": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "pnm": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "qoi": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "tga": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "tiff": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "webp": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "dds": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "exr": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "hdr": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "ktx2": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "spirv_shader_passthrough": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_render",
@@ -446,7 +540,10 @@
       "bevy_window"
     ],
     "statically-linked-dxc": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_render",
@@ -454,7 +551,10 @@
       "bevy_window"
     ],
     "raw_vulkan_init": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_render",
@@ -462,7 +562,10 @@
       "bevy_window"
     ],
     "type_label_buffers": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_render",
@@ -470,28 +573,41 @@
       "bevy_window"
     ],
     "tonemapping_luts": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "ktx2"
     ],
     "smaa_luts": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "ktx2"
     ],
     "bluenoise_texture": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "ktx2"
     ],
     "dfg_lut": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "ktx2"
     ],
     "area_light_luts": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "ktx2"
     ],
     "dlss": [
+      "bevy_a11y",
       "bevy_anti_alias",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_mesh",
@@ -500,15 +616,33 @@
       "bevy_window"
     ],
     "force_disable_dlss": [],
-    "flac": [],
-    "mp3": [],
-    "mp4": [],
-    "vorbis": [],
-    "wav": [],
-    "aac": [],
-    "symphonia-flac": [],
-    "symphonia-vorbis": [],
-    "symphonia-wav": [],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "mp4": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "aac": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
     "shader_format_glsl": [
       "bevy_shader"
     ],
@@ -526,21 +660,33 @@
       "std"
     ],
     "wayland": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
     ],
     "x11": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
     ],
     "android-native-activity": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
     ],
     "android-game-activity": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
@@ -559,6 +705,8 @@
     ],
     "gltf_animation": [
       "bevy_animation",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh"
     ],
@@ -567,18 +715,29 @@
       "morph"
     ],
     "bevy_shader": [],
-    "bevy_image": [],
+    "bevy_image": [
+      "bevy_asset",
+      "bevy_color"
+    ],
     "bevy_sprite": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_window"
     ],
     "bevy_text": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "bevy_ui": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_sprite",
@@ -586,45 +745,71 @@
       "bevy_window"
     ],
     "bevy_mesh": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "bevy_animation": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh"
     ],
     "bevy_mikktspace": [],
     "bevy_window": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image"
     ],
     "bevy_winit": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window"
     ],
     "bevy_camera": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_window"
     ],
-    "bevy_world_serialization": [],
+    "bevy_world_serialization": [
+      "bevy_asset"
+    ],
     "bevy_material": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_shader"
     ],
     "bevy_light": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_window"
     ],
     "bevy_render": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_shader",
       "bevy_window"
     ],
     "bevy_core_pipeline": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_render",
@@ -632,7 +817,10 @@
       "bevy_window"
     ],
     "bevy_anti_alias": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_mesh",
@@ -641,7 +829,10 @@
       "bevy_window"
     ],
     "bevy_post_process": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_mesh",
@@ -650,7 +841,10 @@
       "bevy_window"
     ],
     "bevy_pbr": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_light",
@@ -661,7 +855,10 @@
       "bevy_window"
     ],
     "bevy_sprite_render": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_material",
@@ -672,7 +869,10 @@
       "bevy_window"
     ],
     "bevy_ui_render": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_material",
@@ -686,11 +886,16 @@
       "bevy_window"
     ],
     "bevy_feathers": [
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "png"
     ],
     "bevy_solari": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_core_pipeline",
       "bevy_image",
       "bevy_light",
@@ -702,23 +907,33 @@
       "bevy_window"
     ],
     "bevy_gizmos": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_window"
     ],
     "bevy_gizmos_render": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_gizmos",
       "bevy_image",
       "bevy_mesh",
       "bevy_window"
     ],
     "bevy_gltf": [
+      "bevy_asset",
       "bevy_world_serialization"
     ],
     "dynamic_linking": [],
     "accesskit_unix": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
@@ -765,12 +980,18 @@
     "reflect_auto_register_static": [],
     "reflect_documentation": [],
     "custom_cursor": [
+      "bevy_a11y",
+      "bevy_asset",
+      "bevy_color",
       "bevy_image",
       "bevy_window",
       "bevy_winit"
     ],
     "ghost_nodes": [
+      "bevy_a11y",
+      "bevy_asset",
       "bevy_camera",
+      "bevy_color",
       "bevy_image",
       "bevy_mesh",
       "bevy_sprite",
@@ -805,7 +1026,19 @@
     "schedule_data": [
       "bevy_dev_tools"
     ],
-    "bevy_settings": []
+    "bevy_settings": [
+      "bevy-settings"
+    ],
+    "bevy_log": [],
+    "bevy_a11y": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_ui_widgets": [],
+    "bevy_gilrs": [],
+    "bevy_input_focus": [],
+    "bevy-settings": [],
+    "bevy_scene": []
   },
   "profiles": {
     "2d": {

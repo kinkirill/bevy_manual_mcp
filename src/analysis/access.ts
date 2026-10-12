@@ -20,12 +20,11 @@ export function extractAccessPatterns(params: ParamKind[]): AccessPattern[] {
         break;
       }
       case "Res": {
-        const inner = p.kind === "Res" ? undefined : undefined; // Res has no name property
-        results.push({ resourceType: extractResourceType("Res"), isMutable: false, paramKind: "Res" });
+        results.push({ resourceType: p.name, isMutable: false, paramKind: "Res" });
         break;
       }
       case "ResMut": {
-        results.push({ resourceType: extractResourceType("ResMut"), isMutable: true, paramKind: "ResMut" });
+        results.push({ resourceType: p.name, isMutable: true, paramKind: "ResMut" });
         break;
       }
       case "NonSend": {

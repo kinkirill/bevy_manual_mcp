@@ -118,7 +118,9 @@ test("ingestErrorCodes uses errorsDir when available", () => {
 
 /** Simulate the ingestErrorCodes logic without a full registry. */
 function simulateIngest(errorsDir: string | null, metaDir: string | null, version: string): Array<{ docs: string }> {
-  const dirs = [errorsDir, metaDir].filter((d): d is string => !!d);
+  // Vendored codes live under <metaDir>/<version>/error-codes/, matching production.
+  const vendored = metaDir ? path.join(metaDir, version, "error-codes") : null;
+  const dirs = [errorsDir, vendored].filter((d): d is string => !!d);
   for (const dir of dirs) {
     let entries: string[] = [];
     try {

@@ -1,10 +1,9 @@
-/** Conflict rules R1–R7 for Bevy system parameter validation. */
-import type { AccessPattern } from "./access.js";
+/** Conflict rules R1–R5 for Bevy system parameter validation. */
 import type { ParamKind } from "./rust-fn.js";
-import { checkFilterDisjointness, parseFilters } from "./filters.js";
+import { checkFilterDisjointness } from "./filters.js";
 
 export interface Finding {
-  rule: string;    // e.g., "R1", "B0001"
+  rule: string;    // e.g., "R1", "R3"
   severity: "panic" | "compile-error" | "warning";
   resourceType?: string;
   paramA?: string;
@@ -19,150 +18,112 @@ export interface ValidationResult {
   systemsClean: number;
 }
 
+/** Whether a `Query<D, ...>` data part is a mutable borrow. */
+function isMutableQuery(data: string): boolean {
+  return /&\s*mut\s+/.test(data) || /^\s*mut\s+\w/.test(data);
+}
+
+/** The component type read/written by a `Query<D, ...>` data part. */
+function queryDataType(data: string): string | undefined {
+  return data.trim().match(/&(?:\s*mut\s+)?([A-Za-z_][A-Za-z0-9_]*)/)?.[1];
+}
+
 /** Run all conflict rules against extracted access patterns. */
-export function checkConflicts(
-  params: ParamKind[],
-  filtersA?: string[],
-  filtersB?: string[],
-): Finding[] {
+export function checkConflicts(params: ParamKind[]): Finding[] {
   const findings: Finding[] = [];
 
-  // Collect mutable and immutable accesses by resource type
-  const mutableByType = new Map<string, boolean>(); // resourceType -> has mut access
-  const immutableByType = new Map<string, boolean>(); // resourceType -> has immut access
-
+  // R1 / R2 — conflicting Query data access (B0001), unless filters disjoint them.
+  const queries: { type: string; mutable: boolean; filters: string[] }[] = [];
   for (const p of params) {
-    switch (p.kind) {
-      case "Query": {
-        const isMut = /&mut\s+/.test(p.data) || /\bmut\s+\w+/.test(p.data);
-        const resourceType = extractResourceType(p.data);
-        if (resourceType) {
-          if (isMut) mutableByType.set(resourceType, true);
-          else immutableByType.set(resourceType, true);
-
-          // R1: Query<&mut T> + Query<&T> without disjoint filters
-          if (mutableByType.has(resourceType) && immutableByType.has(resourceType)) {
-            const hasDisjointFilters = checkFilterDisjointness(filtersA ?? [], filtersB ?? []);
-            if (!hasDisjointFilters && p.filters?.length) {
-              // Check if this query's own filters provide disjointness
-              const selfHasWithout = parseFilters(p.filters).some((f) => f.type === "Without");
-              if (!selfHasWithout) {
-                findings.push({
-                  rule: "R1",
-                  severity: "panic",
-                  resourceType,
-                  description: `Query<&mut ${resourceType}> and Query<&${resourceType}> without disjoint filters — B0001 panic`,
-                  errorCode: "B0001",
-                });
-              }
-            }
-          }
-        }
-
-        // Check for conflicting Query filters within the same query
-        if (p.filters) {
-          const withEntities = new Set<string>();
-          const withoutEntities = new Set<string>();
-          for (const f of parseFilters(p.filters)) {
-            if (!f.entity) continue;
-            switch (f.type) {
-              case "With": withEntities.add(f.entity); break;
-              case "Without": withoutEntities.add(f.entity); break;
-            }
-          }
-
-          // Self-check: With<X> and Without[X] in same query is fine (disjointed by design)
-        }
-        break;
-      }
-      case "ResMut": {
-        mutableByType.set("ResMut", true);
-        break;
-      }
-      case "Res": {
-        // R3: Res<T> + ResMut<T>
-        if (mutableByType.has("ResMut")) {
-          findings.push({
-            rule: "R3",
-            severity: "panic",
-            resourceType: undefined,
-            paramA: "ResMut",
-            paramB: "Res",
-            description: "Res<T> alongside ResMut<T> — B0002 panic (mutable + immutable borrow)",
-            errorCode: "B0002",
-          });
-        }
-        break;
-      }
-      case "NonSendMut": {
-        mutableByType.set(p.name, true);
-        break;
-      }
-      case "NonSend": {
-        // R4: NonSend<T> + NonSendMut<T>
-        if (mutableByType.has(p.name)) {
-          findings.push({
-            rule: "R4",
-            severity: "panic",
-            resourceType: p.name,
-            paramA: "NonSendMut",
-            paramB: "NonSend",
-            description: `NonSend<${p.name}> alongside NonSendMut<${p.name}> — B0002 panic`,
-            errorCode: "B0002",
-          });
-        }
-        break;
-      }
-      case "WorldMutRef": {
-        // R5: &mut World + any other resource-bearing param
-        const hasOtherParams = params.some((p) =>
-          p.kind !== "WorldMutRef" && p.kind !== "WorldRef");
-        if (hasOtherParams) {
-          findings.push({
-            rule: "R5",
-            severity: "panic",
-            resourceType: "World",
-            paramA: "&mut World",
-            description: "&mut World alongside other resources — B0002 family panic",
-            errorCode: "B0002",
-          });
-        }
-        break;
-      }
-    }
+    if (p.kind !== "Query") continue;
+    const type = queryDataType(p.data);
+    if (!type) continue;
+    queries.push({ type, mutable: isMutableQuery(p.data), filters: p.filters ?? [] });
   }
-
-  // R2: Two Query<&mut T> on the same T (already handled in above)
-  // Count mutable accesses per type
-  const mutCountByType = new Map<string, number>();
-  for (const p of params) {
-    if (p.kind === "Query") {
-      const isMut = /&mut\s+/.test(p.data);
-      const resourceType = extractResourceType(p.data);
-      if (isMut && resourceType) {
-        mutCountByType.set(resourceType, (mutCountByType.get(resourceType) ?? 0) + 1);
-      }
-    }
-  }
-
-  for (const [resourceType, count] of mutCountByType) {
-    if (count > 1) {
+  for (let i = 0; i < queries.length; i++) {
+    for (let j = i + 1; j < queries.length; j++) {
+      const a = queries[i]!;
+      const b = queries[j]!;
+      if (a.type !== b.type || !(a.mutable || b.mutable)) continue;
+      if (checkFilterDisjointness(a.filters, b.filters)) continue;
+      const bothMutable = a.mutable && b.mutable;
       findings.push({
-        rule: "R2",
+        rule: bothMutable ? "R2" : "R1",
         severity: "panic",
-        resourceType,
-        description: `Two Query<&mut ${resourceType}> — B0001 panic`,
+        resourceType: a.type,
+        paramA: `Query<&mut ${a.type}>`,
+        paramB: bothMutable ? `Query<&mut ${b.type}>` : `Query<&${b.type}>`,
+        description: bothMutable
+          ? `Two Query<&mut ${a.type}> without disjoint filters — B0001 panic`
+          : `Query<&mut ${a.type}> and Query<&${a.type}> without disjoint filters — B0001 panic`,
         errorCode: "B0001",
       });
     }
   }
 
-  return findings;
-}
+  // R3 — Res<T> alongside ResMut<T> for the same resource (B0002).
+  const resources = new Map<string, { read: boolean; write: boolean }>();
+  for (const p of params) {
+    if (p.kind !== "Res" && p.kind !== "ResMut") continue;
+    const type = p.name ?? "?";
+    const entry = resources.get(type) ?? { read: false, write: false };
+    if (p.kind === "ResMut") entry.write = true;
+    else entry.read = true;
+    resources.set(type, entry);
+  }
+  for (const [type, entry] of resources) {
+    if (entry.read && entry.write) {
+      findings.push({
+        rule: "R3",
+        severity: "panic",
+        resourceType: type,
+        paramA: `ResMut<${type}>`,
+        paramB: `Res<${type}>`,
+        description: `Res<${type}> alongside ResMut<${type}> — B0002 panic (mutable + immutable borrow)`,
+        errorCode: "B0002",
+      });
+    }
+  }
 
-/** Extract the resource type from a Query data part. */
-function extractResourceType(dataPart: string): string | undefined {
-  const trimmed = dataPart.trim();
-  const match = trimmed.match(/&(?:mut\s+)?(\w+)/);
-  return match?.[1];
+  // R4 — NonSend<T> alongside NonSendMut<T> for the same resource (B0002).
+  const nonSend = new Map<string, { read: boolean; write: boolean }>();
+  for (const p of params) {
+    if (p.kind !== "NonSend" && p.kind !== "NonSendMut") continue;
+    const entry = nonSend.get(p.name) ?? { read: false, write: false };
+    if (p.kind === "NonSendMut") entry.write = true;
+    else entry.read = true;
+    nonSend.set(p.name, entry);
+  }
+  for (const [type, entry] of nonSend) {
+    if (entry.read && entry.write) {
+      findings.push({
+        rule: "R4",
+        severity: "panic",
+        resourceType: type,
+        paramA: `NonSendMut<${type}>`,
+        paramB: `NonSend<${type}>`,
+        description: `NonSend<${type}> alongside NonSendMut<${type}> — B0002 panic`,
+        errorCode: "B0002",
+      });
+    }
+  }
+
+  // R5 — `&mut World` is exclusive and cannot share a system with other params.
+  if (params.some((p) => p.kind === "WorldMutRef")) {
+    const companion = params.find(
+      (p) => p.kind !== "WorldMutRef" && p.kind !== "WorldRef" && p.kind !== "Other",
+    );
+    if (companion) {
+      findings.push({
+        rule: "R5",
+        severity: "panic",
+        resourceType: "World",
+        paramA: "&mut World",
+        description: "&mut World alongside other system parameters — B0002 family panic",
+        errorCode: "B0002",
+      });
+    }
+  }
+
+  return findings;
 }

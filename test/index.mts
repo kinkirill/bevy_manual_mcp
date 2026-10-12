@@ -36,6 +36,8 @@ try {
   const duplicateStatus = run("duplicate index documentation", [path.join(HERE, "duplicate-records-test.mjs")]);
   const questionsStatus = run("natural-language search relevance", [path.join(HERE, "natural-questions-test.mjs")]);
   const metaStatus = run("vendored metadata harvest", [path.join(HERE, "meta-harvest-test.mjs")]);
+  const compatStatus = run("ecosystem compatibility", [path.join(HERE, "compat-test.mjs")]);
+  const toolsStatus = run("per-tool behaviour", [path.join(HERE, "tools-test.mjs")]);
 
   const descriptor = path.join(fixtureDir, "resource-fixture.json");
   if (!fs.existsSync(descriptor)) {
@@ -43,7 +45,7 @@ try {
       `\nCould not build the resource fixture, so the resource-layer tests were ` +
         `skipped. Run "node test/run-tests.mjs" alone to see why.\n`,
     );
-    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || 1;
+    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || compatStatus || toolsStatus || 1;
   } else {
     const { dataDir, version } = parseObject(fs.readFileSync(descriptor, "utf8"));
     assert.equal(typeof dataDir, "string");
@@ -54,7 +56,7 @@ try {
     const regressionStatus = run("configuration, persistence and version regressions", [path.join(HERE, "regressions.mjs")], env);
     const resourceStatus = run("resource-layer conformance", [path.join(HERE, "resources-test.mjs")], env);
     const toolStatus = run("MCP tools and compatibility entrypoints", [path.join(HERE, "mcp-e2e.mjs")], env);
-    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || metadataStatus || regressionStatus || resourceStatus || toolStatus;
+    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || metaStatus || compatStatus || toolsStatus || metadataStatus || regressionStatus || resourceStatus || toolStatus;
   }
 } finally {
   fs.rmSync(fixtureDir, { recursive: true, force: true });

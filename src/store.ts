@@ -57,7 +57,9 @@ export function importTextIndex(dump: unknown): TextIndex {
 
 /** Strip generics/whitespace so `Query<'_, '_, &T>` and `Query` unify. */
 function baseName(name: string | null | undefined) {
-  return String(name || "").replace(/<.*$/, "").trim();
+  const text = String(name || "");
+  const generic = text.indexOf("<");
+  return (generic === -1 ? text : text.slice(0, generic)).trim();
 }
 
 /**
@@ -131,21 +133,55 @@ function nameTerms(name: string): string[] {
 
 /** Normalise symbol spelling while retaining every owner and module component. */
 function normKey(s: string) {
-  let withoutGenerics = "";
-  let depth = 0;
-  for (const ch of String(s || "")) {
-    if (ch === "<") {
-      if (depth === 0 && withoutGenerics.trimEnd().endsWith("::")) withoutGenerics = withoutGenerics.trimEnd().slice(0, -2);
-      depth++;
+  const text = String(s || "");
+  if (!text) return "";
+  let withoutGenerics: string;
+  const firstGeneric = text.indexOf("<");
+  if (firstGeneric === -1) {
+    // Hot path: most paths carry no generics at all.
+    withoutGenerics = text;
+  } else {
+    let out = "";
+    let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch === "<") {
+        if (depth === 0) {
+          const trimmed = out.trimEnd();
+          if (trimmed.endsWith("::")) out = trimmed.slice(0, -2);
+        }
+        depth++;
+      } else if (ch === ">") {
+        if (depth > 0) depth--;
+      } else if (depth === 0) {
+        out += ch;
+      }
     }
-    else if (ch === ">" && depth > 0) depth--;
-    else if (depth === 0) withoutGenerics += ch;
+    withoutGenerics = out;
   }
   return withoutGenerics
     .replace(/\s+/g, "")
     .replace(/\(\)$/, "")
     .replace(/^::/, "")
     .toLowerCase();
+}
+
+/** Rank bare-name candidates: API definitions before members before the rest. */
+function symbolRank(r: Pick<BevyRecord, "kind">): number {
+  switch (r.kind) {
+    case "struct":
+    case "enum":
+    case "trait":
+    case "fn":
+      return 0;
+    case "method":
+      return 1;
+    case "associated_const":
+    case "associated_type":
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 /** Fingerprint source paths, file counts and newest modification times. */
@@ -308,6 +344,8 @@ export class BevyIndex {
   meta: IndexMetadata | null;
   stats: IndexStats;
   searchableIds = new Set<string>();
+  /** Lazily built camelCase name-token → record ids, for subject-name searches. */
+  private nameTokens: Map<string, string[]> | null = null;
   // Refresh imported postings for identities consolidated from duplicate bundle records.
   readonly repairedIds = new Set<string>();
   constructor() {
@@ -359,89 +397,6 @@ export class BevyIndex {
       this.records.push(indexed);
       this.byId.set(indexed.id, indexed);
     }
-  }
-
-  /**
-   * Build concrete path, owner-qualified and bare-name aliases.
-   * Bare names prefer API definitions over members and macros.
-   */
-  buildSymbolTable() {
-    this.symbols = new Map();
-    // Rank ambiguous bare names independently of exact paths.
-    const leafCandidates = new Map<string, Map<string, number>>();
-
-    const add = (key: string, id: string, rank?: number) => {
-      if (!key) return;
-      const k = normKey(key);
-      if (!k) return;
-      let entry = this.symbols.get(k);
-      if (!entry) this.symbols.set(k, (entry = []));
-      if (entry.length < 60 && !entry.includes(id)) entry.push(id);
-      if (rank !== undefined) {
-        let cand = leafCandidates.get(k);
-        if (!cand) leafCandidates.set(k, (cand = new Map()));
-        const prev = cand.get(id);
-        if (prev === undefined || rank < prev) cand.set(id, rank);
-      }
-    };
-
-    const rankFor = (r: BevyRecord) => {
-      switch (r.kind) {
-        case "struct":
-        case "enum":
-        case "trait":
-        case "fn":
-          return 0;
-        case "method":
-          return 1;
-        case "associated_const":
-        case "associated_type":
-          return 2;
-        default:
-          return 3;
-      }
-    };
-
-    for (const r of this.records) {
-      if (r.source !== "rustdoc") continue;
-      const leaf = baseName(r.name);
-      const owner = baseName(r.owner);
-      const rank = rankFor(r);
-
-      // Register only verified aliases so arbitrary owner qualifications cannot collapse.
-      const addPath = (fullPath: string) => {
-        add(fullPath, r.id, rank);
-        const crate = normKey(r.crate || "");
-        const key = normKey(fullPath);
-        if (crate && key.startsWith(`${crate}::`)) add(key.slice(crate.length + 2), r.id, rank);
-      };
-      addPath(r.full_path);
-      if (owner) add(`${owner}::${leaf}`, r.id, rank);
-      if (r.module) {
-        if (owner) addPath(`${r.module}::${owner}::${leaf}`);
-        else addPath(`${r.module}::${leaf}`);
-      }
-      add(leaf, r.id, rank);
-    }
-
-    for (const [k, cands] of leafCandidates) {
-      const ids = this.symbols.get(k);
-      if (!ids || ids.length <= 1) continue;
-      const order = new Map<string, number>();
-      let i = 0;
-      for (const id of ids) if (!order.has(id)) order.set(id, i++);
-      const sorted = [...cands.entries()].sort((a, b) => a[1] - b[1]);
-      // Keep unranked IDs as a fallback.
-      for (const [id] of [...order].reverse()) {
-        if (!cands.has(id)) sorted.push([id, 99]);
-      }
-      this.symbols.set(
-        k,
-        sorted.map(([id]) => id),
-      );
-    }
-
-    return this.symbols.size;
   }
 
   /** Append rustdoc records and update an existing text index without rebuilding it. */
@@ -544,14 +499,76 @@ export class BevyIndex {
     return added;
   }
 
-  /** Exact symbol lookup. Returns records, best match first. */
+  /**
+   * Build concrete path, owner-qualified and bare-name aliases as a plain
+   * alias → id map. Ambiguous bare names are ranked at lookup time instead of
+   * carrying a second candidate table through every build.
+   */
+  buildSymbolTable() {
+    const symbols = (this.symbols = new Map<string, string[]>());
+    // Repeated crate and leaf spellings are normalized once, not per record.
+    const crateKeys = new Map<string | null, string>();
+    const leafKeys = new Map<string, string>();
+    // Reuse one alias buffer per record: at most a handful of keys are produced.
+    const keys: string[] = [];
+    const pushKey = (key: string) => {
+      if (!key) return;
+      for (let i = 0; i < keys.length; i++) if (keys[i] === key) return;
+      keys.push(key);
+    };
+    const pushPath = (fullPath: string, crate: string) => {
+      const key = normKey(fullPath);
+      if (!key) return;
+      pushKey(key);
+      if (crate && key.startsWith(`${crate}::`)) pushKey(key.slice(crate.length + 2));
+    };
+
+    for (const r of this.records) {
+      if (r.source !== "rustdoc") continue;
+      keys.length = 0;
+      const rawCrate = r.crate ?? null;
+      let crate = crateKeys.get(rawCrate);
+      if (crate === undefined) crateKeys.set(rawCrate, (crate = normKey(rawCrate ?? "")));
+      const rawLeaf = baseName(r.name);
+      let leaf = leafKeys.get(rawLeaf);
+      if (leaf === undefined) leafKeys.set(rawLeaf, (leaf = normKey(rawLeaf)));
+      const owner = r.owner ? baseName(r.owner) : "";
+
+      // Register only verified aliases so arbitrary owner qualifications cannot collapse.
+      pushPath(r.full_path, crate);
+      if (owner) pushKey(normKey(`${owner}::${leaf}`));
+      if (r.module) {
+        if (owner) pushPath(`${r.module}::${owner}::${leaf}`, crate);
+        else pushPath(`${r.module}::${leaf}`, crate);
+      }
+      pushKey(leaf);
+
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i]!;
+        const entry = symbols.get(key);
+        // Cap fan-out so hot leaves keep bounded lookup cost.
+        if (!entry) symbols.set(key, [r.id]);
+        else if (entry.length < 60) entry.push(r.id);
+      }
+    }
+
+    return symbols.size;
+  }
+
+  /**
+   * Exact symbol lookup. Returns records, best match first.
+   * Candidate kinds are ranked at lookup time, so the symbol table stays a plain
+   * alias → id map and the hot build path never allocates a second table.
+   */
   lookupSymbol(query: string): SearchHit[] {
     const key = normKey(query);
     if (!key) return [];
-    const out: SearchHit[] = [];
-    const seen = new Set<string>();
+    const ids = this.symbols.get(key);
+    if (!ids || !ids.length) return [];
     const qualified = key.includes("::");
-    for (const id of this.symbols.get(key) || []) {
+    const out: { hit: SearchHit; rank: number }[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
       if (seen.has(id)) continue;
       seen.add(id);
       const record = this.byId.get(id);
@@ -559,9 +576,10 @@ export class BevyIndex {
       if (!qualified && normKey(baseName(record.name)) !== key) continue;
       // Full-path matches must lead even when a shorthand alias shares a key.
       const score = qualified && normKey(record.full_path) === key ? 1100 : 1000;
-      out.push({ record, score });
+      out.push({ hit: { record, score }, rank: symbolRank(record) });
     }
-    return out.sort((a, b) => b.score - a.score);
+    out.sort((a, b) => b.hit.score - a.hit.score || a.rank - b.rank);
+    return out.map(({ hit }) => hit);
   }
 
   /** Search text, optionally restricting results to allowedIds. */
@@ -582,6 +600,29 @@ export class BevyIndex {
       out.push(h);
     }
     return out;
+  }
+
+  /**
+   * Map camelCase name/owner tokens to record ids. Built once, on the first
+   * conceptual search, so `hybridSearch` stops re-scanning the whole corpus and
+   * re-tokenizing every name for each query.
+   */
+  nameTokenLookup(): Map<string, string[]> {
+    if (this.nameTokens) return this.nameTokens;
+    const CAP = 1000;
+    const tokens = new Map<string, string[]>();
+    const add = (term: string, id: string) => {
+      const ids = tokens.get(term);
+      if (!ids) tokens.set(term, [id]);
+      else if (ids.length < CAP) ids.push(id);
+    };
+    for (const r of this.records) {
+      if (r.source !== "rustdoc" || r.kind === "field") continue;
+      for (const term of nameTerms(r.name)) add(term, r.id);
+      if (r.owner) for (const term of nameTerms(r.owner)) add(term, r.id);
+    }
+    this.nameTokens = tokens;
+    return tokens;
   }
 
   stats_() {
@@ -787,12 +828,17 @@ export function hybridSearch(
   const candidateTerms = [...focus.subjects, ...focus.context];
   const includesApi = !filters.source || filters.source.split(",").some((source) => source.trim() === "rustdoc");
   if (!exact.length && candidateTerms.length && includesApi) {
-    const names = index.records.filter((record) => {
-      if (record.source !== "rustdoc" || record.kind === "field" || seen.has(record.id) || !scoped(record)) return false;
-      const words = nameTerms(record.name);
-      const owner = nameTerms(record.owner ?? "");
-      return candidateTerms.some((term) => words.includes(term) || owner.includes(term));
-    });
+    // Resolve candidate tokens through the prebuilt index instead of
+    // re-tokenizing every record name on each query. The record filter keeps
+    // the original corpus order so ranking stays stable.
+    const tokenIndex = index.nameTokenLookup();
+    const candidateIds = new Set<string>();
+    for (const term of candidateTerms) {
+      const ids = tokenIndex.get(term);
+      if (ids) for (const id of ids) candidateIds.add(id);
+    }
+    const names = candidateIds.size === 0 ? [] : index.records.filter((record) =>
+      candidateIds.has(record.id) && !seen.has(record.id) && scoped(record));
     for (const record of applyFilters(names.map((record) => ({ record, score: 0 })), filters).map((hit) => hit.record)) {
       const ownMatch = candidateTerms.some((term) => nameTerms(record.name).includes(term));
       const definition = ["struct", "enum", "trait", "fn", "type", "primitive"].includes(record.kind);
