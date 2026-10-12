@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export type RecordSource = "rustdoc" | "website" | "bevy-examples" | "learn-examples";
+export type RecordSource = "rustdoc" | "website" | "bevy-examples" | "learn-examples" | "bevy-meta";
 
 export interface DocExample {
   lang: string;
@@ -46,7 +46,8 @@ interface RecordBase {
 export interface RustdocRecord extends RecordBase { source: "rustdoc" }
 export interface WebsiteRecord extends RecordBase { source: "website" }
 export interface CodeExampleRecord extends RecordBase { source: "bevy-examples" | "learn-examples" }
-export type BevyRecord = RustdocRecord | WebsiteRecord | CodeExampleRecord;
+export interface MetaRecord extends RecordBase { source: "bevy-meta" }
+export type BevyRecord = RustdocRecord | WebsiteRecord | CodeExampleRecord | MetaRecord;
 export type DocumentationRecord = BevyRecord;
 export type IndexedRecord = BevyRecord & { id: string };
 export interface SearchHit { record: IndexedRecord; score: number }
@@ -59,6 +60,19 @@ export interface SearchFilters {
   draft?: boolean;
 }
 
+/** Corpus identifier — "bevy@0.20.0" for Bevy, "bevy_egui@0.43.1" for plugins. */
+export type CorpusId = string;
+
+/** A plugin or companion crate to index alongside Bevy. */
+export interface CorpusConfig {
+  /** Crate name on crates.io, e.g. "bevy_egui". */
+  crate: string;
+  /** Pinned version — auto-detection overrides this if `auto` is true. */
+  version?: string;
+  /** Resolve from the project's Cargo.lock/Cargo.toml when present. */
+  auto?: boolean;
+}
+
 export interface IndexConfig {
   projectRoot: string;
   bevyVersion: string | null;
@@ -66,7 +80,10 @@ export interface IndexConfig {
   docDir: string | null;
   websiteDir: string | null;
   examplesDir: string | null;
+  errorsDir: string | null;
+  metaDir: string | null;
   dataDir: string;
+  corpora?: CorpusConfig[];
 }
 export interface ResolvedConfig extends IndexConfig {
   versionNote?: string;
@@ -75,11 +92,15 @@ export interface ResolvedConfig extends IndexConfig {
   docVersionSource: string | null;
   bevySrcDir: string | null;
   errorsDir: string | null;
+  metaDir: string | null;
   mirrorDir: string;
+  corpora: CorpusConfig[];
   env: { offline: boolean; maxResults: number; debug: boolean };
 }
 export interface IndexMetadata {
   bevy_version: string | null;
+  crate?: string | null;      // "bevy" or the plugin crate name
+  crate_version?: string | null; // version of this corpus's own crate
   cache_version?: number;
   fingerprint?: string;
   supplemental_fingerprint?: string;
@@ -132,7 +153,7 @@ export function parseJson(text: string): unknown { return JSON.parse(text) as un
 const nullableString = z.string().nullable().optional();
 const recordSchema = z.object({
   id: z.string().optional(),
-  source: z.enum(["rustdoc", "website", "bevy-examples", "learn-examples"]),
+  source: z.enum(["rustdoc", "website", "bevy-examples", "learn-examples", "bevy-meta"]),
   kind: z.string(), name: z.string(), full_path: z.string(), docs: z.string(),
   signature: z.string(), module: z.string(), file: z.string(),
   owner: nullableString, crate: nullableString, source_ref: nullableString,

@@ -105,6 +105,46 @@ stays accurate - the server reports this rather than nagging. A minor upgrade
 bevy-mcp fetch-index 0.20.0
 ```
 
+## `bevy_check_manifest` says a feature is "unknown"
+
+An *unknown* feature is one the vendored graph does not list for that version,
+which is deliberately **not** reported as "off" - conflating the two produces
+false alarms. The graph comes from `vendor/bevy-meta/<version>/features.json`
+and includes implicit optional-dependency features (`bevy_audio`, `bevy_log`, …).
+If it looks incomplete, re-harvest it:
+
+```bash
+node scripts/harvest-meta.mjs 0.20.0 --force
+```
+
+## `bevy_validate_systems` is silent, but the system still panics
+
+The tool lints Bevy's **access rules** (B0001/B0002 and the `&mut World` family)
+from the signature alone; it does not type-check or run `cargo`. When it finds
+nothing it says so and lists what it did *not* check. For an actual panic, paste
+the message into `bevy_explain_error`, which resolves it against your version.
+
+## `bevy_explain_error` says the code "does not exist in this version"
+
+The message names a code (for example `B0007`) that was not present at your
+pinned version, so the tool refuses to answer from a neighbouring version's
+docs - the same substitution the rest of the server avoids. Confirm your version
+with `bevy_index_status`, or install the index for the version the panic came
+from.
+
+## `bevy_ecosystem_compat` has no data for a plugin
+
+Only `bevy_egui`, `bevy_rapier3d` and `leafwing_input_manager` ship a vendored
+compatibility snapshot. Calling the tool with no `crate` lists what is
+available. Refresh the snapshot from crates.io with:
+
+```bash
+node scripts/harvest-compat.mjs
+```
+
+`bevy_ecosystem_search` searches the Bevy index always, and any plugin corpora
+that have been registered with the server (plugin indexes are opt-in).
+
 ## Server will not start
 
 Run it directly to see the diagnostics; logs go to stderr because stdout is

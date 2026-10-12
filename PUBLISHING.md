@@ -40,12 +40,32 @@ an existing bundle:
 ```bash
 npm run rebuild-all -- 0.20.0
 node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist --revision 1
-gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz --clobber
+gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz dist/index-manifest.json --clobber
 ```
 
+`publish-index` writes `index-manifest.json` next to the bundle (naming the
+bundle, its revision and its SHA-256) and strips any download provenance from
+`registry-entry.json`. **Always upload the manifest with the bundle** - it is how
+`fetch-index` tells users a newer revision exists. The release workflow already
+attaches it.
+
 The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
-numeric revision from the release metadata; keep the canonical asset if older
-download URLs should continue working. Use `--revision 2` for the next rebuild.
+numeric revision from the manifest. Publish only the current revision and its
+manifest, and delete superseded assets - one bundle per release keeps the
+release page and the digest unambiguous. Use `--revision 3` for the next
+rebuild.
+
+Republishing a revision is only worth it when it changes what a fresh install
+loads. Supplemental inputs (the vendored website, error codes and any examples)
+are fingerprinted by **content**, not by path or mtime, so a bundle built here
+matches the same sources on a user's machine and its first load takes the fast
+path. Republish a `+N` when you have refreshed `vendor/bevy-website`,
+`vendor/bevy-meta` or the error-code set; a code-only change needs no new
+bundle. The published `index-manifest.json` is what makes a republish
+discoverable: `fetch-index` compares the manifest revision with the revision
+recorded at install time and downloads only when it is newer, so bump
+`CACHE_VERSION` only when the record schema or required bundle content actually
+changed.
 
 Bump `CACHE_VERSION` in `src/store.ts` when the record schema or required
 content changes. `fetch-index` replaces stale or unknown installed cache formats
@@ -75,13 +95,31 @@ cache version alone does not establish that a bundle is complete.
    The script uses a partial sparse clone, so the ~270 MB of news media is never
    downloaded.
 
-3. **Tag and push**
+3. **Harvest the version metadata** (feature graph, default-plugin gates and
+   error-code guides). This is what `bevy_check_manifest`, `bevy_explain_error`
+   and `bevy_perf_advisor` read, and it includes implicit optional-dependency
+   features such as `bevy_audio`:
+   ```bash
+   node scripts/harvest-meta.mjs 0.21.0 --force
+   git add vendor/bevy-meta/0.21.0 && git commit -m "vendor: harvest bevy-meta 0.21.0"
+   ```
+   `vendor/bevy-meta/0.20.0/` is a golden fixture for the feature-graph tests, so
+   do not hand-edit the committed JSON.
+
+4. **Refresh the plugin compatibility snapshot** (when you want newer plugin
+   releases covered). Requires crates.io access:
+   ```bash
+   node scripts/harvest-compat.mjs
+   git add vendor/ecosystem/compat.json && git commit -m "vendor: refresh plugin compatibility"
+   ```
+
+5. **Tag and push**
    ```bash
    git tag v0.21.0
    git push origin main --tags
    ```
 
-4. **Done.** The `release` workflow then:
+6. **Done.** The `release` workflow then:
    - mirrors rustdoc from docs.rs,
    - sparse-clones the engine `examples/`,
    - builds the index,

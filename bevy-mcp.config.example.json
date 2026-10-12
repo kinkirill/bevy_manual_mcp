@@ -6,6 +6,7 @@
   "bevySrcDir": "~/.cache/bevy-mcp/bevy-src-0.20.0",
   "mirrorDir": "~/.cache/bevy-mcp/bevy-0.20.0",
   "dataDir": "./data",
+  "metaDir": "./vendor/bevy-meta",
   "offline": false,
   "maxResults": 8,
   "debug": false

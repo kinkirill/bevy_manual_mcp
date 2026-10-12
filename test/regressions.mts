@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT, resolveConfig, detectBevyVersion, detectDocVersion } from "../src/config.js";
 import { paginate, completionResult, _internal as pagination } from "../src/pagination.js";
-import { VersionRegistry, writeNdjson } from "../src/registry.js";
+import { VersionRegistry, writeNdjson, contentFingerprint, sourceFingerprint } from "../src/registry.js";
 import type { RustdocRecord } from "../src/types.js";
 import { BevyIndex, CACHE_VERSION, TEXT_RESOLUTION, exportTextIndex, hybridSearch } from "../src/store.js";
 import { createVersionChecker, fetchVersionInfo } from "../src/versions.js";
@@ -303,6 +303,22 @@ await test("docs setup refuses to resume a mirror belonging to another version",
     assert.match(result.stderr, /version|belongs|mismatch/i);
     assert.equal(fs.readFileSync(manifest, "utf8"), before);
     assert.deepEqual(fs.readdirSync(mirror), [".bevy-mcp-docversion.json"]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("supplemental fingerprint is content-addressed, not path- or mtime-addressed", async () => {
+  const root = tempDir();
+  try {
+    const a = path.join(root, "a", "website");
+    const b = path.join(root, "b", "website");
+    writeFixture(path.join(a, "content", "book.md"), "# Book\nsame content here.\n");
+    writeFixture(path.join(b, "content", "book.md"), "# Book\nsame content here.\n");
+    // Identical bytes at a different path with a different mtime.
+    fs.utimesSync(path.join(b, "content", "book.md"), new Date("2030-01-01"), new Date("2030-01-01"));
+    assert.equal(contentFingerprint([a]), contentFingerprint([b]), "same content must fingerprint equally across paths");
+    assert.notEqual(sourceFingerprint([a]), sourceFingerprint([b]), "the local-change fingerprint is path/mtime-specific");
+    writeFixture(path.join(b, "content", "book.md"), "# Book\nchanged content here.\n");
+    assert.notEqual(contentFingerprint([a]), contentFingerprint([b]), "content edits must change the fingerprint");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

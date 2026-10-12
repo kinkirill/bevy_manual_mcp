@@ -1,0 +1,632 @@
+{
+  "bevy_version": "0.15.3",
+  "features": {
+    "trace": [],
+    "trace_chrome": [],
+    "trace_tracy": [],
+    "trace_tracy_memory": [],
+    "detailed_trace": [],
+    "sysinfo_plugin": [],
+    "basis-universal": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "dds": [
+      "bevy_core_pipeline",
+      "bevy_gltf",
+      "bevy_image",
+      "bevy_render"
+    ],
+    "exr": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "hdr": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "ktx2": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "zlib": [
+      "bevy_image"
+    ],
+    "zstd": [
+      "bevy_image"
+    ],
+    "bmp": [
+      "bevy_image"
+    ],
+    "ff": [
+      "bevy_image"
+    ],
+    "gif": [
+      "bevy_image"
+    ],
+    "ico": [
+      "bevy_image"
+    ],
+    "jpeg": [
+      "bevy_image"
+    ],
+    "png": [
+      "bevy_image"
+    ],
+    "pnm": [
+      "bevy_image"
+    ],
+    "qoi": [
+      "bevy_image"
+    ],
+    "tga": [
+      "bevy_image"
+    ],
+    "tiff": [
+      "bevy_image"
+    ],
+    "webp": [
+      "bevy_image"
+    ],
+    "spirv_shader_passthrough": [
+      "bevy_render"
+    ],
+    "tonemapping_luts": [
+      "bevy_core_pipeline"
+    ],
+    "smaa_luts": [
+      "bevy_core_pipeline"
+    ],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "minimp3": [
+      "bevy_audio"
+    ],
+    "symphonia-aac": [
+      "bevy_audio"
+    ],
+    "symphonia-all": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-isomp4": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
+    "shader_format_glsl": [
+      "bevy_render"
+    ],
+    "shader_format_spirv": [
+      "bevy_render"
+    ],
+    "serialize": [],
+    "multi_threaded": [],
+    "async-io": [],
+    "wayland": [
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_winit"
+    ],
+    "pbr_transmission_textures": [],
+    "pbr_multi_layer_material_textures": [],
+    "pbr_anisotropy_texture": [],
+    "experimental_pbr_pcss": [],
+    "webgl": [],
+    "webgpu": [],
+    "bevy_ci_testing": [
+      "bevy_dev_tools"
+    ],
+    "animation": [
+      "bevy_animation"
+    ],
+    "bevy_sprite": [
+      "bevy_image",
+      "bevy_sprite"
+    ],
+    "bevy_pbr": [
+      "bevy_image",
+      "bevy_pbr"
+    ],
+    "bevy_window": [
+      "bevy_a11y",
+      "bevy_window"
+    ],
+    "bevy_core_pipeline": [
+      "bevy_core_pipeline",
+      "bevy_image"
+    ],
+    "bevy_gizmos": [
+      "bevy_gizmos",
+      "bevy_image"
+    ],
+    "bevy_gltf": [
+      "bevy_gltf",
+      "bevy_image"
+    ],
+    "bevy_ui": [
+      "bevy_image",
+      "bevy_ui"
+    ],
+    "bevy_image": [
+      "bevy_image"
+    ],
+    "dynamic_linking": [],
+    "android_shared_stdcxx": [
+      "bevy_audio"
+    ],
+    "accesskit_unix": [
+      "bevy_winit"
+    ],
+    "bevy_text": [
+      "bevy_image",
+      "bevy_text"
+    ],
+    "bevy_render": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "glam_assert": [],
+    "debug_glam_assert": [],
+    "default_font": [],
+    "asset_processor": [],
+    "file_watcher": [],
+    "embedded_watcher": [],
+    "bevy_debug_stepping": [],
+    "meshlet": [],
+    "meshlet_processor": [],
+    "bevy_dev_tools": [
+      "bevy_dev_tools"
+    ],
+    "bevy_remote": [
+      "bevy_remote"
+    ],
+    "bevy_picking": [
+      "bevy_picking"
+    ],
+    "bevy_mesh_picking_backend": [
+      "bevy_picking"
+    ],
+    "bevy_sprite_picking_backend": [
+      "bevy_picking",
+      "bevy_sprite"
+    ],
+    "bevy_ui_picking_backend": [
+      "bevy_picking",
+      "bevy_ui"
+    ],
+    "ios_simulator": [],
+    "bevy_state": [
+      "bevy_state"
+    ],
+    "track_change_detection": [],
+    "reflect_functions": [],
+    "custom_cursor": [
+      "bevy_winit"
+    ],
+    "ghost_nodes": [
+      "bevy_ui"
+    ],
+    "bevy_a11y": [],
+    "bevy_animation": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_gilrs": [],
+    "bevy_scene": [],
+    "bevy_winit": []
+  },
+  "closure": {
+    "trace": [],
+    "trace_chrome": [],
+    "trace_tracy": [],
+    "trace_tracy_memory": [],
+    "detailed_trace": [],
+    "sysinfo_plugin": [],
+    "basis-universal": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "dds": [
+      "bevy_core_pipeline",
+      "bevy_gltf",
+      "bevy_image",
+      "bevy_render"
+    ],
+    "exr": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "hdr": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "ktx2": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "zlib": [
+      "bevy_image"
+    ],
+    "zstd": [
+      "bevy_image"
+    ],
+    "bmp": [
+      "bevy_image"
+    ],
+    "ff": [
+      "bevy_image"
+    ],
+    "gif": [
+      "bevy_image"
+    ],
+    "ico": [
+      "bevy_image"
+    ],
+    "jpeg": [
+      "bevy_image"
+    ],
+    "png": [
+      "bevy_image"
+    ],
+    "pnm": [
+      "bevy_image"
+    ],
+    "qoi": [
+      "bevy_image"
+    ],
+    "tga": [
+      "bevy_image"
+    ],
+    "tiff": [
+      "bevy_image"
+    ],
+    "webp": [
+      "bevy_image"
+    ],
+    "spirv_shader_passthrough": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "tonemapping_luts": [
+      "bevy_core_pipeline",
+      "bevy_image"
+    ],
+    "smaa_luts": [
+      "bevy_core_pipeline",
+      "bevy_image"
+    ],
+    "flac": [
+      "bevy_audio"
+    ],
+    "mp3": [
+      "bevy_audio"
+    ],
+    "vorbis": [
+      "bevy_audio"
+    ],
+    "wav": [
+      "bevy_audio"
+    ],
+    "minimp3": [
+      "bevy_audio"
+    ],
+    "symphonia-aac": [
+      "bevy_audio"
+    ],
+    "symphonia-all": [
+      "bevy_audio"
+    ],
+    "symphonia-flac": [
+      "bevy_audio"
+    ],
+    "symphonia-isomp4": [
+      "bevy_audio"
+    ],
+    "symphonia-vorbis": [
+      "bevy_audio"
+    ],
+    "symphonia-wav": [
+      "bevy_audio"
+    ],
+    "shader_format_glsl": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "shader_format_spirv": [
+      "bevy_image",
+      "bevy_render"
+    ],
+    "serialize": [],
+    "multi_threaded": [],
+    "async-io": [],
+    "wayland": [
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_winit"
+    ],
+    "pbr_transmission_textures": [],
+    "pbr_multi_layer_material_textures": [],
+    "pbr_anisotropy_texture": [],
+    "experimental_pbr_pcss": [],
+    "webgl": [],
+    "webgpu": [],
+    "bevy_ci_testing": [
+      "bevy_dev_tools"
+    ],
+    "animation": [
+      "bevy_animation"
+    ],
+    "bevy_sprite": [
+      "bevy_image"
+    ],
+    "bevy_pbr": [
+      "bevy_image"
+    ],
+    "bevy_window": [
+      "bevy_a11y"
+    ],
+    "bevy_core_pipeline": [
+      "bevy_image"
+    ],
+    "bevy_gizmos": [
+      "bevy_image"
+    ],
+    "bevy_gltf": [
+      "bevy_image"
+    ],
+    "bevy_ui": [
+      "bevy_image"
+    ],
+    "bevy_image": [],
+    "dynamic_linking": [],
+    "android_shared_stdcxx": [
+      "bevy_audio"
+    ],
+    "accesskit_unix": [
+      "bevy_winit"
+    ],
+    "bevy_text": [
+      "bevy_image"
+    ],
+    "bevy_render": [
+      "bevy_image"
+    ],
+    "glam_assert": [],
+    "debug_glam_assert": [],
+    "default_font": [],
+    "asset_processor": [],
+    "file_watcher": [],
+    "embedded_watcher": [],
+    "bevy_debug_stepping": [],
+    "meshlet": [],
+    "meshlet_processor": [],
+    "bevy_dev_tools": [],
+    "bevy_remote": [],
+    "bevy_picking": [],
+    "bevy_mesh_picking_backend": [
+      "bevy_picking"
+    ],
+    "bevy_sprite_picking_backend": [
+      "bevy_image",
+      "bevy_picking",
+      "bevy_sprite"
+    ],
+    "bevy_ui_picking_backend": [
+      "bevy_image",
+      "bevy_picking",
+      "bevy_ui"
+    ],
+    "ios_simulator": [],
+    "bevy_state": [],
+    "track_change_detection": [],
+    "reflect_functions": [],
+    "custom_cursor": [
+      "bevy_winit"
+    ],
+    "ghost_nodes": [
+      "bevy_image",
+      "bevy_ui"
+    ],
+    "bevy_a11y": [],
+    "bevy_animation": [],
+    "bevy_asset": [],
+    "bevy_audio": [],
+    "bevy_color": [],
+    "bevy_gilrs": [],
+    "bevy_scene": [],
+    "bevy_winit": []
+  },
+  "profiles": {},
+  "default_features": [
+    "android-game-activity",
+    "android-game-activity",
+    "android_shared_stdcxx",
+    "animation",
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_gilrs",
+    "bevy_gizmos",
+    "bevy_gltf",
+    "bevy_mesh_picking_backend",
+    "bevy_pbr",
+    "bevy_picking",
+    "bevy_render",
+    "bevy_scene",
+    "bevy_sprite",
+    "bevy_sprite_picking_backend",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_picking_backend",
+    "bevy_window",
+    "bevy_winit",
+    "custom_cursor",
+    "default_font",
+    "hdr",
+    "multi_threaded",
+    "png",
+    "smaa_luts",
+    "sysinfo_plugin",
+    "tonemapping_luts",
+    "vorbis",
+    "webgl2",
+    "x11"
+  ],
+  "plugin_gates": [
+    {
+      "plugin": "WindowPlugin",
+      "requires_feature": "bevy_window"
+    },
+    {
+      "plugin": "AssetPlugin",
+      "requires_feature": "bevy_asset"
+    },
+    {
+      "plugin": "ScenePlugin",
+      "requires_feature": "bevy_scene"
+    },
+    {
+      "plugin": "WinitPlugin",
+      "requires_feature": "bevy_winit"
+    },
+    {
+      "plugin": "RenderPlugin",
+      "requires_feature": "bevy_render"
+    },
+    {
+      "plugin": "ImagePlugin",
+      "requires_feature": "bevy_render"
+    },
+    {
+      "plugin": "PipelinedRenderingPlugin",
+      "requires_feature": "bevy_render"
+    },
+    {
+      "plugin": "CorePipelinePlugin",
+      "requires_feature": "bevy_core_pipeline"
+    },
+    {
+      "plugin": "SpritePlugin",
+      "requires_feature": "bevy_sprite"
+    },
+    {
+      "plugin": "TextPlugin",
+      "requires_feature": "bevy_text"
+    },
+    {
+      "plugin": "UiPlugin",
+      "requires_feature": "bevy_ui"
+    },
+    {
+      "plugin": "PbrPlugin",
+      "requires_feature": "bevy_pbr"
+    },
+    {
+      "plugin": "GltfPlugin",
+      "requires_feature": "bevy_gltf"
+    },
+    {
+      "plugin": "AudioPlugin",
+      "requires_feature": "bevy_audio"
+    },
+    {
+      "plugin": "GilrsPlugin",
+      "requires_feature": "bevy_gilrs"
+    },
+    {
+      "plugin": "AnimationPlugin",
+      "requires_feature": "bevy_animation"
+    },
+    {
+      "plugin": "GizmoPlugin",
+      "requires_feature": "bevy_gizmos"
+    },
+    {
+      "plugin": "StatesPlugin",
+      "requires_feature": "bevy_state"
+    },
+    {
+      "plugin": "DevToolsPlugin",
+      "requires_feature": "bevy_dev_tools"
+    },
+    {
+      "plugin": "CiTestingPlugin",
+      "requires_feature": "bevy_ci_testing"
+    },
+    {
+      "plugin": "DefaultPickingPlugins",
+      "requires_feature": "bevy_picking"
+    },
+    {
+      "plugin": "CiTestingPlugin",
+      "requires_feature": "bevy_ci_testing"
+    }
+  ],
+  "panic_sites": {
+    "B0001": [
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 356
+      }
+    ],
+    "B0002": [
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 755
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 866
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 870
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1418
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1526
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1530
+      }
+    ]
+  }
+}
