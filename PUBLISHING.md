@@ -75,13 +75,31 @@ cache version alone does not establish that a bundle is complete.
    The script uses a partial sparse clone, so the ~270 MB of news media is never
    downloaded.
 
-3. **Tag and push**
+3. **Harvest the version metadata** (feature graph, default-plugin gates and
+   error-code guides). This is what `bevy_check_manifest`, `bevy_explain_error`
+   and `bevy_perf_advisor` read, and it includes implicit optional-dependency
+   features such as `bevy_audio`:
+   ```bash
+   node scripts/harvest-meta.mjs 0.21.0 --force
+   git add vendor/bevy-meta/0.21.0 && git commit -m "vendor: harvest bevy-meta 0.21.0"
+   ```
+   `vendor/bevy-meta/0.20.0/` is a golden fixture for the feature-graph tests, so
+   do not hand-edit the committed JSON.
+
+4. **Refresh the plugin compatibility snapshot** (when you want newer plugin
+   releases covered). Requires crates.io access:
+   ```bash
+   node scripts/harvest-compat.mjs
+   git add vendor/ecosystem/compat.json && git commit -m "vendor: refresh plugin compatibility"
+   ```
+
+5. **Tag and push**
    ```bash
    git tag v0.21.0
    git push origin main --tags
    ```
 
-4. **Done.** The `release` workflow then:
+6. **Done.** The `release` workflow then:
    - mirrors rustdoc from docs.rs,
    - sparse-clones the engine `examples/`,
    - builds the index,

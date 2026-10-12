@@ -43,11 +43,12 @@ SOFTWARE.
 
 ## Bevy metadata (`vendor/bevy-meta/`)
 
-The `features.json`, `meta.json`, `panic-sites.json`, and `error-codes/*.md`
-files under `vendor/bevy-meta/` are harvested from the Bevy engine repository
+The `features.json` and `meta.json` files, and the `error-codes/*.md` guides,
+under `vendor/bevy-meta/` are harvested from the Bevy engine repository
 (<https://github.com/bevyengine/bevy>) at exact git tags. They contain the cargo
-feature graph, default-plugin gates, and the official error-code explanations
-(B0001-B0006) that Bevy embeds in its own panic messages.
+feature graph, default-plugin gates, panic-site provenance, and the official
+error-code explanations (B0001-B0006) that Bevy embeds in its own panic
+messages.
 
 Bevy is dual-licensed under your choice of either:
 
@@ -58,6 +59,18 @@ Full license texts:
 
 - <https://github.com/bevyengine/bevy/blob/main/LICENSE-MIT>
 - <https://github.com/bevyengine/bevy/blob/main/LICENSE-APACHE>
+
+---
+
+## Plugin compatibility data (`vendor/ecosystem/compat.json`)
+
+`vendor/ecosystem/compat.json` records the `bevy`/`bevy_*` dependency
+requirements that plugin crates (`bevy_egui`, `bevy_rapier3d`,
+`leafwing_input_manager`) publish for each of their releases. It is factual
+registry metadata harvested from the public crates.io API by
+`scripts/harvest-compat.mts` - not a copy of any crate's source. crates.io is
+operated by the Rust project; the API is subject to its policies at
+<https://crates.io/policies>.
 
 ---
 

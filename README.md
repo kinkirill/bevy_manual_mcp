@@ -104,7 +104,7 @@ reserved for the protocol):
 ```bash
 node index.js
 # [bevy-mcp] config: loaded .../bevy-mcp.config.json
-# [bevy-mcp] version 0.20.0: loaded 249353 records in 10828ms
+# [bevy-mcp] version 0.20.0: loaded 252761 records in 15900ms
 # [bevy-mcp] ready - bevy-mcp 0.20.0, bevy 0.20.0
 ```
 
@@ -368,26 +368,55 @@ own `cargo doc`, adding engine examples, and what the build costs - see
 | Tool | Use it for |
 |---|---|
 | `bevy_api` | Exact symbol lookup → real signature, docs, and the documented `Default` value. **Start here for API questions.** |
-| `bevy_api_diff` | Compare a symbol across the versions you name - signature changed, or only its module? |
 | `bevy_search` | Hybrid search across API, book, migration guides, examples. Concepts and tasks. |
 | `bevy_examples` | Runnable example code for a concrete task (2d, ui, input, audio…), led by the example's `setup`/`main` body. |
+| `bevy_api_diff` | Compare a symbol across the versions you name - signature changed, or only its module? |
 | `bevy_migration` | Breaking changes between two versions. |
 | `bevy_check_version` | Is my index stale? Distinguishes patch from breaking releases. |
 | `bevy_indexed_versions` | Which versions can this server answer for? |
 | `bevy_index_status` | Self-diagnosis: what's indexed, which version, what's missing. |
+| `bevy_check_manifest` | Which Bevy features are on in *your* `Cargo.toml` (transitively), and whether a symbol, subcrate or plugin is available under them. |
+| `bevy_validate_systems` | Lint system signatures for Bevy's access-rule panics (B0001/B0002) *before* running - filter-aware, so B0001's own documented fix passes clean. |
+| `bevy_explain_error` | Paste a Bevy panic or warning → the cause and the worked fix, resolved against your pinned version. |
+| `bevy_generate_plugin` | Version-correct plugin scaffolds; every required symbol is verified against the index first. |
+| `bevy_perf_advisor` | Version-aware performance advice, and detection of anti-patterns such as `is_changed()`. |
+| `bevy_ecosystem_search` | Search indexed plugin corpora (`bevy_egui`, `bevy_rapier3d`, `leafwing_input_manager`), every result labelled with its crate. |
+| `bevy_ecosystem_compat` | Which plugin version goes with your Bevy - and which Bevy a plugin version needs. |
 
 Examples:
 
 ```
-bevy_api         { "symbol": "App::add_systems" }
-bevy_api         { "symbol": "Query" }
-bevy_api_diff    { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
-bevy_search      { "query": "system ordering", "limit": 5 }
-bevy_search      { "query": "spawn ui text", "kind": "code_example" }
-bevy_examples    { "task": "2d camera", "category": "2d" }
-bevy_migration   { "from_version": "0.19", "to_version": "0.20", "topic": "query" }
-bevy_check_version { }
+bevy_api             { "symbol": "App::add_systems" }
+bevy_api             { "symbol": "Query" }
+bevy_api_diff        { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
+bevy_search          { "query": "system ordering", "limit": 5 }
+bevy_search          { "query": "spawn ui text", "kind": "code_example" }
+bevy_examples        { "task": "2d camera", "category": "2d" }
+bevy_migration       { "from_version": "0.19", "to_version": "0.20", "topic": "query" }
+bevy_check_manifest  { "check": "bevy::ui::Node" }
+bevy_validate_systems{ "code": "fn f(a: Query<&mut Transform>, b: Query<&Transform>) {}" }
+bevy_explain_error   { "message": "error[B0002]: ResMut<Assets<StandardMaterial>> ..." }
+bevy_generate_plugin { "template": "plugin-skeleton" }
+bevy_perf_advisor    { "topic": "change-detection" }
+bevy_ecosystem_compat{ "crate": "bevy_egui" }
+bevy_check_version   { }
 ```
+
+`bevy_check_manifest` reads the project's own `Cargo.toml`, resolves the feature
+closure through the vendored metadata, and answers the question an agent
+actually has: *may I write `bevy::ui::Node` in this project?* It keeps "feature
+disabled" and "symbol does not exist here" distinct, because conflating them
+produces false alarms.
+
+`bevy_validate_systems` is a linter for Bevy's **access rules**, not a Rust type
+checker. It says so in its own output, and it checks each suggested fix against
+the pinned version's rustdoc rather than reciting a remembered signature.
+
+`bevy_ecosystem_compat` answers version compatibility from the vendored
+`vendor/ecosystem/compat.json` snapshot, so it works offline and never answers
+from a neighbouring Bevy version's index. `bevy_ecosystem_search` fans out over
+any plugin corpora registered with the server (plugin indexes are an opt-in
+layer; the Bevy index itself is always searched).
 
 ---
 
@@ -414,9 +443,15 @@ To keep the first run cheap, the pieces are distributed separately:
 
 | Piece | Where | Size |
 |---|---|---|
-| Server code + bundled Book/migration prose | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
+| Server code, vendored prose **and metadata** | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
 | Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~78 MB for 0.20.0 |
 | rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
+
+The repository also bundles the metadata the newer tools depend on: `vendor/bevy-meta/<version>/`
+(feature graph, default-plugin gates, error-code guides and panic-site
+provenance) and `vendor/ecosystem/compat.json` (plugin ↔ Bevy compatibility
+derived from crates.io). Both are small, versioned with the code, and make those
+tools work offline and reproducibly.
 
 The index holds API metadata, documentation strings, migration guides and
 examples - not engine source. Maintainers: see [PUBLISHING.md](PUBLISHING.md)
