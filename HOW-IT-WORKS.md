@@ -59,7 +59,12 @@ default-plugin gates, error-code guides and panic-site provenance live in
 into the ~78 MB index bundle, so they can be corrected or re-harvested without
 republishing every version. `bevy_check_manifest`, `bevy_explain_error` and
 `bevy_perf_advisor` read them directly, and `bevy_ecosystem_compat` answers
-from the vendored snapshot even offline.
+from the vendored snapshot even offline. Supplemental inputs are fingerprinted
+by file **content** rather than path or mtime, so a prebuilt bundle built on the
+maintainer's machine matches the same sources on a user's machine and the first
+load takes the fast path instead of rebuilding. (`sourceFingerprint` remains the
+path/mtime-sensitive check used for local `docDir` changes; the two serve
+different purposes.)
 
 **7. The system validator parses; it does not compile.** `bevy_validate_systems`
 splits a signature with a bracket-stack parser, extracts each parameter's access

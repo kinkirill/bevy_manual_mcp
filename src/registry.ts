@@ -87,6 +87,38 @@ export function sourceFingerprint(directories: (string | null)[]): string {
   return hash.digest("hex");
 }
 
+/**
+ * Content-addressed fingerprint: relative paths plus file bytes, independent of
+ * the directory's location and mtimes. Used for supplemental sources, so a
+ * bundle built on one machine matches the same content installed on another and
+ * a shipped index can skip its first-load rebuild.
+ */
+export function contentFingerprint(directories: (string | null)[]): string {
+  const hash = createHash("sha256");
+  for (const directory of directories) {
+    if (!directoryExists(directory)) { hash.update("missing\0"); continue; }
+    const files: string[] = [];
+    const visit = (current: string): void => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (entry.name === ".git" || entry.name === "target") continue;
+        const file = path.join(current, entry.name);
+        if (entry.isDirectory()) visit(file);
+        else if (entry.isFile()) files.push(path.relative(directory, file));
+      }
+    };
+    visit(directory);
+    // Sort so directory-listing order cannot change the hash.
+    files.sort();
+    for (const relative of files) {
+      hash.update(relative);
+      hash.update("\0");
+      hash.update(fs.readFileSync(path.join(directory, relative)));
+      hash.update("\0");
+    }
+  }
+  return hash.digest("hex");
+}
+
 function atomicWrite(file: string, value: unknown): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
@@ -375,7 +407,7 @@ export class VersionRegistry {
     const metaPath = path.join(dir, "meta.json");
     // Supplemental records (website, examples, error codes) are re-ingested on
     // every load, so their inputs must be part of the fingerprint.
-    const supplemental = sourceFingerprint([
+    const supplemental = contentFingerprint([
       cfg.websiteDir,
       cfg.examplesDir,
       ...this.errorCodeDirs(cfg.errorsDir, cfg.bevyVersion),

@@ -47,6 +47,17 @@ The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
 numeric revision from the release metadata; keep the canonical asset if older
 download URLs should continue working. Use `--revision 2` for the next rebuild.
 
+Republishing a revision is only worth it when it changes what a fresh install
+loads. Supplemental inputs (the vendored website, error codes and any examples)
+are fingerprinted by **content**, not by path or mtime, so a bundle built here
+matches the same sources on a user's machine and its first load takes the fast
+path. Republish a `+N` when you have refreshed `vendor/bevy-website`,
+`vendor/bevy-meta` or the error-code set; a code-only change needs no new
+bundle. Note that existing users on the current `CACHE_VERSION` are **not**
+re-downloaded automatically - only fresh installs and `fetch-index --force` pick
+up a newer revision. Bump `CACHE_VERSION` only when the record schema or
+required bundle content actually changed.
+
 Bump `CACHE_VERSION` in `src/store.ts` when the record schema or required
 content changes. `fetch-index` replaces stale or unknown installed cache formats
 automatically; `--no-recheck` keeps an unknown local format. To refresh an
