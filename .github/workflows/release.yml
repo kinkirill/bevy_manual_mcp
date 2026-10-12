@@ -73,12 +73,33 @@ jobs:
             dist/index-manifest.json
           name: "Bevy ${{ env.VERSION }} index"
           body: |
-            Prebuilt Bevy ${{ env.VERSION }} search index for bevy-mcp.
+            Prebuilt Bevy ${{ env.VERSION }} index for bevy-mcp.
 
-            Install it with:
+            ## Install / download
+
             ```
             npx --allow-git=all github:kinkirill/bevy_manual_mcp fetch-index ${{ env.VERSION }}
             ```
+
+            Downloads the prebuilt index; the current revision and SHA-256 are recorded in `index-manifest.json`. Re-running the command updates it when a newer revision is published.
+
+            ## Use
+
+            Register the server with your MCP client:
+
+            ```json
+            {
+              "mcpServers": {
+                "bevy": {
+                  "command": "npx",
+                  "args": ["-y", "--allow-git=all", "github:kinkirill/bevy_manual_mcp"],
+                  "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
+                }
+              }
+            }
+            ```
+
+            Full setup: https://github.com/kinkirill/bevy_manual_mcp#registering-with-an-mcp-client
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
