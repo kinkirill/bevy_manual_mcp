@@ -6,6 +6,8 @@ import { loadVendoredCompatAll, satisfiesRequirement } from "../analysis/compat.
 
 export interface CompatToolContext {
   config: ReturnType<typeof resolveConfig>;
+  /** Test seam: an alternate compat snapshot; defaults to the vendored file. */
+  compatPath?: string | null;
 }
 
 export function register(server: McpServer, ctx: CompatToolContext): void {
@@ -27,7 +29,7 @@ export function register(server: McpServer, ctx: CompatToolContext): void {
       const bevyVersion = config.bevyVersion;
       let output = "## Plugin Compatibility\n\n";
 
-      const vendored = loadVendoredCompatAll();
+      const vendored = loadVendoredCompatAll(ctx.compatPath);
 
       if (crate) {
         const entries = vendored[crate];

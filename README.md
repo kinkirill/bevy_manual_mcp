@@ -529,5 +529,7 @@ installed version - are covered in **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
 | [GETTING-API-DOCS.md](GETTING-API-DOCS.md) | Installing a prebuilt index, mirroring docs.rs, `cargo doc`, build cost. |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | What to do when something is empty, stale, ambiguous or missing. |
 | [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | Ranking and design decisions, repository layout, running the tests. |
+| [docs/tool-contracts.md](docs/tool-contracts.md) | Every registered tool's data path, failure states, fixtures and known discrepancies. |
+| [docs/performance-baseline.md](docs/performance-baseline.md) | Recorded startup and search timings, and how to reproduce them. |
 | [PUBLISHING.md](PUBLISHING.md) | Maintainer checklist for a new Bevy minor. |
 | [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Licences of the bundled and derived content. |

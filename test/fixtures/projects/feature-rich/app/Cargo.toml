@@ -1,0 +1,17 @@
+# Phase 0 fixture: a workspace member using every declaration form.
+#
+# - `workspace = true` inherits the version and `bevy_ui` from the root and adds
+#   `bevy_pbr` locally.
+# - `alias_bevy` is the same crate under a different dependency name.
+# - the target table applies only on wasm32.
+[package]
+name = "feature-rich-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true, features = ["bevy_pbr"] }
+alias_bevy = { package = "bevy", version = "0.20.0", features = ["bevy_audio"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.20.0", features = ["webgl2"] }

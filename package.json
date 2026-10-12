@@ -44,7 +44,8 @@
     "test": "npm run build && node build/test/index.mjs",
     "test:unit": "npm run build && node build/test/run-tests.mjs",
     "test:corpus": "npm run build && node build/test/corpus-questions.mjs",
-    "test:package": "npm run build && node build/scripts/package-smoke.mjs"
+    "test:package": "npm run build && node build/scripts/package-smoke.mjs",
+    "bench": "node scripts/benchmark.mjs"
   },
   "keywords": [
     "mcp",

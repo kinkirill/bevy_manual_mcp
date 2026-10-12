@@ -1,0 +1,28 @@
+{
+  "edge_plugin": [
+    {
+      "plugin": "edge_plugin",
+      "plugin_version": "1.0.0",
+      "requires_bevy": ">=0.20.0"
+    }
+  ],
+  "zero_plugin": [
+    {
+      "plugin": "zero_plugin",
+      "plugin_version": "0.1.0",
+      "requires_bevy": "^0.0.3"
+    }
+  ],
+  "historical_plugin": [
+    {
+      "plugin": "historical_plugin",
+      "plugin_version": "9.0.0",
+      "requires_bevy": "^0.20.0"
+    },
+    {
+      "plugin": "historical_plugin",
+      "plugin_version": "1.0.0",
+      "requires_bevy": "^0.10.0"
+    }
+  ]
+}
