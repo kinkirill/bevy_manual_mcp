@@ -16,6 +16,9 @@ import { register as manifest } from "./manifest.js";
 import { register as validateSystems } from "./validate_systems.js";
 // Phase 1.3 — bevy_explain_error
 import { register as explainError } from "./explain_error.js";
+// Phase 2.2 — bevy_ecosystem_search + bevy_ecosystem_compat
+import { register as ecosystemSearch } from "./ecosystem_search.js";
+import { register as ecosystemCompat } from "./ecosystem_compat.js";
 // Phase 3.1 — bevy_generate_plugin
 import { register as generatePlugin } from "./generate_plugin.js";
 // Phase 3.2 — bevy_perf_advisor
@@ -33,6 +36,8 @@ export {
   manifest,
   validateSystems,
   explainError,
+  ecosystemSearch,
+  ecosystemCompat,
   generatePlugin,
   perfAdvisor,
 };
@@ -49,6 +54,8 @@ export function registerAll(server: McpServer, ctx: ToolContext): void {
   manifest(server, ctx);
   validateSystems(server, ctx);
   explainError(server, ctx);
+  ecosystemSearch(server, { config: ctx.config as unknown as Record<string, unknown>, pluginIndices: undefined });
+  ecosystemCompat(server, { config: ctx.config });
   generatePlugin(server, ctx);
   perfAdvisor(server, ctx);
 }
