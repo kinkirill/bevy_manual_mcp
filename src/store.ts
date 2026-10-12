@@ -126,7 +126,12 @@ function queryFocus(query: string): QueryFocus {
 }
 
 function nameTerms(name: string): string[] {
-  return baseName(name).replace(/([A-Z])([A-Z][a-z])/g, "$1 $2").replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  return splitNameTokens(baseName(name));
+}
+
+/** Split an already base-named symbol into normalised camelCase search tokens. */
+function splitNameTokens(base: string): string[] {
+  return base.replace(/([A-Z])([A-Z][a-z])/g, "$1 $2").replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([a-zA-Z])([0-9])/g, "$1 $2")
     .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(singularTerm);
 }
@@ -506,6 +511,16 @@ export class BevyIndex {
    */
   buildSymbolTable() {
     const symbols = (this.symbols = new Map<string, string[]>());
+    // Build the subject-name token index in the same pass so the first search
+    // never pays for it. Rebuilt whenever the symbol table is rebuilt.
+    this.nameTokens = null;
+    const nameTokens = new Map<string, string[]>();
+    const addToken = (term: string, id: string) => {
+      if (!term) return;
+      const ids = nameTokens.get(term);
+      if (!ids) nameTokens.set(term, [id]);
+      else if (ids.length < 1000) ids.push(id);
+    };
     // Repeated crate and leaf spellings are normalized once, not per record.
     const crateKeys = new Map<string | null, string>();
     const leafKeys = new Map<string, string>();
@@ -534,6 +549,12 @@ export class BevyIndex {
       if (leaf === undefined) leafKeys.set(rawLeaf, (leaf = normKey(rawLeaf)));
       const owner = r.owner ? baseName(r.owner) : "";
 
+      // Subject-name tokens: fields are excluded from full-text search too.
+      if (r.kind !== "field") {
+        for (const term of splitNameTokens(rawLeaf)) addToken(term, r.id);
+        if (owner) for (const term of splitNameTokens(owner)) addToken(term, r.id);
+      }
+
       // Register only verified aliases so arbitrary owner qualifications cannot collapse.
       pushPath(r.full_path, crate);
       if (owner) pushKey(normKey(`${owner}::${leaf}`));
@@ -552,6 +573,7 @@ export class BevyIndex {
       }
     }
 
+    this.nameTokens = nameTokens;
     return symbols.size;
   }
 
@@ -603,9 +625,8 @@ export class BevyIndex {
   }
 
   /**
-   * Map camelCase name/owner tokens to record ids. Built once, on the first
-   * conceptual search, so `hybridSearch` stops re-scanning the whole corpus and
-   * re-tokenizing every name for each query.
+   * Map camelCase name/owner tokens to record ids. Built eagerly by
+   * `buildSymbolTable`; the lazy path covers indexes constructed without it.
    */
   nameTokenLookup(): Map<string, string[]> {
     if (this.nameTokens) return this.nameTokens;
