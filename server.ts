@@ -8,10 +8,8 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { z } from "zod";
 
 import { resolveConfig, log, PACKAGE_ROOT } from "./src/config.js";
-import { BevyIndex } from "./src/store.js";
 import { VersionRegistry } from "./src/registry.js";
 import { createResources } from "./src/resources_impl.js";
-import { apiUri } from "./src/resources.js";
 import { createVersionChecker } from "./src/versions.js";
 import { errorMessage } from "./src/types.js";
 import { registerAll } from "./src/tools/index.js";

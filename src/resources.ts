@@ -93,8 +93,7 @@ export function parseUri(uri: unknown): ResourceQuery | null {
  * Templates let clients discover resources without enumerating the entire
  * corpus in resources/list.
  */
-export function templates(activeVersion: string | null) {
-  const v = encodeURIComponent(activeVersion || "unknown");
+export function templates() {
   return [
     {
       uriTemplate: `${SCHEME}://api/{version}/{path}`,
@@ -146,5 +145,3 @@ export function templates(activeVersion: string | null) {
     },
   ];
 }
-
-export const _internal = { parseUri, isBevyUri, SCHEME, defaultVersionRef: "unknown" };

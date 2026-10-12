@@ -3,8 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { parseJson, type ResolvedConfig } from "../types.js";
-import { loadFeatures, type FeaturesData } from "../analysis/features.js";
+import type { ResolvedConfig } from "../types.js";
+import { loadFeatures } from "../analysis/features.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 
 /** Extract error codes and dynamic parts from a panic/warning message. */
@@ -109,7 +109,6 @@ export function register(server: McpServer, ctx: ToolContext): void {
       const res: VersionResolution = await resolveVersion();
       if (!res.known) return unavailableVersion(config.bevyVersion!);
 
-      // Extract error parts from the message
       const extracted = extractErrorParts(message);
 
       let output = "## Error Explanation\n\n";

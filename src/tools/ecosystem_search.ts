@@ -30,7 +30,6 @@ export function register(server: McpServer, ctx: EcosystemToolContext): void {
 
       const pluginIndices = ctx.pluginIndices || new Map();
 
-      // Build search results.
       const results: Array<{ corpusId: string; hits: ReturnType<typeof hybridSearch> }> = [];
 
       if (crate) {
@@ -50,7 +49,6 @@ export function register(server: McpServer, ctx: EcosystemToolContext): void {
         }
       }
 
-      // Format output.
       for (const result of results) {
         output += `### Corpus: \`${result.corpusId}\`\n\n`;
 

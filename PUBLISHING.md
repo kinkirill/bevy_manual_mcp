@@ -50,8 +50,10 @@ bundle, its revision and its SHA-256) and strips any download provenance from
 attaches it.
 
 The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
-numeric revision from the release metadata; keep the canonical asset if older
-download URLs should continue working. Use `--revision 2` for the next rebuild.
+numeric revision from the manifest. Publish only the current revision and its
+manifest, and delete superseded assets - one bundle per release keeps the
+release page and the digest unambiguous. Use `--revision 3` for the next
+rebuild.
 
 Republishing a revision is only worth it when it changes what a fresh install
 loads. Supplemental inputs (the vendored website, error codes and any examples)

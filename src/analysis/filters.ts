@@ -106,11 +106,6 @@ function entities(atoms: FilterAtom[], type: "With" | "Without"): Set<string> {
   return set;
 }
 
-/** Check two filter sets for disjointness. */
-export function isDisjoint(fromA: FilterAtom[], fromB: FilterAtom[]): boolean {
-  return disjoint(fromA, fromB);
-}
-
 /** Check whether two raw filter lists provide disjointness for the same entity. */
 export function checkFilterDisjointness(filtersA: string[], filtersB: string[]): boolean {
   return disjoint(parseFilters(filtersA), parseFilters(filtersB));

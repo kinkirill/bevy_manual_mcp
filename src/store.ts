@@ -261,14 +261,8 @@ function recordWeight(r: WeightedRecord) {
   return SOURCE_WEIGHT[r.source ?? ""] ?? 0.4;
 }
 
-// Share indexing weights and eligibility rules with the registry.
-export {
-  recordWeight as recordWeightOf,
-  KIND_WEIGHT,
-  SOURCE_WEIGHT,
-  isSearchable,
-  DEP_CRATES,
-};
+// Share the weighted-record helper with the registry.
+export { recordWeight as recordWeightOf };
 
 /** Scope API and example identities by Bevy version; website identities are shared. */
 function isVersionSpecificSource(source: BevyRecord["source"]) {
@@ -404,22 +398,6 @@ export class BevyIndex {
     }
   }
 
-  /** Append rustdoc records and update an existing text index without rebuilding it. */
-  async addRustdocAsync(docDir: string, version: string) {
-    const records = ingestRustdoc(docDir, version).filter(
-      (r) => recordWeight(r) > 0,
-    );
-    this.addRecords(records);
-    // Add synchronously one payload at a time to avoid duplicating the corpus in memory.
-    if (this.text) {
-      for (const r of records) {
-        if (!this._isIndexed(r)) continue;
-        if (r.id) this.text.add(this._flexPayload({ ...r, id: r.id }));
-      }
-    }
-    return records.length;
-  }
-
   /** Map weighted FlexSearch hits to records; relaxed mode drops stopwords and enables suggestions. */
   _searchText(query: string, { limit, allowedIds, relaxed = false, base = 100 }: {
     limit: number; allowedIds: Set<string> | null; relaxed?: boolean; base?: number;
@@ -451,11 +429,6 @@ export class BevyIndex {
       }
     }
     return out;
-  }
-
-  /** Search only within a set of ids (used to isolate one version's items). */
-  searchTextScoped(query: string, { limit = 20, allowedIds = null }: { limit?: number; allowedIds?: Set<string> | null } = {}) {
-    return this.searchText(query, { limit, allowedIds });
   }
 
   /** Exclude repetitive fields from full text; exact lookup and owner resources still expose them. */

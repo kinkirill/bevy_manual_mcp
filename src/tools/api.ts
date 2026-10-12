@@ -4,11 +4,10 @@ import { z } from "zod";
 import { hybridSearch } from "../store.js";
 import { formatRecord, toStructured } from "../format.js";
 import type { BevyRecord } from "../types.js";
-import { errorMessage } from "../types.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 
 export function register(server: McpServer, ctx: ToolContext): void {
-  const { config, index, resolveVersion, unavailableVersion } = ctx;
+  const { config, resolveVersion, unavailableVersion } = ctx;
 
   server.registerTool(
     "bevy_api",

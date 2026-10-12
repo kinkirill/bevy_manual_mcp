@@ -46,7 +46,6 @@ export function subcrateOf(modulePath: string): string | null {
   return match ? `bevy_${match[1]}` : null;
 }
 
-/** Given a symbol path like "bevy::ui::Node", resolve which feature gates it. */
 /** Find the feature that gates a subcrate's plugin. */
 export function findGatingFeatureForCheck(
   subcrate: string,
@@ -68,50 +67,4 @@ export function findGatingFeatureForCheck(
   }
 
   return undefined;
-}
-
-/** Given a symbol path like "bevy::ui::Node", resolve which feature gates it. */
-export function symbolToFeature(
-  symbolPath: string,
-  featuresData: FeaturesData | null,
-): { available: boolean; reason?: string; gating_feature?: string } {
-  // First check if the symbol exists in our known modules
-  const subcrate = subcrateOf(symbolPath);
-
-  if (subcrate) {
-    // For plugin crates, we need to know which feature gates them
-    const gatingFeature = findGatingFeature(subcrate, featuresData);
-    if (!gatingFeature) {
-      return { available: false, reason: `unknown subcrate for "${symbolPath}"` };
-    }
-    return {
-      available: true,
-      gating_feature: gatingFeature,
-    };
-  }
-
-  // For core bevy symbols, check if they exist in the index
-  // This is a conservative check - we can verify later against the actual index
-  return { available: true };
-}
-
-/** Find which feature gates a subcrate's plugin. */
-function findGatingFeature(subcrate: string, featuresData: FeaturesData | null): string | null {
-  if (!featuresData?.plugin_gates) return null;
-
-  for (const gate of featuresData.plugin_gates) {
-    // Match crate name to feature name (e.g., bevy_ui → bevy_ui feature)
-    const expectedFeature = subcrate.startsWith("bevy_") ? subcrate : `bevy_${subcrate}`;
-    if (gate.requires_feature === expectedFeature || gate.plugin.includes(subcrate)) {
-      return gate.requires_feature;
-    }
-  }
-
-  // Fallback: assume feature name matches crate name pattern
-  const featureName = subcrate.startsWith("bevy_") ? subcrate : `bevy_${subcrate}`;
-  if (featuresData.features[featureName]) {
-    return featureName;
-  }
-
-  return null;
 }

@@ -18,7 +18,6 @@ import { createVersioning } from "../src/tools/versioning.js";
 import { createVersionChecker } from "../src/versions.js";
 import { registerAll } from "../src/tools/index.js";
 import { register as registerEcosystemSearch } from "../src/tools/ecosystem_search.js";
-import { register as registerManifest } from "../src/tools/manifest.js";
 import { register as registerGeneratePlugin } from "../src/tools/generate_plugin.js";
 import { register as registerCheckVersion } from "../src/tools/check_version.js";
 import type { ToolContext } from "../src/tools/types.js";

@@ -7,7 +7,7 @@ import type { BevyRecord, SearchHit } from "../types.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 
 export function register(server: McpServer, ctx: ToolContext): void {
-  const { config, registry, index, resolveVersion, indexedVersions, unavailableVersion } = ctx;
+  const { registry, resolveVersion, indexedVersions, unavailableVersion } = ctx;
   const cmpVersionForOrder = cmpVersion;
 
   server.registerTool(

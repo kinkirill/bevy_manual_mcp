@@ -353,7 +353,7 @@ That downloads the prebuilt index (~78 MB) and unpacks it into `data/`. Indexes
 are published for Bevy **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
 
 The downloader selects the highest numbered asset revision, such as
-`bevy-index-0.20.0+1.tar.gz`, from release `v0.20.0` and checks its advertised
+`bevy-index-0.20.0+2.tar.gz`, from release `v0.20.0` and checks its advertised
 SHA-256. Each release also carries a small `index-manifest.json` naming the
 current bundle and its digest, so simply re-running `bevy-mcp fetch-index 0.20.0`
 tells you whether a newer revision exists and downloads only when there is one -

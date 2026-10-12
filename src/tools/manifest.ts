@@ -4,8 +4,8 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isObject, type ResolvedConfig } from "../types.js";
-import { loadFeatures, subcrateOf, type FeaturesData } from "../analysis/features.js";
+import { isObject } from "../types.js";
+import { loadFeatures, subcrateOf, findGatingFeatureForCheck, type FeaturesData } from "../analysis/features.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 
 /** Parse a Cargo.toml and extract enabled Bevy features. */
@@ -107,9 +107,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
     async ({ check }) => {
       const res: VersionResolution = await resolveVersion();
       if (!res.known) return unavailableVersion(config.bevyVersion!);
-      const idx = res.index;
 
-      // Load feature data from vendored metadata
       const featuresData = loadFeatures(config, config.bevyVersion!);
       if (!featuresData) {
         return {
@@ -177,7 +175,7 @@ export function register(server: McpServer, ctx: ToolContext): void {
       }
 
       // Single check mode
-      const verdict = checkFeature(check, featuresData, manifestResult?.explicit ?? [], transitive);
+      const verdict = checkFeature(check, featuresData, transitive);
 
       return {
         content: [{ type: "text", text: `## Check: \`${check}\`\n\n${verdict.text}` }],
@@ -197,7 +195,6 @@ export function register(server: McpServer, ctx: ToolContext): void {
 function checkFeature(
   query: string,
   featuresData: FeaturesData | null,
-  explicit: string[],
   transitive: string[],
 ): { available: boolean; reason?: string; gating_feature?: string; text: string } {
 
@@ -272,24 +269,4 @@ function checkFeature(
     reason: `"${query}" is not a known feature or module in Bevy ${featuresData?.bevy_version ?? "unknown"}`,
     text: `✗ \`${query}\` — unknown query (not a recognized feature, subcrate, or plugin)`,
   };
-}
-
-/** Helper to find the gating feature for a subcrate check. */
-function findGatingFeatureForCheck(subcrate: string, featuresData: FeaturesData | null): string | undefined {
-  const expectedFeature = subcrate.startsWith("bevy_") ? subcrate : `bevy_${subcrate}`;
-
-  if (featuresData?.plugin_gates) {
-    for (const gate of featuresData.plugin_gates) {
-      if (gate.requires_feature === expectedFeature || gate.plugin.includes(subcrate)) {
-        return gate.requires_feature;
-      }
-    }
-  }
-
-  // Fallback: assume feature name matches crate name pattern
-  if (featuresData?.features && Object.prototype.hasOwnProperty.call(featuresData.features, expectedFeature)) {
-    return expectedFeature;
-  }
-
-  return undefined;
 }

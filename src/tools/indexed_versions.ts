@@ -1,6 +1,5 @@
 /** `bevy_indexed_versions` tool. */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { bumpBetween } from "../store.js";
 import type { ToolContext } from "./types.js";
 

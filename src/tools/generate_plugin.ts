@@ -1,7 +1,7 @@
 /** `bevy_generate_plugin` tool — version-correct plugin generation scaffolds. */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { hybridSearch, type BevyIndex } from "../store.js";
+import type { BevyIndex } from "../store.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 
 /** Template definitions for plugin generation. */
@@ -123,7 +123,6 @@ export function register(server: McpServer, ctx: ToolContext): void {
       if (!res.known) return unavailableVersion(config.bevyVersion!);
       const idx = res.index;
 
-      // Get templates and find the requested one
       const templates = getTemplates();
       const selectedTemplate = templates.find((t) => t.id === template);
 
@@ -134,7 +133,6 @@ export function register(server: McpServer, ctx: ToolContext): void {
         };
       }
 
-      // Verify all required symbols exist in this version's index
       if (selectedTemplate.verify) {
         const allExist = verifySymbols(idx, selectedTemplate.verify);
         if (!allExist) {
@@ -145,7 +143,6 @@ export function register(server: McpServer, ctx: ToolContext): void {
         }
       }
 
-      // Fill template with params (or use defaults)
       const code = fillTemplate(selectedTemplate, params ?? {});
 
       return {

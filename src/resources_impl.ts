@@ -5,10 +5,8 @@ import {
   isBevyUri,
   apiUri,
   kindUri,
-  moduleUri,
   crateUri,
   ownerUri,
-  fileUri,
   indexUri,
   templates,
 } from "./resources.js";
@@ -204,5 +202,5 @@ export function createResources({ resolveVersion, activeVersion, versions }: Res
     return [...new Set(candidates)].filter((candidate) => candidate.toLowerCase().startsWith(v.toLowerCase())).sort();
   }
 
-  return { read, complete, templates: () => templates(activeVersion), indexUri };
+  return { read, complete, templates, indexUri };
 }

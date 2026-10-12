@@ -203,10 +203,6 @@ async function main() {
   const panicSites: Record<string, Array<{ file: string; line: number }>> = {};
   const ecsSrc = await fetchText(`${RAW}/${tag}/crates/bevy_ecs/src/system/system_param.rs`);
   if (ecsSrc) {
-    const re = /(error|warning)\[(B\d{4})\]/g;
-    let m: RegExpExecArray | null;
-    let line = 1;
-    let lastIdx = 0;
     const lines = ecsSrc.split("\n");
     for (let i = 0; i < lines.length; i++) {
       if (/(error|warning)\[(B\d{4})\]/.test(lines[i]!)) {

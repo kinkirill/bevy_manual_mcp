@@ -91,11 +91,10 @@ export function register(server: McpServer, ctx: ToolContext): void {
           .describe("Extra known-enabled features for context."),
       },
     },
-    async ({ code, context }) => {
+    async ({ code }) => {
       const res: VersionResolution = await resolveVersion();
       if (!res.known) return unavailableVersion(config.bevyVersion!);
 
-      // Extract fn items from the code block
       const fnItems = extractFnItems(code);
       if (fnItems.length === 0) {
         return {

@@ -3,8 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { analyzeSystem, classifyParam, type ParamKind } from "../analysis/rust-fn.js";
-import { loadFeatures, type FeaturesData } from "../analysis/features.js";
 import type { ResolvedConfig } from "../types.js";
 import type { ToolContext, VersionResolution } from "./types.js";
 

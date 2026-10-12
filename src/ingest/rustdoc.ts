@@ -21,23 +21,6 @@ const DEP_CRATES = new Set(["glam", "bevy_reflect", "bevy_math"]);
 const ITEM_SECTION_RE =
   /^(method|tymethod|structmethod|structassocfn|associatedconstant|associatedtype|structassociatedconstant|structassociatedtype|tyassociatedconst|tyassociatedtype|assocconst|variant)\./;
 
-const TOP_LEVEL_KINDS = [
-  "struct",
-  "enum",
-  "trait",
-  "fn",
-  "macro",
-  "type",
-  "constant",
-  "union",
-  "primitive",
-  "derive",
-  "extern",
-  "attr",
-  "keyword",
-  "module",
-];
-
 function normalizeSpace(s: string | null | undefined) {
   return (s ?? "").replace(/\s+/g, " ").trim();
 }
@@ -138,7 +121,7 @@ function fieldFromSpan($: CheerioAPI, el: AnyNode, { crate, module, relFile, own
 }
 
 /** Identify the defining crate from its source URL, including facade re-exports. */
-function depCrateOfPage($: CheerioAPI | null, srcLink: string | null) {
+function depCrateOfPage(_$: CheerioAPI | null, srcLink: string | null) {
   const ref = String(srcLink || "");
   if (ref.includes("rust-lang.org")) return "std";
   const m = ref.match(/docs\.rs\/([a-z0-9_]+)\//);

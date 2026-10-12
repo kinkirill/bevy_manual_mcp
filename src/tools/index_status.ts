@@ -1,6 +1,5 @@
 /** `bevy_index_status` tool. */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { formatStatus } from "../format.js";
 import type { ToolContext } from "./types.js";
 

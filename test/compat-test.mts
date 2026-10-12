@@ -5,7 +5,6 @@ import { test } from "node:test";
 import {
   buildCompatMatrix,
   loadVendoredCompat,
-  loadVendoredCompatAll,
   parseCaretRange,
   satisfiesRange,
   satisfiesRequirement,
@@ -39,7 +38,6 @@ test("an exact requirement is inclusive, unlike a caret range", () => {
 
 test("the vendored snapshot covers every indexed plugin crate", () => {
   assert.ok(fs.existsSync(vendoredCompatPath()), "vendor/ecosystem/compat.json is missing");
-  const all = loadVendoredCompatAll();
   for (const crate of ["bevy_egui", "bevy_rapier3d", "leafwing_input_manager"]) {
     const entries = loadVendoredCompat(crate);
     assert.ok(entries.length > 0, `no compat entries for ${crate}`);

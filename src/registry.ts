@@ -11,7 +11,7 @@ import { ingestWebsite } from "./ingest/markdown.js";
 import { ingestExamples } from "./ingest/examples.js";
 import { detectDocVersion, log } from "./config.js";
 import { errorMessage, isObject, parseJson, parseMetadata, parseRecord,
-  type BevyRecord, type IndexConfig, type IndexMetadata, type RustdocRecord, type WebsiteRecord } from "./types.js";
+  type BevyRecord, type IndexConfig, type RustdocRecord, type WebsiteRecord } from "./types.js";
 
 export async function writeNdjson(filePath: string, iterable: Iterable<BevyRecord> | AsyncIterable<BevyRecord>): Promise<number> {
   let count = 0;
