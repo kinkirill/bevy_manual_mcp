@@ -194,6 +194,7 @@ const SOURCE_WEIGHT: Record<string, number> = {
   "bevy-examples": 0.9,
   "learn-examples": 0.85,
   website: 1.0,
+  "bevy-meta": 1.0,
 };
 
 const KIND_WEIGHT: Record<string, number> = {

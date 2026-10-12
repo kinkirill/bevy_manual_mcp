@@ -30,6 +30,8 @@ export function register(server: McpServer, ctx: ToolContext): void {
         doc_dir: config.docDir,
         website_dir: config.websiteDir,
         examples_dir: config.examplesDir,
+        meta_dir: config.metaDir,
+        errors_dir: config.errorsDir,
         stats: index.stats,
         symbols: index.meta?.symbols,
         built_at: index.meta?.built_at,

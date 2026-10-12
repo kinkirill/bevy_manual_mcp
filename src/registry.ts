@@ -288,7 +288,8 @@ export class VersionRegistry {
     const source = this.sources.get(version);
     return { ...this.config, bevyVersion: version === "unversioned" ? null : version,
       versionSource: version === this.config.bevyVersion ? this.config.versionSource : "version registry",
-      docDir: source?.docDir ?? null, examplesDir: source?.examplesDir ?? null };
+      docDir: source?.docDir ?? null, examplesDir: source?.examplesDir ?? null,
+      errorsDir: this.config.errorsDir, metaDir: this.config.metaDir };
   }
   private checkProvenance(version: string, docDir: string | null): void {
     const detected = detectDocVersion(docDir);
@@ -303,10 +304,40 @@ export class VersionRegistry {
     this.shared = { fingerprint, records };
     return records;
   }
+  ingestErrorCodes({ errorsDir, bevyVersion }: { errorsDir: string | null; bevyVersion: string | null }): BevyRecord[] {
+    const dirs = [errorsDir, this.config.metaDir].filter((d): d is string => !!d);
+    for (const dir of dirs) {
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(dir).filter((f) => /^B\d{4}\.md$/.test(f)).sort();
+      } catch { continue; }
+      if (!entries.length) continue;
+      return entries.map((f) => {
+        const name = f.replace(/\.md$/, "");
+        return {
+          source: "bevy-meta",
+          kind: "error_code",
+          name,
+          full_path: `bevy::errors::${name}`,
+          docs: fs.readFileSync(path.join(dir, f), "utf8"),
+          signature: "",
+          module: "bevy::errors",
+          file: `errors/${f}`,
+          owner: null,
+          crate: null,
+          source_ref: null,
+          bevy_version: bevyVersion,
+          title: `Error ${name}`,
+        };
+      });
+    }
+    return [];
+  }
   private supplement(index: BevyIndex, cfg: IndexConfig): void {
     // Each version needs its own provenance and IDs.
     index.addRecords(this.sharedWebsite().map((record) => ({ ...record, bevy_version: cfg.bevyVersion })));
     index.addRecords(ingestExamples({ examplesDir: cfg.examplesDir, websiteDir: cfg.websiteDir, bevyVersion: cfg.bevyVersion }));
+    index.addRecords(this.ingestErrorCodes({ errorsDir: cfg.errorsDir, bevyVersion: cfg.bevyVersion }));
   }
   *versionedRustdoc(docDir: string, version: string): Generator<RustdocRecord> {
     for (const record of streamRustdoc(docDir, version)) {
@@ -480,6 +511,94 @@ export class VersionRegistry {
     this.writeRegistry();
     this.removeDirectory(this.dirFor(version));
   }
+}
+
+/**
+ * CorpusRegistry — widens the registry from single-version to multi-crate.
+ *
+ * For `bevy@<v>` corpora, delegates to VersionRegistry (existing data lives at
+ * `data/versions/<v>/` and is loaded identically).
+ *
+ * Plugin corpora live at `data/corpora/<crate>-<version>/` with their own
+ * registry.json. Each corpus has its own index cache and metadata.
+ */
+export class CorpusRegistry {
+  readonly root: string;
+  readonly bevyRegistry: VersionRegistry;
+  /** Plugin corpora keyed by "crate@version". */
+  readonly pluginIndices = new Map<string, BevyIndex>();
+  readonly config: IndexConfig;
+
+  constructor(config: IndexConfig) {
+    this.root = path.join(config.dataDir, "corpora");
+    this.config = config;
+    // Create the version registry for bevy (delegates to existing logic).
+    this.bevyRegistry = new VersionRegistry({
+      ...config,
+      docDir: config.docDir ?? null,
+      examplesDir: config.examplesDir ?? null,
+    });
+  }
+
+  /** Return all corpus IDs — bevy versions + plugin corpora. */
+  listCorpora(): string[] {
+    const bevyIds = this.bevyRegistry.versions().map((v) => `bevy@${v}`);
+    const pluginIds = [...this.pluginIndices.keys()];
+    return [...new Set([...bevyIds, ...pluginIds])].sort();
+  }
+
+  /** Get a corpus index by ID (e.g. "bevy@0.20.0" or "bevy_egui@0.43.1"). */
+  async get(corpusId: string, { force = false }: { force?: boolean } = {}): Promise<BevyIndex> {
+    // Check if this is a bevy corpus
+    const bevyMatch = /^bevy@(.+)$/.exec(corpusId);
+    if (bevyMatch && bevyMatch[1]) {
+      return this.bevyRegistry.get(bevyMatch[1], { force });
+    }
+
+    // Otherwise treat as plugin: "crate@version"
+    const pluginIdx = this.pluginIndices.get(corpusId);
+    if (pluginIdx && !force) return pluginIdx;
+
+    throw new Error(`Unknown corpus: ${corpusId}`);
+  }
+
+  /** Register a plugin corpus source. */
+  registerPlugin(crateName: string, docDir: string, version: string): void {
+    const corpusId = `${crateName}@${version}`;
+    if (this.pluginIndices.has(corpusId)) throw new Error(`Corpus already registered: ${corpusId}`);
+
+    const pluginRoot = path.join(this.root, sanitizeCrateVersion(crateName, version));
+    fs.mkdirSync(pluginRoot, { recursive: true });
+
+    // Build the index from the plugin rustdoc.
+    const records = streamRustdoc(docDir, version);
+    const idx = new BevyIndex();
+    for (const record of records) {
+      if (recordWeightOf(record) > 0) idx.addRecords([record]);
+    }
+    idx.buildSymbolTable();
+
+    // Set metadata with crate info.
+    idx.meta = {
+      bevy_version: this.config.bevyVersion,
+      cache_version: CACHE_VERSION,
+      crate: crateName,
+      crate_version: version,
+      fingerprint: "plugin",
+      built_at: new Date().toISOString(),
+      build_ms: 0,
+      symbols: idx.symbols.size,
+    };
+
+    this.pluginIndices.set(corpusId, idx);
+    log(`registered plugin corpus: ${corpusId} (${idx.records.length} records)`);
+  }
+}
+
+/** Sanitize crate@version for filesystem paths. */
+function sanitizeCrateVersion(crateName: string, version: string): string {
+  const sanitizedVersion = version.replace(/[.+]/g, "-");
+  return `${crateName}-${sanitizedVersion}`;
 }
 
 export function compareVersions(a: string, b: string): number { return cmpVersion(a, b); }

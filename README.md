@@ -305,6 +305,7 @@ All keys are optional:
 | `websiteDir` | bevy-website checkout (`./vendor/bevy-website` is bundled) |
 | `bevySrcDir` | bevy engine checkout (enables `examples/` and `errors/`) |
 | `examplesDir` / `errorsDir` | Explicit sub-directories |
+| `metaDir` | Vendored Bevy metadata (`./vendor/bevy-meta` is bundled) |
 | `mirrorDir` | Where `fetch-docs.mjs` writes downloads |
 | `dataDir` | Where the persistent index is stored |
 | `offline` | Never contact crates.io |

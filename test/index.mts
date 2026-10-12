@@ -35,6 +35,7 @@ try {
   const symbolsStatus = run("qualified API symbol lookups", [path.join(HERE, "exact-symbols-test.mjs")]);
   const duplicateStatus = run("duplicate index documentation", [path.join(HERE, "duplicate-records-test.mjs")]);
   const questionsStatus = run("natural-language search relevance", [path.join(HERE, "natural-questions-test.mjs")]);
+  const metaStatus = run("vendored metadata harvest", [path.join(HERE, "meta-harvest-test.mjs")]);
 
   const descriptor = path.join(fixtureDir, "resource-fixture.json");
   if (!fs.existsSync(descriptor)) {

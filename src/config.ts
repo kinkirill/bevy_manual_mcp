@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
-import { errorMessage, isObject, parseJson, type ResolvedConfig } from "./types.js";
+import { errorMessage, isObject, parseJson, type CorpusConfig, type ResolvedConfig } from "./types.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const RUNTIME_ROOT = path.dirname(MODULE_DIR);
@@ -15,12 +15,17 @@ export const REPO_ROOT = PACKAGE_ROOT;
 function pick(...values: (string | null | undefined)[]): string | undefined {
   return values.find((value) => value !== undefined && value !== null && value !== "") ?? undefined;
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const corpusSchema = z.object({
+  crate: z.string(), version: z.string().optional(), auto: z.boolean().optional(),
+});
 const configSchema = z.object({
   projectRoot: z.string().optional(), bevyVersion: z.string().optional(), version: z.string().optional(),
   docDir: z.string().optional(), bevySrcDir: z.string().optional(), websiteDir: z.string().optional(),
   examplesDir: z.string().optional(), errorsDir: z.string().optional(), mirrorDir: z.string().optional(),
   dataDir: z.string().optional(), offline: z.boolean().optional(), debug: z.boolean().optional(),
-  maxResults: z.number().int().min(1).max(20).optional(),
+  maxResults: z.number().int().min(1).max(20).optional(), metaDir: z.string().optional(),
+  corpora: z.array(corpusSchema).optional(),
 });
 type ConfigFile = z.infer<typeof configSchema>;
 function loadConfigFile(projectRoot: string, env: NodeJS.ProcessEnv): { path: string | null; data: ConfigFile } {
@@ -72,6 +77,54 @@ export function readCargoTomlVersion(text: string, crateName: string): string | 
   const workspaceEntry = workspaceDependencies[crateName];
   return typeof workspaceEntry === "string" ? workspaceEntry
     : isObject(workspaceEntry) && typeof workspaceEntry.version === "string" ? workspaceEntry.version : null;
+}
+
+/** Detect a crate's version from Cargo.lock (lockfile-first) then Cargo.toml. */
+function detectCrateVersion(
+  projectRoot: string, env: NodeJS.ProcessEnv,
+  crateName: string,
+): DetectedVersion {
+  if (env.BEVY_VERSION && crateName === "bevy") return { version: env.BEVY_VERSION, source: "BEVY_VERSION env var" };
+
+  // Cargo workspaces keep their lockfile at the workspace root.
+  let directory = projectRoot;
+  while (true) {
+    const lockPath = path.join(directory, "Cargo.lock");
+    if (fs.existsSync(lockPath)) {
+      try {
+        const parsed: unknown = parseToml(fs.readFileSync(lockPath, "utf8"));
+        if (isObject(parsed) && Array.isArray(parsed.package)) {
+          // Normalize crate name for lockfile lookup
+          const normalizedLockName = crateName.replace(/-/g, "_");
+          const pkg: unknown = parsed.package.find((entry: unknown) => isObject(entry) && (
+            entry.name === crateName || entry.name === normalizedLockName
+          ));
+          if (isObject(pkg) && typeof pkg.version === "string") return { version: pkg.version, source: lockPath };
+        }
+      } catch { /* Try the manifest if a lockfile cannot be read. */ }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  // Fall back to Cargo.toml
+  directory = projectRoot;
+  while (true) {
+    const tomlPath = path.join(directory, "Cargo.toml");
+    if (fs.existsSync(tomlPath)) {
+      try {
+        const version = readCargoTomlVersion(fs.readFileSync(tomlPath, "utf8"), crateName);
+        if (version) return { version, source: `${tomlPath} (requested range)` };
+      } catch { /* Invalid or inaccessible manifests are not version sources. */ }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  return { version: null, source: null,
+    note: `Could not determine ${crateName} version. Set BEVY_VERSION or point BEVY_PROJECT_ROOT at a Cargo project.` };
 }
 
 export interface DetectedVersion { version: string | null; source: string | null; note?: string }
@@ -177,14 +230,30 @@ export function resolveConfig(options: ResolveConfigOptions = {}): ResolvedConfi
     path.join(PACKAGE_ROOT, "vendor", "bevy-website"), path.join(PACKAGE_ROOT, "bevy-website"), path.join(os.homedir(), "bevy-website"));
   const examplesDir = firstExistingDir(env.BEVY_EXAMPLES_DIR, fromFile("examplesDir"), bevySrcDir ? path.join(bevySrcDir, "examples") : null);
   const errorsDir = firstExistingDir(env.BEVY_ERRORS_DIR, fromFile("errorsDir"), bevySrcDir ? path.join(bevySrcDir, "errors") : null);
+  const metaDir = firstExistingDir(env.BEVY_META_DIR, fromFile("metaDir"),
+    path.join(PACKAGE_ROOT, "vendor", "bevy-meta"));
   const mirrorDir = pick(env.BEVY_MIRROR_DIR, fromFile("mirrorDir")) ?? path.join(os.homedir(), ".cache", "bevy-mcp", version ?? "unversioned");
   const repoDataDir = path.join(PACKAGE_ROOT, "data");
   const dataDir = pick(env.BEVY_MCP_DATA_DIR, fromFile("dataDir")) ?? (fs.existsSync(repoDataDir) ? repoDataDir : path.join(os.homedir(), ".cache", "bevy-mcp", "data"));
   const maxResults = Number(env.BEVY_MCP_MAX_RESULTS ?? file.maxResults ?? 8);
+
+  // Resolve corpora — auto-detect versions from Cargo.lock/Cargo.toml when `auto` is true.
+  const rawCorpora: unknown[] = Array.isArray(file.corpora) ? file.corpora : [];
+  const corpora: CorpusConfig[] = rawCorpora.map((raw) => {
+    const cfg = corpusSchema.parse(raw);
+    if (cfg.auto) {
+      // Auto-detect from Cargo project
+      const detected = detectCrateVersion(projectRoot, env, cfg.crate);
+      return { crate: cfg.crate, version: detected.version ?? cfg.version,
+        auto: true };
+    }
+    return { crate: cfg.crate, version: cfg.version ?? "?", auto: false } as const;
+  });
+
   return { projectRoot, bevyVersion: version, versionSource: detected.source, versionNote: detected.note,
     configPath, docVersion: docVersion?.version ?? null, docVersionSource: docVersion?.source ?? null,
-    docDir, websiteDir, examplesDir, bevySrcDir, errorsDir, mirrorDir, dataDir,
-    env: { offline: env.BEVY_MCP_OFFLINE !== undefined ? env.BEVY_MCP_OFFLINE === "1" : file.offline ?? false,
+    docDir, websiteDir, examplesDir, bevySrcDir, errorsDir, metaDir, mirrorDir, dataDir,
+    corpora, env: { offline: env.BEVY_MCP_OFFLINE !== undefined ? env.BEVY_MCP_OFFLINE === "1" : file.offline ?? false,
       debug: env.BEVY_MCP_DEBUG !== undefined ? env.BEVY_MCP_DEBUG === "1" : file.debug ?? false,
       maxResults: Number.isInteger(maxResults) && maxResults >= 1 && maxResults <= 20 ? maxResults : 8 } };
 }

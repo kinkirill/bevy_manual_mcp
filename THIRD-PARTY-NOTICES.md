@@ -41,6 +41,26 @@ SOFTWARE.
 
 ---
 
+## Bevy metadata (`vendor/bevy-meta/`)
+
+The `features.json`, `meta.json`, `panic-sites.json`, and `error-codes/*.md`
+files under `vendor/bevy-meta/` are harvested from the Bevy engine repository
+(<https://github.com/bevyengine/bevy>) at exact git tags. They contain the cargo
+feature graph, default-plugin gates, and the official error-code explanations
+(B0001-B0006) that Bevy embeds in its own panic messages.
+
+Bevy is dual-licensed under your choice of either:
+
+- MIT License - Copyright (c) 2020 Bevy Engine
+- Apache License, Version 2.0 (<http://www.apache.org/licenses/LICENSE-2.0>)
+
+Full license texts:
+
+- <https://github.com/bevyengine/bevy/blob/main/LICENSE-MIT>
+- <https://github.com/bevyengine/bevy/blob/main/LICENSE-APACHE>
+
+---
+
 ## Bevy engine and rustdoc-derived index
 
 The search index distributed through this project's GitHub Releases is derived

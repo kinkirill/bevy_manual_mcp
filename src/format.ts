@@ -11,6 +11,7 @@ const SOURCE_LABEL = {
   "bevy-examples": "example",
   "learn-examples": "example",
   website: "docs",
+  "bevy-meta": "error",
 };
 
 function iconFor(r: BevyRecord): string {
@@ -361,6 +362,8 @@ export function formatStatus(index: BevyIndex, config: ResolvedConfig): string {
   lines.push(`- cargo doc: ${m.doc_dir ?? "**not found** - run \`cargo doc\` in your Bevy project\`"}`);
   lines.push(`- bevy-website: ${m.website_dir ?? "**not found**"}`);
   lines.push(`- engine examples: ${m.examples_dir ?? "**not found** - clone the bevy repo for \`examples/\`"}`);
+  lines.push(`- bevy-meta: ${config?.metaDir ?? "**not found** - run \`node scripts/harvest-meta.mjs <version>\`"}`);
+  lines.push(`- errors dir: ${config?.errorsDir ?? "(none - using vendored error codes)"}`);
   if (m.built_at) lines.push("", `Built ${m.built_at} in ${m.build_ms}ms.`);
   return lines.join("\n");
 }
