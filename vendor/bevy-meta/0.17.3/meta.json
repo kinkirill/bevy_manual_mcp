@@ -1,0 +1,18 @@
+{
+  "bevy_version": "0.17.3",
+  "tag": "v0.17.3",
+  "source_commit": "706fdd9800c4bf335d67f127ff6e5a93deadabb9",
+  "harvested_at": "2026-10-12T03:43:54.298Z",
+  "error_codes": [
+    "B0001",
+    "B0002",
+    "B0003",
+    "B0004",
+    "B0005",
+    "B0006"
+  ],
+  "panic_site_codes": [
+    "B0001",
+    "B0002"
+  ]
+}

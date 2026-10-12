@@ -1,0 +1,1043 @@
+{
+  "bevy_version": "0.19.1",
+  "features": {
+    "trace": [],
+    "trace_chrome": [],
+    "trace_tracy": [],
+    "trace_tracy_memory": [
+      "trace",
+      "trace_tracy"
+    ],
+    "detailed_trace": [],
+    "sysinfo_plugin": [],
+    "compressed_image_saver": [
+      "bevy_image"
+    ],
+    "zlib": [
+      "bevy_image"
+    ],
+    "zstd": [
+      "bevy_image"
+    ],
+    "zstd_rust": [
+      "bevy_image"
+    ],
+    "zstd_c": [
+      "bevy_image"
+    ],
+    "basis-universal": [
+      "bevy_image"
+    ],
+    "bmp": [
+      "bevy_image"
+    ],
+    "ff": [
+      "bevy_image"
+    ],
+    "gif": [
+      "bevy_image"
+    ],
+    "ico": [
+      "bevy_image"
+    ],
+    "jpeg": [
+      "bevy_image"
+    ],
+    "png": [
+      "bevy_image"
+    ],
+    "pnm": [
+      "bevy_image"
+    ],
+    "qoi": [
+      "bevy_image"
+    ],
+    "tga": [
+      "bevy_image"
+    ],
+    "tiff": [
+      "bevy_image"
+    ],
+    "webp": [
+      "bevy_image"
+    ],
+    "dds": [
+      "bevy_image"
+    ],
+    "exr": [
+      "bevy_image"
+    ],
+    "hdr": [
+      "bevy_image"
+    ],
+    "ktx2": [
+      "bevy_image"
+    ],
+    "spirv_shader_passthrough": [
+      "bevy_render"
+    ],
+    "statically-linked-dxc": [
+      "bevy_render"
+    ],
+    "raw_vulkan_init": [
+      "bevy_render"
+    ],
+    "type_label_buffers": [
+      "bevy_render"
+    ],
+    "tonemapping_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "smaa_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "bluenoise_texture": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "dfg_lut": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "area_light_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "dlss": [
+      "bevy_anti_alias"
+    ],
+    "force_disable_dlss": [],
+    "flac": [],
+    "mp3": [],
+    "mp4": [],
+    "vorbis": [],
+    "wav": [],
+    "aac": [],
+    "symphonia-flac": [],
+    "symphonia-vorbis": [],
+    "symphonia-wav": [],
+    "shader_format_glsl": [
+      "bevy_shader"
+    ],
+    "shader_format_spirv": [
+      "bevy_shader"
+    ],
+    "shader_format_wesl": [
+      "bevy_shader"
+    ],
+    "serialize": [],
+    "multi_threaded": [
+      "std"
+    ],
+    "async-io": [
+      "std"
+    ],
+    "wayland": [
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_winit"
+    ],
+    "pbr_transmission_textures": [],
+    "pbr_clustered_decals": [],
+    "pbr_light_textures": [],
+    "pbr_multi_layer_material_textures": [],
+    "pbr_anisotropy_texture": [],
+    "experimental_pbr_pcss": [],
+    "pbr_specular_textures": [],
+    "webgl": [],
+    "webgpu": [],
+    "bevy_ci_testing": [
+      "bevy_dev_tools"
+    ],
+    "gltf_animation": [
+      "bevy_animation"
+    ],
+    "morph": [],
+    "morph_animation": [
+      "morph"
+    ],
+    "bevy_shader": [
+      "bevy_shader"
+    ],
+    "bevy_image": [
+      "bevy_image"
+    ],
+    "bevy_sprite": [
+      "bevy_camera",
+      "bevy_sprite"
+    ],
+    "bevy_text": [
+      "bevy_image",
+      "bevy_text"
+    ],
+    "bevy_ui": [
+      "bevy_sprite",
+      "bevy_text",
+      "bevy_ui"
+    ],
+    "bevy_mesh": [
+      "bevy_image",
+      "bevy_mesh"
+    ],
+    "bevy_animation": [
+      "bevy_animation",
+      "bevy_mesh"
+    ],
+    "bevy_mikktspace": [],
+    "bevy_window": [
+      "bevy_image",
+      "bevy_window"
+    ],
+    "bevy_winit": [
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "bevy_camera": [
+      "bevy_camera",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_world_serialization": [
+      "bevy_world_serialization"
+    ],
+    "bevy_material": [
+      "bevy_image",
+      "bevy_material",
+      "bevy_shader"
+    ],
+    "bevy_light": [
+      "bevy_camera",
+      "bevy_light"
+    ],
+    "bevy_render": [
+      "bevy_camera",
+      "bevy_render",
+      "bevy_shader"
+    ],
+    "bevy_core_pipeline": [
+      "bevy_core_pipeline",
+      "bevy_render"
+    ],
+    "bevy_anti_alias": [
+      "bevy_anti_alias",
+      "bevy_core_pipeline"
+    ],
+    "bevy_post_process": [
+      "bevy_core_pipeline",
+      "bevy_post_process"
+    ],
+    "bevy_pbr": [
+      "bevy_core_pipeline",
+      "bevy_light",
+      "bevy_material",
+      "bevy_pbr"
+    ],
+    "bevy_sprite_render": [
+      "bevy_core_pipeline",
+      "bevy_material",
+      "bevy_sprite",
+      "bevy_sprite_render"
+    ],
+    "bevy_ui_render": [
+      "bevy_sprite_render",
+      "bevy_ui",
+      "bevy_ui_render"
+    ],
+    "bevy_feathers": [
+      "bevy_feathers",
+      "png"
+    ],
+    "bevy_solari": [
+      "bevy_pbr",
+      "bevy_solari"
+    ],
+    "bevy_gizmos": [
+      "bevy_camera",
+      "bevy_gizmos"
+    ],
+    "bevy_gizmos_render": [
+      "bevy_gizmos",
+      "bevy_gizmos_render"
+    ],
+    "bevy_gltf": [
+      "bevy_gltf",
+      "bevy_world_serialization"
+    ],
+    "dynamic_linking": [],
+    "accesskit_unix": [
+      "bevy_winit"
+    ],
+    "glam_assert": [],
+    "debug_glam_assert": [],
+    "default_font": [],
+    "system_font_discovery": [],
+    "http": [],
+    "https": [],
+    "web_asset_cache": [],
+    "asset_processor": [],
+    "file_watcher": [],
+    "embedded_watcher": [],
+    "bevy_debug_stepping": [],
+    "meshlet": [],
+    "meshlet_processor": [],
+    "bevy_dev_tools": [
+      "bevy_dev_tools"
+    ],
+    "bevy_camera_controller": [
+      "bevy_camera_controller"
+    ],
+    "free_camera": [
+      "bevy_camera_controller"
+    ],
+    "pan_camera": [
+      "bevy_camera_controller"
+    ],
+    "bevy_remote": [
+      "bevy_remote",
+      "serialize"
+    ],
+    "bevy_picking": [
+      "bevy_picking"
+    ],
+    "mesh_picking": [
+      "bevy_picking"
+    ],
+    "sprite_picking": [
+      "bevy_picking"
+    ],
+    "ui_picking": [
+      "bevy_picking"
+    ],
+    "bevy_ui_debug": [],
+    "bevy_state": [
+      "bevy_state"
+    ],
+    "track_location": [],
+    "reflect_functions": [],
+    "reflect_auto_register": [],
+    "reflect_auto_register_static": [],
+    "reflect_documentation": [],
+    "custom_cursor": [
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "ghost_nodes": [
+      "bevy_ui"
+    ],
+    "std": [],
+    "critical-section": [],
+    "libm": [],
+    "async_executor": [
+      "std"
+    ],
+    "web": [],
+    "mouse": [],
+    "keyboard": [],
+    "gamepad": [],
+    "touch": [],
+    "gestures": [],
+    "bevy_clipboard": [
+      "bevy_clipboard"
+    ],
+    "system_clipboard": [
+      "bevy_clipboard"
+    ],
+    "clipboard_image": [
+      "bevy_clipboard"
+    ],
+    "hotpatching": [],
+    "debug": [],
+    "screenrecording": [
+      "bevy_dev_tools"
+    ],
+    "schedule_data": [
+      "bevy_dev_tools"
+    ],
+    "bevy_settings": []
+  },
+  "closure": {
+    "trace": [],
+    "trace_chrome": [],
+    "trace_tracy": [],
+    "trace_tracy_memory": [
+      "trace",
+      "trace_tracy"
+    ],
+    "detailed_trace": [],
+    "sysinfo_plugin": [],
+    "compressed_image_saver": [
+      "bevy_image"
+    ],
+    "zlib": [
+      "bevy_image"
+    ],
+    "zstd": [
+      "bevy_image"
+    ],
+    "zstd_rust": [
+      "bevy_image"
+    ],
+    "zstd_c": [
+      "bevy_image"
+    ],
+    "basis-universal": [
+      "bevy_image"
+    ],
+    "bmp": [
+      "bevy_image"
+    ],
+    "ff": [
+      "bevy_image"
+    ],
+    "gif": [
+      "bevy_image"
+    ],
+    "ico": [
+      "bevy_image"
+    ],
+    "jpeg": [
+      "bevy_image"
+    ],
+    "png": [
+      "bevy_image"
+    ],
+    "pnm": [
+      "bevy_image"
+    ],
+    "qoi": [
+      "bevy_image"
+    ],
+    "tga": [
+      "bevy_image"
+    ],
+    "tiff": [
+      "bevy_image"
+    ],
+    "webp": [
+      "bevy_image"
+    ],
+    "dds": [
+      "bevy_image"
+    ],
+    "exr": [
+      "bevy_image"
+    ],
+    "hdr": [
+      "bevy_image"
+    ],
+    "ktx2": [
+      "bevy_image"
+    ],
+    "spirv_shader_passthrough": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "statically-linked-dxc": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "raw_vulkan_init": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "type_label_buffers": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "tonemapping_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "smaa_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "bluenoise_texture": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "dfg_lut": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "area_light_luts": [
+      "bevy_image",
+      "ktx2"
+    ],
+    "dlss": [
+      "bevy_anti_alias",
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "force_disable_dlss": [],
+    "flac": [],
+    "mp3": [],
+    "mp4": [],
+    "vorbis": [],
+    "wav": [],
+    "aac": [],
+    "symphonia-flac": [],
+    "symphonia-vorbis": [],
+    "symphonia-wav": [],
+    "shader_format_glsl": [
+      "bevy_shader"
+    ],
+    "shader_format_spirv": [
+      "bevy_shader"
+    ],
+    "shader_format_wesl": [
+      "bevy_shader"
+    ],
+    "serialize": [],
+    "multi_threaded": [
+      "std"
+    ],
+    "async-io": [
+      "std"
+    ],
+    "wayland": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "x11": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "android-native-activity": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "android-game-activity": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "pbr_transmission_textures": [],
+    "pbr_clustered_decals": [],
+    "pbr_light_textures": [],
+    "pbr_multi_layer_material_textures": [],
+    "pbr_anisotropy_texture": [],
+    "experimental_pbr_pcss": [],
+    "pbr_specular_textures": [],
+    "webgl": [],
+    "webgpu": [],
+    "bevy_ci_testing": [
+      "bevy_dev_tools"
+    ],
+    "gltf_animation": [
+      "bevy_animation",
+      "bevy_image",
+      "bevy_mesh"
+    ],
+    "morph": [],
+    "morph_animation": [
+      "morph"
+    ],
+    "bevy_shader": [],
+    "bevy_image": [],
+    "bevy_sprite": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_text": [
+      "bevy_image"
+    ],
+    "bevy_ui": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_sprite",
+      "bevy_text",
+      "bevy_window"
+    ],
+    "bevy_mesh": [
+      "bevy_image"
+    ],
+    "bevy_animation": [
+      "bevy_image",
+      "bevy_mesh"
+    ],
+    "bevy_mikktspace": [],
+    "bevy_window": [
+      "bevy_image"
+    ],
+    "bevy_winit": [
+      "bevy_image",
+      "bevy_window"
+    ],
+    "bevy_camera": [
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_world_serialization": [],
+    "bevy_material": [
+      "bevy_image",
+      "bevy_shader"
+    ],
+    "bevy_light": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_render": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_core_pipeline": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_anti_alias": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_post_process": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_pbr": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_light",
+      "bevy_material",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_sprite_render": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_material",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_sprite",
+      "bevy_window"
+    ],
+    "bevy_ui_render": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_material",
+      "bevy_mesh",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_sprite",
+      "bevy_sprite_render",
+      "bevy_text",
+      "bevy_ui",
+      "bevy_window"
+    ],
+    "bevy_feathers": [
+      "bevy_image",
+      "png"
+    ],
+    "bevy_solari": [
+      "bevy_camera",
+      "bevy_core_pipeline",
+      "bevy_image",
+      "bevy_light",
+      "bevy_material",
+      "bevy_mesh",
+      "bevy_pbr",
+      "bevy_render",
+      "bevy_shader",
+      "bevy_window"
+    ],
+    "bevy_gizmos": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_gizmos_render": [
+      "bevy_camera",
+      "bevy_gizmos",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_window"
+    ],
+    "bevy_gltf": [
+      "bevy_world_serialization"
+    ],
+    "dynamic_linking": [],
+    "accesskit_unix": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "glam_assert": [],
+    "debug_glam_assert": [],
+    "default_font": [],
+    "system_font_discovery": [],
+    "http": [],
+    "https": [],
+    "web_asset_cache": [],
+    "asset_processor": [],
+    "file_watcher": [],
+    "embedded_watcher": [],
+    "bevy_debug_stepping": [],
+    "meshlet": [],
+    "meshlet_processor": [],
+    "bevy_dev_tools": [],
+    "bevy_camera_controller": [],
+    "free_camera": [
+      "bevy_camera_controller"
+    ],
+    "pan_camera": [
+      "bevy_camera_controller"
+    ],
+    "bevy_remote": [
+      "serialize"
+    ],
+    "bevy_picking": [],
+    "mesh_picking": [
+      "bevy_picking"
+    ],
+    "sprite_picking": [
+      "bevy_picking"
+    ],
+    "ui_picking": [
+      "bevy_picking"
+    ],
+    "bevy_ui_debug": [],
+    "bevy_state": [],
+    "track_location": [],
+    "reflect_functions": [],
+    "reflect_auto_register": [],
+    "reflect_auto_register_static": [],
+    "reflect_documentation": [],
+    "custom_cursor": [
+      "bevy_image",
+      "bevy_window",
+      "bevy_winit"
+    ],
+    "ghost_nodes": [
+      "bevy_camera",
+      "bevy_image",
+      "bevy_mesh",
+      "bevy_sprite",
+      "bevy_text",
+      "bevy_ui",
+      "bevy_window"
+    ],
+    "std": [],
+    "critical-section": [],
+    "libm": [],
+    "async_executor": [
+      "std"
+    ],
+    "web": [],
+    "mouse": [],
+    "keyboard": [],
+    "gamepad": [],
+    "touch": [],
+    "gestures": [],
+    "bevy_clipboard": [],
+    "system_clipboard": [
+      "bevy_clipboard"
+    ],
+    "clipboard_image": [
+      "bevy_clipboard"
+    ],
+    "hotpatching": [],
+    "debug": [],
+    "screenrecording": [
+      "bevy_dev_tools"
+    ],
+    "schedule_data": [
+      "bevy_dev_tools"
+    ],
+    "bevy_settings": []
+  },
+  "profiles": {
+    "2d": {
+      "description": "",
+      "enables": [
+        "2d_bevy_render",
+        "default_app",
+        "default_platform",
+        "picking",
+        "scene"
+      ]
+    },
+    "3d": {
+      "description": "",
+      "enables": [
+        "3d_bevy_render",
+        "default_app",
+        "default_platform",
+        "picking",
+        "scene"
+      ]
+    },
+    "ui": {
+      "description": "",
+      "enables": [
+        "bevy_ui_widgets",
+        "default_app",
+        "default_platform",
+        "picking",
+        "scene",
+        "ui_api",
+        "ui_bevy_render"
+      ]
+    },
+    "audio": {
+      "description": "",
+      "enables": [
+        "bevy_audio",
+        "vorbis"
+      ]
+    }
+  },
+  "default_features": [
+    "2d",
+    "3d",
+    "audio",
+    "ui"
+  ],
+  "plugin_gates": [
+    {
+      "plugin": "LogPlugin",
+      "requires_feature": "bevy_log"
+    },
+    {
+      "plugin": "InputFocusPlugin",
+      "requires_feature": "bevy_input_focus"
+    },
+    {
+      "plugin": "InputDispatchPlugin",
+      "requires_feature": "bevy_input_focus"
+    },
+    {
+      "plugin": "WindowPlugin",
+      "requires_feature": "bevy_window"
+    },
+    {
+      "plugin": "TerminalCtrlCHandlerPlugin",
+      "requires_feature": "std"
+    },
+    {
+      "plugin": "WebAssetPlugin",
+      "requires_feature": "bevy_asset"
+    },
+    {
+      "plugin": "AssetPlugin",
+      "requires_feature": "bevy_asset"
+    },
+    {
+      "plugin": "WorldSerializationPlugin",
+      "requires_feature": "bevy_world_serialization"
+    },
+    {
+      "plugin": "ScenePlugin",
+      "requires_feature": "bevy_scene"
+    },
+    {
+      "plugin": "WinitPlugin",
+      "requires_feature": "bevy_winit"
+    },
+    {
+      "plugin": "RenderPlugin",
+      "requires_feature": "bevy_render"
+    },
+    {
+      "plugin": "ImagePlugin",
+      "requires_feature": "bevy_image"
+    },
+    {
+      "plugin": "MeshPlugin",
+      "requires_feature": "bevy_mesh"
+    },
+    {
+      "plugin": "CameraPlugin",
+      "requires_feature": "bevy_camera"
+    },
+    {
+      "plugin": "LightPlugin",
+      "requires_feature": "bevy_light"
+    },
+    {
+      "plugin": "PipelinedRenderingPlugin",
+      "requires_feature": "bevy_render"
+    },
+    {
+      "plugin": "CorePipelinePlugin",
+      "requires_feature": "bevy_core_pipeline"
+    },
+    {
+      "plugin": "PostProcessPlugin",
+      "requires_feature": "bevy_post_process"
+    },
+    {
+      "plugin": "AntiAliasPlugin",
+      "requires_feature": "bevy_anti_alias"
+    },
+    {
+      "plugin": "SpritePlugin",
+      "requires_feature": "bevy_sprite"
+    },
+    {
+      "plugin": "SpriteRenderPlugin",
+      "requires_feature": "bevy_sprite_render"
+    },
+    {
+      "plugin": "ClipboardPlugin",
+      "requires_feature": "bevy_clipboard"
+    },
+    {
+      "plugin": "TextPlugin",
+      "requires_feature": "bevy_text"
+    },
+    {
+      "plugin": "UiPlugin",
+      "requires_feature": "bevy_ui"
+    },
+    {
+      "plugin": "UiRenderPlugin",
+      "requires_feature": "bevy_ui_render"
+    },
+    {
+      "plugin": "GltfPlugin",
+      "requires_feature": "bevy_gltf"
+    },
+    {
+      "plugin": "PbrPlugin",
+      "requires_feature": "bevy_pbr"
+    },
+    {
+      "plugin": "AudioPlugin",
+      "requires_feature": "bevy_audio"
+    },
+    {
+      "plugin": "GilrsPlugin",
+      "requires_feature": "bevy_gilrs"
+    },
+    {
+      "plugin": "AnimationPlugin",
+      "requires_feature": "bevy_animation"
+    },
+    {
+      "plugin": "GizmoPlugin",
+      "requires_feature": "bevy_gizmos"
+    },
+    {
+      "plugin": "GizmoRenderPlugin",
+      "requires_feature": "bevy_gizmos_render"
+    },
+    {
+      "plugin": "StatesPlugin",
+      "requires_feature": "bevy_state"
+    },
+    {
+      "plugin": "CiTestingPlugin",
+      "requires_feature": "bevy_ci_testing"
+    },
+    {
+      "plugin": "HotPatchPlugin",
+      "requires_feature": "hotpatching"
+    },
+    {
+      "plugin": "UiWidgetsPlugins",
+      "requires_feature": "bevy_ui_widgets"
+    },
+    {
+      "plugin": "DefaultPickingPlugins",
+      "requires_feature": "bevy_picking"
+    },
+    {
+      "plugin": "CiTestingPlugin",
+      "requires_feature": "bevy_ci_testing"
+    }
+  ],
+  "panic_sites": {
+    "B0002": [
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 701
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 758
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1342
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1387
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 1391
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 2590
+      },
+      {
+        "file": "crates/bevy_ecs/src/system/system_param.rs",
+        "line": 2636
+      }
+    ]
+  }
+}
