@@ -27,8 +27,10 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { BevyIndex, hybridSearch } from "../src/store.js";
 import { createVersioning } from "../src/tools/versioning.js";
 import { createVersionChecker } from "../src/versions.js";
+import { CorpusRegistry } from "../src/registry.js";
 import { registerAll } from "../src/tools/index.js";
 import { register as registerEcosystemCompat } from "../src/tools/ecosystem_compat.js";
+import type { EcosystemCorpus, EcosystemFailure, EcosystemToolContext } from "../src/tools/ecosystem_search.js";
 import { satisfiesRequirement } from "../src/analysis/compat.js";
 import { parseRecord } from "../src/types.js";
 import type { BevyRecord, ResolvedConfig } from "../src/types.js";
@@ -122,6 +124,33 @@ async function buildIndex(records: BevyRecord[], version: string): Promise<BevyI
   return index;
 }
 
+async function buildEcosystem(config: ResolvedConfig, index: BevyIndex): Promise<EcosystemToolContext> {
+  const corpusRegistry = new CorpusRegistry(config);
+  const statuses = await corpusRegistry.loadConfigured();
+  const corpora: EcosystemCorpus[] = config.bevyVersion
+    ? [{ id: `bevy@${config.bevyVersion}`, crate: "bevy", version: config.bevyVersion, source: "bevy-index", index }]
+    : [];
+  for (const [id, corpusIndex] of corpusRegistry.pluginIndices) {
+    const status = corpusRegistry.statuses.get(id);
+    corpora.push({
+      id,
+      crate: status?.crate ?? id.split("@")[0]!,
+      version: status?.version ?? corpusIndex.meta?.crate_version ?? null,
+      source: status?.source ?? "rustdoc",
+      index: corpusIndex,
+    });
+  }
+  const failures: EcosystemFailure[] = statuses
+    .filter((status) => !status.loaded)
+    .map((status) => ({ id: status.id, crate: status.crate, version: status.version, reason: status.reason ?? "failed to load" }));
+  return {
+    config: config as unknown as Record<string, unknown> & { bevyVersion?: string | null },
+    corpora,
+    failures,
+    configured: (config.corpora?.length ?? 0) > 0,
+  };
+}
+
 interface Harness {
   root: string;
   index: BevyIndex;
@@ -160,7 +189,7 @@ async function makeHarness(overrides: Partial<ResolvedConfig> = {}): Promise<Har
     ...createVersioning(config, registry, index),
   };
   const { server, tools, configs } = captureServer();
-  registerAll(server, ctx);
+  registerAll(server, ctx, await buildEcosystem(config, index));
   return { root, index, config, tools, configs };
 }
 
@@ -249,10 +278,44 @@ await test("generate: an unknown template is rejected", async () => {
 
 // --- C-01 ecosystem search ---------------------------------------------------
 
-await test("ecosystem search: registerAll searches the configured plugin corpus", { todo: "C-01: registerAll passes pluginIndices: undefined" }, async () => {
-  const h = await makeHarness({ corpora: [{ crate: "bevy_egui", version: "0.43.1" }] });
+await test("ecosystem search: registerAll searches the configured plugin corpus", async () => {
+  const h = await makeHarness({
+    corpora: [{ crate: "bevy_egui", version: "0.43.1", indexDir: path.join(FIXTURES, "ecosystem", "bevy_egui"), source: "fixture" }],
+  });
   const result = await h.tools.get("bevy_ecosystem_search")!({ query: "EguiContexts" });
-  assert.ok((structured(result).corpora_searched as string[]).length > 0, "no corpus was searched");
+  const data = structured(result);
+  assert.ok((data.corpora_searched as string[]).includes("bevy_egui@0.43.1"), "configured corpus was not searched");
+  assert.ok((data.total_hits as number) >= 1, "the plugin symbol was not found");
+});
+
+await test("ecosystem search: with no plugin corpora it searches Bevy only and says so", async () => {
+  const result = await call("bevy_ecosystem_search", { query: "Transform" });
+  const data = structured(result);
+  assert.deepEqual(data.corpora_searched, ["bevy@0.20.0"]);
+  assert.equal(data.plugin_corpora_configured, 0);
+  assert.match(textOf(result), /No plugin corpora are configured/);
+});
+
+await test("ecosystem search: an unknown crate produces a clear response", async () => {
+  const result = await call("bevy_ecosystem_search", { query: "Button", crate: "definitely_missing" });
+  assert.equal(result.isError, true);
+  assert.deepEqual(structured(result).corpora_searched, []);
+  assert.ok((structured(result).available_corpora as string[]).includes("bevy@0.20.0"));
+  assert.match(textOf(result), /No configured corpus matches/);
+});
+
+await test("ecosystem search: one failed corpus beside one healthy corpus is reported", async () => {
+  const h = await makeHarness({
+    corpora: [
+      { crate: "bevy_egui", version: "0.43.1", indexDir: path.join(FIXTURES, "ecosystem", "bevy_egui"), source: "fixture" },
+      { crate: "missing_plugin", version: "0.1.0" },
+    ],
+  });
+  const result = await h.tools.get("bevy_ecosystem_search")!({ query: "Button" });
+  const data = structured(result);
+  assert.ok((data.corpora_searched as string[]).includes("bevy_egui@0.43.1"));
+  assert.equal((data.failures as unknown[]).length, 1);
+  assert.match(textOf(result), /no docDir|failed to load/);
 });
 
 // --- C-02 feature detection --------------------------------------------------

@@ -59,7 +59,7 @@ behavior" states how the tool chooses an index.
 | `bevy_check_manifest` | Which Bevy features are enabled, and is a symbol/subcrate available? | optional `check` | `readEnabledFeatures` (hand-rolled TOML read of `projectRoot/Cargo.toml`) + `vendor/bevy-meta/<ver>/features.json` | Pinned version only | No feature graph → error; missing manifest → shown as empty | **Discrepancy C-02** |
 | `bevy_validate_systems` | Lint system signatures for access-rule panics. | `code` | `extractFnItems` + `analyzeSystem` + `checkConflicts` | None; version is decorative | No `fn` found → error | **Discrepancy C-03/C-04/C-05/C-06** |
 | `bevy_explain_error` | Explain a pasted Bevy panic/warning. | `message` | `vendor/bevy-meta/<ver>/error-codes/B####.md` | Pinned version only; rejects codes absent from it | Uncoded panic → tier-3 honest refusal | Verified |
-| `bevy_ecosystem_search` | Search indexed plugin corpora, labelled by crate. | `query` | `pluginIndices` map passed to `register` | Pinned Bevy version in metadata only | No corpora → empty warning | **Discrepancy C-01** |
+| `bevy_ecosystem_search` | Search the Bevy index and every configured plugin corpus, labelled by crate. | `query` | `CorpusRegistry` loaded from `config.corpora` + the active `BevyIndex` | Pinned Bevy version; each plugin corpus carries its own crate version | No plugin corpora → Bevy-only with an explicit note; unknown crate → error; failed corpus → `failures` | Verified |
 | `bevy_ecosystem_compat` | Plugin ↔ Bevy version compatibility. | optional `crate` | `vendor/ecosystem/compat.json` via `satisfiesRequirement` | Compares requirement strings to `config.bevyVersion` | Unknown crate → error | **Discrepancy C-07…C-12** |
 | `bevy_generate_plugin` | Version-correct plugin scaffolds. | `template` | Hard-coded templates + `index.lookupSymbol` verification | Pinned version only; refuses when symbols missing | Unknown template → error | **Discrepancy C-13…C-15** |
 | `bevy_perf_advisor` | Performance advice and anti-pattern detection. | optional `topic` / `code` | `vendor/bevy-meta/<ver>/perf.json` else built-ins | Pinned version only | Unknown topic → listed alternatives | Partial (no `perf.json` is currently vendored) |
@@ -82,7 +82,7 @@ fix lands, remove the `{ todo: … }` option and the test becomes a hard gate.
 
 | ID | Tools | Finding (evidence) | Expected behavior | Regression test | Plan |
 |---|---|---|---|---|---|
-| C-01 | `bevy_ecosystem_search` | `registerAll` passes `pluginIndices: undefined`, so the tool always searches an empty map (`src/tools/index.ts:57`). The description also claims it fans out over Bevy, but the handler only iterates plugin indexes (`src/tools/ecosystem_search.ts`). | Load `config.corpora`, search the primary Bevy index *and* plugin corpora (or narrow the description), and report `corpora_searched` truthfully. | `ecosystem search: registerAll searches the configured plugin corpus` (todo) | §5.1 |
+| C-01 | `bevy_ecosystem_search` | `registerAll` passed `pluginIndices: undefined`, so the tool always searched an empty map (`src/tools/index.ts`). The description also claimed it fanned out over Bevy, but the handler only iterated plugin indexes. | Load `config.corpora` through `CorpusRegistry`, include the primary Bevy index in the fan-out, and report `corpora_searched`, per-corpus provenance and load failures truthfully. | `ecosystem search: registerAll searches the configured plugin corpus` (hard gate from PR 2) and the `MCP ecosystem search reads a configured plugin corpus` end-to-end test | §5.1 |
 | C-02a | `bevy_check_manifest` | `readEnabledFeatures` only copies an explicit `[dependencies].bevy.features` array; a bare `bevy = "0.20.0"` yields no features, so implicit default features are reported as off (`src/tools/manifest.ts:12`). | A project that does not disable defaults reports the default feature set as enabled. | `manifest: implicit default features are reported enabled` (todo) | §5.2 |
 | C-02b | `bevy_check_manifest` | `default-features = false` is not modelled at all; the result is indistinguishable from a default project. | `default_features_enabled: false` and only the explicitly requested features are on. | `manifest: default-features = false is represented` (todo) | §5.2 |
 | C-02c | `bevy_check_manifest` | Dependency aliases (`alias = { package = "bevy", … }`) are ignored because only `deps.bevy` is read. | Features declared through an alias are attributed to Bevy. | `manifest: a package alias is resolved` (todo) | §5.2 |
@@ -119,6 +119,20 @@ the Bevy version active on the developer's machine.
 | Feature-rich workspace | `test/fixtures/projects/feature-rich/` | Workspace inheritance, dependency alias and a target-specific table. |
 | Configured plugin corpus | `test/fixtures/ecosystem/bevy_egui/` | A corpus descriptor plus records, for the ecosystem-search contract. |
 | Compatibility edge cases | `test/fixtures/ecosystem/compat-edge.json` | Unsupported requirement operators and a newest-first pair, for the compat contract. |
+
+### Configured corpus shape (Phase 1)
+
+`bevy-mcp.config.json` accepts a `corpora` array. Each entry is loaded once at
+startup; a failure is recorded per corpus and surfaced by
+`bevy_ecosystem_search` rather than preventing the server from starting.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `crate` | yes | Crate name, e.g. `bevy_egui`. |
+| `version` | yes unless `auto` | Pinned crate version. `auto: true` resolves it from `Cargo.lock`/`Cargo.toml`. |
+| `docDir` | one of `docDir`/`indexDir` | Rustdoc HTML tree (a docs.rs mirror or `cargo doc` output). |
+| `indexDir` | one of `docDir`/`indexDir` | Directory holding a persisted `records.ndjson`; used when present, and written after a `docDir` build. |
+| `source` | no | Provenance label shown in results, e.g. `docs.rs`. |
 
 The deterministic in-memory index used by `test/contract-regressions.mts` is
 built from `test/helpers.mts` (`fixtureRecord`) and a fixed `"0.20.0"` version,

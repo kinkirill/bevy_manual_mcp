@@ -18,6 +18,7 @@ import { register as validateSystems } from "./validate_systems.js";
 import { register as explainError } from "./explain_error.js";
 // Phase 2.2 — bevy_ecosystem_search + bevy_ecosystem_compat
 import { register as ecosystemSearch } from "./ecosystem_search.js";
+import type { EcosystemToolContext } from "./ecosystem_search.js";
 import { register as ecosystemCompat } from "./ecosystem_compat.js";
 // Phase 3.1 — bevy_generate_plugin
 import { register as generatePlugin } from "./generate_plugin.js";
@@ -42,7 +43,7 @@ export {
   perfAdvisor,
 };
 
-export function registerAll(server: McpServer, ctx: ToolContext): void {
+export function registerAll(server: McpServer, ctx: ToolContext, ecosystem?: EcosystemToolContext): void {
   search(server, ctx);
   api(server, ctx);
   examples(server, ctx);
@@ -54,7 +55,7 @@ export function registerAll(server: McpServer, ctx: ToolContext): void {
   manifest(server, ctx);
   validateSystems(server, ctx);
   explainError(server, ctx);
-  ecosystemSearch(server, { config: ctx.config as unknown as Record<string, unknown>, pluginIndices: undefined });
+  ecosystemSearch(server, ecosystem ?? { config: ctx.config as unknown as Record<string, unknown> });
   ecosystemCompat(server, { config: ctx.config });
   generatePlugin(server, ctx);
   perfAdvisor(server, ctx);

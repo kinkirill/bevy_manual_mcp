@@ -8,12 +8,13 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { z } from "zod";
 
 import { resolveConfig, log, PACKAGE_ROOT } from "./src/config.js";
-import { VersionRegistry } from "./src/registry.js";
+import { CorpusRegistry, VersionRegistry } from "./src/registry.js";
 import { createResources } from "./src/resources_impl.js";
 import { createVersionChecker } from "./src/versions.js";
 import { errorMessage } from "./src/types.js";
 import { registerAll } from "./src/tools/index.js";
 import { createVersioning } from "./src/tools/versioning.js";
+import type { EcosystemCorpus, EcosystemFailure } from "./src/tools/ecosystem_search.js";
 import type { ToolContext } from "./src/tools/types.js";
 
 // Read the handshake version from package.json to keep release metadata consistent.
@@ -81,6 +82,40 @@ export async function createBevyServer(config = resolveConfig(), options: Server
 
   const server = new McpServer(SERVER_INFO);
 
+  // Configured plugin corpora (bevy-mcp.config.json `corpora`) load once here.
+  // A corpus that cannot be read is recorded, not fatal, and the failure is
+  // surfaced by `bevy_ecosystem_search` instead of silently searching nothing.
+  const corpusRegistry = new CorpusRegistry(config);
+  const corpusStatuses = await corpusRegistry.loadConfigured();
+  const ecosystemCorpora: EcosystemCorpus[] = [];
+  if (config.bevyVersion) {
+    ecosystemCorpora.push({
+      id: `bevy@${config.bevyVersion}`,
+      crate: "bevy",
+      version: config.bevyVersion,
+      source: "bevy-index",
+      index,
+    });
+  }
+  for (const [id, corpusIndex] of corpusRegistry.pluginIndices) {
+    const status = corpusRegistry.statuses.get(id);
+    ecosystemCorpora.push({
+      id,
+      crate: status?.crate ?? corpusIndex.meta?.crate ?? id.split("@")[0]!,
+      version: status?.version ?? corpusIndex.meta?.crate_version ?? null,
+      source: status?.source ?? corpusIndex.meta?.version_source ?? "rustdoc",
+      index: corpusIndex,
+    });
+  }
+  const ecosystemFailures: EcosystemFailure[] = corpusStatuses
+    .filter((status) => !status.loaded)
+    .map((status) => ({
+      id: status.id,
+      crate: status.crate,
+      version: status.version,
+      reason: status.reason ?? "failed to load",
+    }));
+
   const versioning = createVersioning(config, registry, index);
   const ctx: ToolContext = {
     config,
@@ -92,7 +127,12 @@ export async function createBevyServer(config = resolveConfig(), options: Server
     unavailableVersion: versioning.unavailableVersion,
   };
 
-  registerAll(server, ctx);
+  registerAll(server, ctx, {
+    config: config as unknown as Record<string, unknown> & { bevyVersion?: string | null },
+    corpora: ecosystemCorpora,
+    failures: ecosystemFailures,
+    configured: (config.corpora?.length ?? 0) > 0,
+  });
 
   const resourceLayer = createResources({
     activeVersion: config.bevyVersion,

@@ -178,7 +178,8 @@ async function makeHarness(): Promise<Harness> {
   // Re-register the ecosystem search with a plugin corpus attached.
   registerEcosystemSearch(server, {
     config: config as unknown as Record<string, unknown> & { bevyVersion?: string | null },
-    pluginIndices: new Map([["bevy_egui@0.43.1", plugin]]),
+    corpora: [{ id: "bevy_egui@0.43.1", crate: "bevy_egui", version: "0.43.1", source: "rustdoc", index: plugin }],
+    configured: true,
   });
 
   return { root, tools, config, index, previous, plugin, ctx };
@@ -530,7 +531,8 @@ await test("bevy_ecosystem_search restricts to a named crate", async () => {
 
 await test("bevy_ecosystem_search reports no matches honestly", async () => {
   const result = await call("bevy_ecosystem_search", { query: "zzzznomatchzzz" });
-  assert.match(textOf(result), /No matching symbols|no results/);
+  assert.equal(structured(result).total_hits, 0);
+  assert.match(textOf(result), /No results|no corpora|not configured/i);
 });
 
 await test("bevy_ecosystem_search counts hits across corpora", async () => {

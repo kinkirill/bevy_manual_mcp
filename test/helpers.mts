@@ -106,13 +106,13 @@ export async function protocolFixture(): Promise<{ root: string; dataDir: string
 }
 
 // Isolate subprocesses from developer-specific Bevy configuration.
-export function fixtureEnv(root: string, dataDir: string, version = "9.9.9"): Record<string, string> {
+export function fixtureEnv(root: string, dataDir: string, version = "9.9.9", extraConfig: Record<string, unknown> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith("BEVY_") && key !== "INIT_CWD") env[key] = value;
   }
   const configPath = path.join(root, "isolated.config.json");
-  writeFixture(configPath, JSON.stringify({ offline: true, websiteDir: path.join(root, "empty-website") }));
+  writeFixture(configPath, JSON.stringify({ offline: true, websiteDir: path.join(root, "empty-website"), ...extraConfig }));
   fs.mkdirSync(path.join(root, "empty-website"), { recursive: true });
   return {
     ...env,
