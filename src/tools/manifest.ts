@@ -1,80 +1,9 @@
 /** `bevy_check_manifest` tool — check which Bevy features are enabled. */
-import fs from "node:fs";
-import path from "node:path";
-import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isObject } from "../types.js";
 import { loadFeatures, subcrateOf, findGatingFeatureForCheck, type FeaturesData } from "../analysis/features.js";
+import { analyzeManifest } from "../analysis/manifest.js";
 import type { ToolContext, VersionResolution } from "./types.js";
-
-/** Parse a Cargo.toml and extract enabled Bevy features. */
-function readEnabledFeatures(projectRoot: string): {
-  explicit: string[];
-  transitive?: string[];
-} | null {
-  const tomlPath = path.join(projectRoot, "Cargo.toml");
-  if (!fs.existsSync(tomlPath)) return null;
-
-  try {
-    const raw = fs.readFileSync(tomlPath, "utf8");
-    const parsed: unknown = parseToml(raw);
-    if (!isObject(parsed)) return null;
-
-    // Look for bevy dependency with features
-    const deps = isObject(parsed.dependencies) ? parsed.dependencies : {};
-    let explicitFeatures: string[] = [];
-
-    // Check main dependencies
-    const bevyEntry: unknown | undefined = deps.bevy;
-    if (typeof bevyEntry === "object" && !Array.isArray(bevyEntry) && bevyEntry !== null) {
-      const features = (bevyEntry as Record<string, unknown>).features;
-      if (Array.isArray(features)) {
-        explicitFeatures.push(...features.filter((f): f is string => typeof f === "string"));
-      }
-    }
-
-    // Check workspace dependencies
-    if (isObject(parsed.workspace)) {
-      const wsDeps: Record<string, unknown> = isObject((parsed as any).workspace?.dependencies) ? (parsed as any).workspace.dependencies : {};
-      for (const [_name, entry] of Object.entries(wsDeps)) {
-        const e = entry as Record<string, unknown>;
-        if (typeof e === "object" && !Array.isArray(e) && typeof e.features === "string") {
-          // This would be unusual; handle gracefully
-        } else if (isObject(entry) && Array.isArray(entry.features)) {
-          const featArr = Array.isArray(entry) ? [] : (e as any)?.features;
-          if (Array.isArray(featArr)) {
-            explicitFeatures.push(...featArr.filter((f: unknown): f is string => typeof f === "string"));
-          }
-        }
-      }
-    }
-
-    return { explicit: [...new Set(explicitFeatures)] };
-  } catch {
-    return null; // Can't parse — not an error, just no manifest available
-  }
-}
-
-/** Compute the transitive closure of enabled features. */
-function computeTransitive(
-  explicit: string[],
-  data: FeaturesData | null,
-): string[] {
-  if (!data?.closure) return [];
-
-  const allEnabled = new Set(explicit);
-  for (const feat of explicit) {
-    const closure = data.closure![feat];
-    if (Array.isArray(closure)) {
-      for (const f of closure) {
-        allEnabled.add(f);
-      }
-    }
-  }
-
-  return [...allEnabled].sort();
-}
 
 /** Get all feature names from the dataset. */
 function allFeatureNames(data: FeaturesData | null): string[] {
@@ -90,10 +19,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: "Check which Bevy features are enabled in a project",
       description:
-        `Checks which Bevy features are enabled in the project's Cargo.toml and whether specific ` +
-        `symbols or subcrates are available. Use this when writing code to verify that types, ` +
-        `plugins, or systems you reference are actually available given the project's feature flags. ` +
-        `Returns a clear yes/no for each check with the reason why it is available or not.`,
+        `Checks which Bevy features are enabled in the project's manifests and whether specific ` +
+        `symbols or subcrates are available. Prefers Cargo's own resolved metadata ` +
+        `(\`cargo metadata --offline --locked\`); when that is unavailable it reads Cargo.toml ` +
+        `directly and labels the result \`partial\`, so an absent declaration is never reported as ` +
+        `"defaults disabled". Handles \`default-features\`, dependency aliases, workspace inheritance ` +
+        `and target-specific tables. Use this when writing code to verify that types, plugins, or ` +
+        `systems you reference are actually available given the project's feature flags.`,
       inputSchema: {
         check: z
           .string()
@@ -119,12 +51,11 @@ export function register(server: McpServer, ctx: ToolContext): void {
         };
       }
 
-      // Read the manifest (optional — not an error if missing)
-      const projectRoot = config.projectRoot;
-      const manifestResult = readEnabledFeatures(projectRoot);
-
-      const explicit = manifestResult?.explicit ?? [];
-      const transitive = computeTransitive(explicit, featuresData);
+      // Resolve the project's features. This never throws and never reports
+      // "defaults disabled" merely because a declaration is missing.
+      const analysis = analyzeManifest(config, featuresData);
+      const explicit = analysis.explicit;
+      const transitive = analysis.transitive;
       const allKnown = allFeatureNames(featuresData);
 
       // Build disabled list (known features that are not enabled)
@@ -134,12 +65,17 @@ export function register(server: McpServer, ctx: ToolContext): void {
         // Full report
         let output = `## Bevy ${config.bevyVersion} — Feature Report\n\n`;
 
-        if (!manifestResult) {
+        if (analysis.source === "none") {
           output += "> No Cargo.toml found in project root. Showing known features for this version.\n\n";
         } else {
-          output += `\`Cargo.toml\`: manifest parsed successfully.\n`;
+          output += `\`${analysis.manifest_path ?? "Cargo.toml"}\`: features resolved from ` +
+            `${analysis.source === "cargo-metadata" ? "Cargo metadata" : "Cargo.toml (partial analysis)"}.\n`;
+          output += `**Default features**: ${analysis.default_features_enabled ? "on" : "off"}\n`;
           output += `**Explicit**: ${explicit.length > 0 ? explicit.join(", ") : "(none)"}\n`;
           output += `**Transitive**: ${transitive.length > 0 ? transitive.join(", ") : "(none)"}\n\n`;
+          if (analysis.partial && analysis.warning) {
+            output += `> ⚠ ${analysis.warning}\n\n`;
+          }
         }
 
         // Table of all features
@@ -169,7 +105,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
             explicit,
             transitive,
             disabled,
-            no_manifest: !manifestResult,
+            default_features_enabled: analysis.default_features_enabled,
+            analysis_source: analysis.source,
+            partial: analysis.partial,
+            manifest_path: analysis.manifest_path,
+            has_bevy_dependency: analysis.has_bevy_dependency,
+            warning: analysis.warning,
+            no_manifest: analysis.source === "none",
           },
         };
       }
@@ -185,6 +127,9 @@ export function register(server: McpServer, ctx: ToolContext): void {
           reason: verdict.reason,
           gating_feature: verdict.gating_feature,
           bevy_version: config.bevyVersion,
+          analysis_source: analysis.source,
+          partial: analysis.partial,
+          default_features_enabled: analysis.default_features_enabled,
         },
       };
     },

@@ -127,7 +127,7 @@ async function makeHarness(): Promise<Harness> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bevy-mcp-tools-"));
   writeFixture(
     path.join(root, "Cargo.toml"),
-    `[package]\nname = "proj"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nbevy = { version = "0.20.0", features = ["bevy_ui"] }\n`,
+    `[package]\nname = "proj"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nbevy = { version = "0.20.0", default-features = false, features = ["bevy_ui"] }\n`,
   );
   const config = fixtureConfig(root, {
     bevyVersion: "0.20.0",

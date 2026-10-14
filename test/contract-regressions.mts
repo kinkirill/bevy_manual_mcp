@@ -320,7 +320,7 @@ await test("ecosystem search: one failed corpus beside one healthy corpus is rep
 
 // --- C-02 feature detection --------------------------------------------------
 
-await test("manifest: implicit default features are reported enabled", { todo: "C-02a: default features are not modelled" }, async () => {
+await test("manifest: implicit default features are reported enabled", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "minimal") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const data = structured(result);
@@ -328,7 +328,7 @@ await test("manifest: implicit default features are reported enabled", { todo: "
   assert.ok((data.transitive as string[]).length > 0, "implicit defaults produced no features");
 });
 
-await test("manifest: default-features = false is represented", { todo: "C-02b: default-features = false is not modelled" }, async () => {
+await test("manifest: default-features = false is represented", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "no-default-features") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const data = structured(result);
@@ -336,13 +336,13 @@ await test("manifest: default-features = false is represented", { todo: "C-02b: 
   assert.ok((data.transitive as string[]).includes("bevy_ui"));
 });
 
-await test("manifest: a package alias is resolved", { todo: "C-02c: dependency aliases are ignored" }, async () => {
+await test("manifest: a package alias is resolved", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich", "app") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   assert.ok((structured(result).explicit as string[]).includes("bevy_audio"), "alias_bevy's feature was dropped");
 });
 
-await test("manifest: workspace inheritance does not leak other crates' features", { todo: "C-02d: workspace features leak across crates" }, async () => {
+await test("manifest: workspace inheritance does not leak other crates' features", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const explicit = structured(result).explicit as string[];
@@ -350,7 +350,7 @@ await test("manifest: workspace inheritance does not leak other crates' features
   assert.ok(!explicit.includes("derive"), "serde's feature leaked into the Bevy report");
 });
 
-await test("manifest: target-specific Bevy features are considered", { todo: "C-02e: target tables are not read" }, async () => {
+await test("manifest: target-specific Bevy features are considered", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich", "app") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   assert.ok((structured(result).explicit as string[]).includes("webgl2"), "target-specific feature was dropped");
@@ -358,7 +358,7 @@ await test("manifest: target-specific Bevy features are considered", { todo: "C-
 
 // --- C-03 / C-04 / C-05 / C-06 ECS analyzer ---------------------------------
 
-await test("validate: tuple member mutability is not leaked onto a read member", { todo: "C-03a: tuple Query is treated as a single mutable type" }, async () => {
+await test("validate: tuple member mutability is not leaked onto a read member", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Transform>) {}",
   });
@@ -370,14 +370,14 @@ await test("validate: tuple member mutability is not leaked onto a read member",
   assert.equal(findings[0]!.resource_type, "Transform");
 });
 
-await test("validate: tuple Query read of one member and read of another is clean", { todo: "C-03a: Velocity mutability poisons the whole tuple" }, async () => {
+await test("validate: tuple Query read of one member and read of another is clean", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&Transform>) {}",
   });
   assert.equal(structured(result).findings_count, 0);
 });
 
-await test("validate: tuple Query detects a conflict on the mutable member", { todo: "C-03b: only the first tuple member is examined" }, async () => {
+await test("validate: tuple Query detects a conflict on the mutable member", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Velocity>) {}",
   });
@@ -387,7 +387,7 @@ await test("validate: tuple Query detects a conflict on the mutable member", { t
   assert.equal(findings[0]!.resource_type, "Velocity");
 });
 
-await test("validate: fn inside a comment is not a phantom system", { todo: "C-04: extractFnItems scans raw text" }, async () => {
+await test("validate: fn inside a comment is not a phantom system", async () => {
   const result = await call("bevy_validate_systems", {
     code: "// fn phantom(a: Query<&mut Transform>, b: Query<&Transform>) {}\nfn real(a: Query<&Transform>) {}",
   });
@@ -395,14 +395,14 @@ await test("validate: fn inside a comment is not a phantom system", { todo: "C-0
   assert.equal(structured(result).findings_count, 0);
 });
 
-await test("validate: unsupported syntax is reported as not fully analyzed", { todo: "C-05: no completeness signal is emitted" }, async () => {
+await test("validate: unsupported syntax is reported as not fully analyzed", async () => {
   const result = await call("bevy_validate_systems", { code: "fn f(p: MyCustomSystemParam) {}" });
   const data = structured(result);
   assert.equal(data.analysis_complete, false);
   assert.deepEqual(data.unanalyzed, ["MyCustomSystemParam"]);
 });
 
-await test("validate: context input is either honored or absent from the schema", { todo: "C-06: context is accepted but ignored" }, () => {
+await test("validate: context input is not advertised", () => {
   const schema = harness.configs.get("bevy_validate_systems")?.inputSchema as Record<string, unknown>;
   assert.ok(schema, "validate_systems has no input schema");
   assert.ok(!("context" in schema), "context is advertised but never read");
