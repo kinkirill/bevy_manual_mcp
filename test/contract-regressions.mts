@@ -259,8 +259,8 @@ await test("compat: tilde allows patch updates only", () => {
 });
 
 await test("compat: an exact requirement matches one version only", () => {
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.0"), true);
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.1"), false);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.0"), true);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.1"), false);
 });
 
 await test("validate: filters that prove disjointness suppress the conflict", async () => {
@@ -410,36 +410,36 @@ await test("validate: context input is not advertised", () => {
 
 // --- C-07 / C-09 / C-10 / C-11 / C-12 compatibility --------------------------
 
-await test("compat: caret on 0.0.x does not span the minor line", { todo: "C-07: ^0.0.3 upper bound is computed as 0.1.0" }, () => {
+await test("compat: caret on 0.0.x does not span the minor line", () => {
   assert.equal(satisfiesRequirement("^0.0.3", "0.0.3"), true);
   assert.equal(satisfiesRequirement("^0.0.3", "0.0.4"), false);
 });
 
-await test("compat: a patch wildcard is honoured", { todo: "C-07: 0.20.* is not parsed" }, () => {
+await test("compat: a patch wildcard is honoured", () => {
   assert.equal(satisfiesRequirement("0.20.*", "0.20.5"), true);
   assert.equal(satisfiesRequirement("0.20.*", "0.21.0"), false);
 });
 
-await test("compat: an unknown Bevy version never yields compatible", { todo: "C-09: no version returns compatible: true" }, async () => {
+await test("compat: an unknown Bevy version never yields compatible", async () => {
   const h = await makeHarness({ bevyVersion: null });
   const result = await h.tools.get("bevy_ecosystem_compat")!({ crate: "bevy_egui" });
   assert.notEqual(structured(result).compatible, true);
 });
 
-await test("compat: matching plugin versions are returned as candidates", { todo: "C-10: only a boolean is returned" }, async () => {
+await test("compat: matching plugin versions are returned as candidates", async () => {
   const result = await call("bevy_ecosystem_compat", { crate: "bevy_egui" });
   const matching = structured(result).matching_versions as string[];
   assert.ok(Array.isArray(matching), "matching_versions should be an array");
   assert.ok(matching.includes("0.43.1"), "the Bevy 0.20 candidate was not listed");
 });
 
-await test("compat: warning references the newest release's requirement", { todo: "C-11: the oldest entry is quoted" }, async () => {
+await test("compat: warning references the newest release's requirement", async () => {
   const h = await makeHarness({ bevyVersion: "0.1.0" });
   const result = await h.tools.get("bevy_ecosystem_compat")!({ crate: "bevy_egui" });
   assert.match(textOf(result), /\^0\.20\.0/);
 });
 
-await test("compat: an unsupported requirement is unknown, not incompatible", { todo: "C-08: unsupported operators become a definitive negative" }, async () => {
+await test("compat: an unsupported requirement is unknown, not incompatible", async () => {
   const h = await makeHarness({ bevyVersion: "0.21.0" });
   const { server, tools } = captureServer();
   registerEcosystemCompat(server, { config: h.config, compatPath: path.join(FIXTURES, "ecosystem", "compat-edge.json") });
@@ -447,7 +447,7 @@ await test("compat: an unsupported requirement is unknown, not incompatible", { 
   assert.notEqual(structured(result).compatible, false);
 });
 
-await test("compat: the snapshot reports its provenance", { todo: "C-12: no harvest date, source or completeness marker" }, async () => {
+await test("compat: the snapshot reports its provenance", async () => {
   const result = await call("bevy_ecosystem_compat", { crate: "bevy_egui" });
   const provenance = structured(result).provenance as Record<string, unknown> | undefined;
   assert.ok(provenance, "provenance is missing");
@@ -457,29 +457,48 @@ await test("compat: the snapshot reports its provenance", { todo: "C-12: no harv
 
 // --- C-13 / C-14 generator ---------------------------------------------------
 
-await test("generate: system-set template is self-contained", { todo: "C-13: #[system_set] and OtherSystem are undefined" }, async () => {
+await test("generate: system-set template is self-contained", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-with-systemset" });
   const code = String(structured(result).code);
   assert.doesNotMatch(code, /OtherSystem/);
   assert.match(code, /#\[derive\([^\]]*SystemSet/);
 });
 
-await test("generate: PLUGIN_NAME changes the emitted plugin", { todo: "C-14a: templates contain no placeholders" }, async () => {
+await test("generate: every template declares the types it references", async () => {
+  // A self-containment check without a compiler: every capitalised identifier
+  // must be declared by the template or come from the Bevy prelude allowlist.
+  const bevyPrelude = new Set([
+    "App", "Plugin", "SystemSet", "Resource", "Res", "Update",
+    "Debug", "Clone", "PartialEq", "Eq", "Hash",
+  ]);
+  for (const template of ["plugin-skeleton", "plugin-with-systemset"]) {
+    const code = String(structured(await call("bevy_generate_plugin", { template })).code);
+    const declared = new Set(
+      [...code.matchAll(/(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]!),
+    );
+    for (const match of code.matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) {
+      const name = match[1]!;
+      assert.ok(declared.has(name) || bevyPrelude.has(name), `${template} references undeclared type ${name}`);
+    }
+  }
+});
+
+await test("generate: PLUGIN_NAME changes the emitted plugin", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { PLUGIN_NAME: "FooPlugin" } });
   assert.match(String(structured(result).code), /FooPlugin/);
 });
 
-await test("generate: a malformed parameter key does not throw", { todo: "C-14b: RegExp is built from the user key" }, async () => {
+await test("generate: a malformed parameter key does not throw", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { "a(": "x" } });
   assert.ok(result, "the tool should return a result, not throw");
 });
 
-await test("generate: symbol checks are labelled as diagnostics, not compilation", { todo: "C-15: symbol presence is presented as compile safety" }, async () => {
+await test("generate: symbol checks are labelled as diagnostics, not compilation", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton" });
   assert.equal(structured(result).compile_verified, false);
 });
 
-await test("generate: unknown parameters are reported", { todo: "C-14c: unknown keys are silently ignored" }, async () => {
+await test("generate: unknown parameters are reported", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { NOT_A_SLOT: "x" } });
   assert.ok((structured(result).ignored_params as string[]).includes("NOT_A_SLOT"));
 });

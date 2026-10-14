@@ -3,7 +3,7 @@
     {
       "plugin": "edge_plugin",
       "plugin_version": "1.0.0",
-      "requires_bevy": ">=0.20.0"
+      "requires_bevy": "^0.20.0 || ^0.21.0"
     }
   ],
   "zero_plugin": [

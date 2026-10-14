@@ -31,8 +31,8 @@ test("a caret requirement accepts its own minor and rejects neighbours", () => {
 });
 
 test("an exact requirement is inclusive, unlike a caret range", () => {
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.0"), true);
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.1"), false);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.0"), true);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.1"), false);
   assert.equal(satisfiesRange("0.20.0", "0.20.0", "0.20.0"), false);
 });
 
