@@ -30,7 +30,7 @@
         },
         {
           "name": "BEVY_DOC_DIR",
-          "description": "cargo target/doc directory, or a fetch-docs.mjs mirror.",
+          "description": "cargo target/doc directory, or a scripts/fetch-docs.mts mirror.",
           "format": "filepath"
         },
         {
