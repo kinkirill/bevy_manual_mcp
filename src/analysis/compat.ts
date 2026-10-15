@@ -66,14 +66,14 @@ export function satisfiesRequirement(req: string, version: string): boolean {
 }
 
 /** Absolute path to the vendored compatibility snapshot. */
-export function vendoredCompatPath(): string {
-  return path.join(PACKAGE_ROOT, "vendor", "ecosystem", "compat.json");
+export function vendoredCompatPath(override?: string | null): string {
+  return override || path.join(PACKAGE_ROOT, "vendor", "ecosystem", "compat.json");
 }
 
 /** Load the whole vendored snapshot, keyed by plugin crate name. */
-export function loadVendoredCompatAll(): Record<string, CompatibilityEntry[]> {
+export function loadVendoredCompatAll(override?: string | null): Record<string, CompatibilityEntry[]> {
   try {
-    const raw = JSON.parse(fs.readFileSync(vendoredCompatPath(), "utf8")) as unknown;
+    const raw = JSON.parse(fs.readFileSync(vendoredCompatPath(override), "utf8")) as unknown;
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
     return raw as Record<string, CompatibilityEntry[]>;
   } catch {

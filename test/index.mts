@@ -38,6 +38,7 @@ try {
   const metaStatus = run("vendored metadata harvest", [path.join(HERE, "meta-harvest-test.mjs")]);
   const compatStatus = run("ecosystem compatibility", [path.join(HERE, "compat-test.mjs")]);
   const toolsStatus = run("per-tool behaviour", [path.join(HERE, "tools-test.mjs")]);
+  const contractsStatus = run("P0 contract regressions", [path.join(HERE, "contract-regressions.mjs")]);
 
   const descriptor = path.join(fixtureDir, "resource-fixture.json");
   if (!fs.existsSync(descriptor)) {
@@ -45,7 +46,7 @@ try {
       `\nCould not build the resource fixture, so the resource-layer tests were ` +
         `skipped. Run "node test/run-tests.mjs" alone to see why.\n`,
     );
-    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || compatStatus || toolsStatus || 1;
+    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || compatStatus || toolsStatus || contractsStatus || 1;
   } else {
     const { dataDir, version } = parseObject(fs.readFileSync(descriptor, "utf8"));
     assert.equal(typeof dataDir, "string");
@@ -56,7 +57,7 @@ try {
     const regressionStatus = run("configuration, persistence and version regressions", [path.join(HERE, "regressions.mjs")], env);
     const resourceStatus = run("resource-layer conformance", [path.join(HERE, "resources-test.mjs")], env);
     const toolStatus = run("MCP tools and compatibility entrypoints", [path.join(HERE, "mcp-e2e.mjs")], env);
-    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || metaStatus || compatStatus || toolsStatus || metadataStatus || regressionStatus || resourceStatus || toolStatus;
+    exitCode = unitStatus || releaseStatus || downloadStatus || symbolsStatus || duplicateStatus || questionsStatus || metaStatus || compatStatus || toolsStatus || contractsStatus || metadataStatus || regressionStatus || resourceStatus || toolStatus;
   }
 } finally {
   fs.rmSync(fixtureDir, { recursive: true, force: true });

@@ -1,0 +1,11 @@
+# Phase 0 fixture: default features explicitly disabled.
+#
+# Only `bevy_ui` (and whatever it transitively enables) should be reported on;
+# the implicit default set must not be assumed.
+[package]
+name = "no-default-features-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.20.0", default-features = false, features = ["bevy_ui"] }
