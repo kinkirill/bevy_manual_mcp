@@ -27,8 +27,10 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { BevyIndex, hybridSearch } from "../src/store.js";
 import { createVersioning } from "../src/tools/versioning.js";
 import { createVersionChecker } from "../src/versions.js";
+import { CorpusRegistry } from "../src/registry.js";
 import { registerAll } from "../src/tools/index.js";
 import { register as registerEcosystemCompat } from "../src/tools/ecosystem_compat.js";
+import type { EcosystemCorpus, EcosystemFailure, EcosystemToolContext } from "../src/tools/ecosystem_search.js";
 import { satisfiesRequirement } from "../src/analysis/compat.js";
 import { parseRecord } from "../src/types.js";
 import type { BevyRecord, ResolvedConfig } from "../src/types.js";
@@ -122,6 +124,33 @@ async function buildIndex(records: BevyRecord[], version: string): Promise<BevyI
   return index;
 }
 
+async function buildEcosystem(config: ResolvedConfig, index: BevyIndex): Promise<EcosystemToolContext> {
+  const corpusRegistry = new CorpusRegistry(config);
+  const statuses = await corpusRegistry.loadConfigured();
+  const corpora: EcosystemCorpus[] = config.bevyVersion
+    ? [{ id: `bevy@${config.bevyVersion}`, crate: "bevy", version: config.bevyVersion, source: "bevy-index", index }]
+    : [];
+  for (const [id, corpusIndex] of corpusRegistry.pluginIndices) {
+    const status = corpusRegistry.statuses.get(id);
+    corpora.push({
+      id,
+      crate: status?.crate ?? id.split("@")[0]!,
+      version: status?.version ?? corpusIndex.meta?.crate_version ?? null,
+      source: status?.source ?? "rustdoc",
+      index: corpusIndex,
+    });
+  }
+  const failures: EcosystemFailure[] = statuses
+    .filter((status) => !status.loaded)
+    .map((status) => ({ id: status.id, crate: status.crate, version: status.version, reason: status.reason ?? "failed to load" }));
+  return {
+    config: config as unknown as Record<string, unknown> & { bevyVersion?: string | null },
+    corpora,
+    failures,
+    configured: (config.corpora?.length ?? 0) > 0,
+  };
+}
+
 interface Harness {
   root: string;
   index: BevyIndex;
@@ -160,7 +189,7 @@ async function makeHarness(overrides: Partial<ResolvedConfig> = {}): Promise<Har
     ...createVersioning(config, registry, index),
   };
   const { server, tools, configs } = captureServer();
-  registerAll(server, ctx);
+  registerAll(server, ctx, await buildEcosystem(config, index));
   return { root, index, config, tools, configs };
 }
 
@@ -230,8 +259,8 @@ await test("compat: tilde allows patch updates only", () => {
 });
 
 await test("compat: an exact requirement matches one version only", () => {
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.0"), true);
-  assert.equal(satisfiesRequirement("0.20.0", "0.20.1"), false);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.0"), true);
+  assert.equal(satisfiesRequirement("=0.20.0", "0.20.1"), false);
 });
 
 await test("validate: filters that prove disjointness suppress the conflict", async () => {
@@ -249,15 +278,49 @@ await test("generate: an unknown template is rejected", async () => {
 
 // --- C-01 ecosystem search ---------------------------------------------------
 
-await test("ecosystem search: registerAll searches the configured plugin corpus", { todo: "C-01: registerAll passes pluginIndices: undefined" }, async () => {
-  const h = await makeHarness({ corpora: [{ crate: "bevy_egui", version: "0.43.1" }] });
+await test("ecosystem search: registerAll searches the configured plugin corpus", async () => {
+  const h = await makeHarness({
+    corpora: [{ crate: "bevy_egui", version: "0.43.1", indexDir: path.join(FIXTURES, "ecosystem", "bevy_egui"), source: "fixture" }],
+  });
   const result = await h.tools.get("bevy_ecosystem_search")!({ query: "EguiContexts" });
-  assert.ok((structured(result).corpora_searched as string[]).length > 0, "no corpus was searched");
+  const data = structured(result);
+  assert.ok((data.corpora_searched as string[]).includes("bevy_egui@0.43.1"), "configured corpus was not searched");
+  assert.ok((data.total_hits as number) >= 1, "the plugin symbol was not found");
+});
+
+await test("ecosystem search: with no plugin corpora it searches Bevy only and says so", async () => {
+  const result = await call("bevy_ecosystem_search", { query: "Transform" });
+  const data = structured(result);
+  assert.deepEqual(data.corpora_searched, ["bevy@0.20.0"]);
+  assert.equal(data.plugin_corpora_configured, 0);
+  assert.match(textOf(result), /No plugin corpora are configured/);
+});
+
+await test("ecosystem search: an unknown crate produces a clear response", async () => {
+  const result = await call("bevy_ecosystem_search", { query: "Button", crate: "definitely_missing" });
+  assert.equal(result.isError, true);
+  assert.deepEqual(structured(result).corpora_searched, []);
+  assert.ok((structured(result).available_corpora as string[]).includes("bevy@0.20.0"));
+  assert.match(textOf(result), /No configured corpus matches/);
+});
+
+await test("ecosystem search: one failed corpus beside one healthy corpus is reported", async () => {
+  const h = await makeHarness({
+    corpora: [
+      { crate: "bevy_egui", version: "0.43.1", indexDir: path.join(FIXTURES, "ecosystem", "bevy_egui"), source: "fixture" },
+      { crate: "missing_plugin", version: "0.1.0" },
+    ],
+  });
+  const result = await h.tools.get("bevy_ecosystem_search")!({ query: "Button" });
+  const data = structured(result);
+  assert.ok((data.corpora_searched as string[]).includes("bevy_egui@0.43.1"));
+  assert.equal((data.failures as unknown[]).length, 1);
+  assert.match(textOf(result), /no docDir|failed to load/);
 });
 
 // --- C-02 feature detection --------------------------------------------------
 
-await test("manifest: implicit default features are reported enabled", { todo: "C-02a: default features are not modelled" }, async () => {
+await test("manifest: implicit default features are reported enabled", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "minimal") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const data = structured(result);
@@ -265,7 +328,7 @@ await test("manifest: implicit default features are reported enabled", { todo: "
   assert.ok((data.transitive as string[]).length > 0, "implicit defaults produced no features");
 });
 
-await test("manifest: default-features = false is represented", { todo: "C-02b: default-features = false is not modelled" }, async () => {
+await test("manifest: default-features = false is represented", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "no-default-features") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const data = structured(result);
@@ -273,13 +336,13 @@ await test("manifest: default-features = false is represented", { todo: "C-02b: 
   assert.ok((data.transitive as string[]).includes("bevy_ui"));
 });
 
-await test("manifest: a package alias is resolved", { todo: "C-02c: dependency aliases are ignored" }, async () => {
+await test("manifest: a package alias is resolved", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich", "app") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   assert.ok((structured(result).explicit as string[]).includes("bevy_audio"), "alias_bevy's feature was dropped");
 });
 
-await test("manifest: workspace inheritance does not leak other crates' features", { todo: "C-02d: workspace features leak across crates" }, async () => {
+await test("manifest: workspace inheritance does not leak other crates' features", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   const explicit = structured(result).explicit as string[];
@@ -287,7 +350,7 @@ await test("manifest: workspace inheritance does not leak other crates' features
   assert.ok(!explicit.includes("derive"), "serde's feature leaked into the Bevy report");
 });
 
-await test("manifest: target-specific Bevy features are considered", { todo: "C-02e: target tables are not read" }, async () => {
+await test("manifest: target-specific Bevy features are considered", async () => {
   const h = await makeHarness({ projectRoot: path.join(FIXTURES, "projects", "feature-rich", "app") });
   const result = await h.tools.get("bevy_check_manifest")!({});
   assert.ok((structured(result).explicit as string[]).includes("webgl2"), "target-specific feature was dropped");
@@ -295,7 +358,7 @@ await test("manifest: target-specific Bevy features are considered", { todo: "C-
 
 // --- C-03 / C-04 / C-05 / C-06 ECS analyzer ---------------------------------
 
-await test("validate: tuple member mutability is not leaked onto a read member", { todo: "C-03a: tuple Query is treated as a single mutable type" }, async () => {
+await test("validate: tuple member mutability is not leaked onto a read member", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Transform>) {}",
   });
@@ -307,14 +370,14 @@ await test("validate: tuple member mutability is not leaked onto a read member",
   assert.equal(findings[0]!.resource_type, "Transform");
 });
 
-await test("validate: tuple Query read of one member and read of another is clean", { todo: "C-03a: Velocity mutability poisons the whole tuple" }, async () => {
+await test("validate: tuple Query read of one member and read of another is clean", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&Transform>) {}",
   });
   assert.equal(structured(result).findings_count, 0);
 });
 
-await test("validate: tuple Query detects a conflict on the mutable member", { todo: "C-03b: only the first tuple member is examined" }, async () => {
+await test("validate: tuple Query detects a conflict on the mutable member", async () => {
   const result = await call("bevy_validate_systems", {
     code: "fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Velocity>) {}",
   });
@@ -324,7 +387,7 @@ await test("validate: tuple Query detects a conflict on the mutable member", { t
   assert.equal(findings[0]!.resource_type, "Velocity");
 });
 
-await test("validate: fn inside a comment is not a phantom system", { todo: "C-04: extractFnItems scans raw text" }, async () => {
+await test("validate: fn inside a comment is not a phantom system", async () => {
   const result = await call("bevy_validate_systems", {
     code: "// fn phantom(a: Query<&mut Transform>, b: Query<&Transform>) {}\nfn real(a: Query<&Transform>) {}",
   });
@@ -332,14 +395,14 @@ await test("validate: fn inside a comment is not a phantom system", { todo: "C-0
   assert.equal(structured(result).findings_count, 0);
 });
 
-await test("validate: unsupported syntax is reported as not fully analyzed", { todo: "C-05: no completeness signal is emitted" }, async () => {
+await test("validate: unsupported syntax is reported as not fully analyzed", async () => {
   const result = await call("bevy_validate_systems", { code: "fn f(p: MyCustomSystemParam) {}" });
   const data = structured(result);
   assert.equal(data.analysis_complete, false);
   assert.deepEqual(data.unanalyzed, ["MyCustomSystemParam"]);
 });
 
-await test("validate: context input is either honored or absent from the schema", { todo: "C-06: context is accepted but ignored" }, () => {
+await test("validate: context input is not advertised", () => {
   const schema = harness.configs.get("bevy_validate_systems")?.inputSchema as Record<string, unknown>;
   assert.ok(schema, "validate_systems has no input schema");
   assert.ok(!("context" in schema), "context is advertised but never read");
@@ -347,36 +410,36 @@ await test("validate: context input is either honored or absent from the schema"
 
 // --- C-07 / C-09 / C-10 / C-11 / C-12 compatibility --------------------------
 
-await test("compat: caret on 0.0.x does not span the minor line", { todo: "C-07: ^0.0.3 upper bound is computed as 0.1.0" }, () => {
+await test("compat: caret on 0.0.x does not span the minor line", () => {
   assert.equal(satisfiesRequirement("^0.0.3", "0.0.3"), true);
   assert.equal(satisfiesRequirement("^0.0.3", "0.0.4"), false);
 });
 
-await test("compat: a patch wildcard is honoured", { todo: "C-07: 0.20.* is not parsed" }, () => {
+await test("compat: a patch wildcard is honoured", () => {
   assert.equal(satisfiesRequirement("0.20.*", "0.20.5"), true);
   assert.equal(satisfiesRequirement("0.20.*", "0.21.0"), false);
 });
 
-await test("compat: an unknown Bevy version never yields compatible", { todo: "C-09: no version returns compatible: true" }, async () => {
+await test("compat: an unknown Bevy version never yields compatible", async () => {
   const h = await makeHarness({ bevyVersion: null });
   const result = await h.tools.get("bevy_ecosystem_compat")!({ crate: "bevy_egui" });
   assert.notEqual(structured(result).compatible, true);
 });
 
-await test("compat: matching plugin versions are returned as candidates", { todo: "C-10: only a boolean is returned" }, async () => {
+await test("compat: matching plugin versions are returned as candidates", async () => {
   const result = await call("bevy_ecosystem_compat", { crate: "bevy_egui" });
   const matching = structured(result).matching_versions as string[];
   assert.ok(Array.isArray(matching), "matching_versions should be an array");
   assert.ok(matching.includes("0.43.1"), "the Bevy 0.20 candidate was not listed");
 });
 
-await test("compat: warning references the newest release's requirement", { todo: "C-11: the oldest entry is quoted" }, async () => {
+await test("compat: warning references the newest release's requirement", async () => {
   const h = await makeHarness({ bevyVersion: "0.1.0" });
   const result = await h.tools.get("bevy_ecosystem_compat")!({ crate: "bevy_egui" });
   assert.match(textOf(result), /\^0\.20\.0/);
 });
 
-await test("compat: an unsupported requirement is unknown, not incompatible", { todo: "C-08: unsupported operators become a definitive negative" }, async () => {
+await test("compat: an unsupported requirement is unknown, not incompatible", async () => {
   const h = await makeHarness({ bevyVersion: "0.21.0" });
   const { server, tools } = captureServer();
   registerEcosystemCompat(server, { config: h.config, compatPath: path.join(FIXTURES, "ecosystem", "compat-edge.json") });
@@ -384,7 +447,7 @@ await test("compat: an unsupported requirement is unknown, not incompatible", { 
   assert.notEqual(structured(result).compatible, false);
 });
 
-await test("compat: the snapshot reports its provenance", { todo: "C-12: no harvest date, source or completeness marker" }, async () => {
+await test("compat: the snapshot reports its provenance", async () => {
   const result = await call("bevy_ecosystem_compat", { crate: "bevy_egui" });
   const provenance = structured(result).provenance as Record<string, unknown> | undefined;
   assert.ok(provenance, "provenance is missing");
@@ -394,29 +457,48 @@ await test("compat: the snapshot reports its provenance", { todo: "C-12: no harv
 
 // --- C-13 / C-14 generator ---------------------------------------------------
 
-await test("generate: system-set template is self-contained", { todo: "C-13: #[system_set] and OtherSystem are undefined" }, async () => {
+await test("generate: system-set template is self-contained", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-with-systemset" });
   const code = String(structured(result).code);
   assert.doesNotMatch(code, /OtherSystem/);
   assert.match(code, /#\[derive\([^\]]*SystemSet/);
 });
 
-await test("generate: PLUGIN_NAME changes the emitted plugin", { todo: "C-14a: templates contain no placeholders" }, async () => {
+await test("generate: every template declares the types it references", async () => {
+  // A self-containment check without a compiler: every capitalised identifier
+  // must be declared by the template or come from the Bevy prelude allowlist.
+  const bevyPrelude = new Set([
+    "App", "Plugin", "SystemSet", "Resource", "Res", "Update",
+    "Debug", "Clone", "PartialEq", "Eq", "Hash",
+  ]);
+  for (const template of ["plugin-skeleton", "plugin-with-systemset"]) {
+    const code = String(structured(await call("bevy_generate_plugin", { template })).code);
+    const declared = new Set(
+      [...code.matchAll(/(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]!),
+    );
+    for (const match of code.matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) {
+      const name = match[1]!;
+      assert.ok(declared.has(name) || bevyPrelude.has(name), `${template} references undeclared type ${name}`);
+    }
+  }
+});
+
+await test("generate: PLUGIN_NAME changes the emitted plugin", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { PLUGIN_NAME: "FooPlugin" } });
   assert.match(String(structured(result).code), /FooPlugin/);
 });
 
-await test("generate: a malformed parameter key does not throw", { todo: "C-14b: RegExp is built from the user key" }, async () => {
+await test("generate: a malformed parameter key does not throw", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { "a(": "x" } });
   assert.ok(result, "the tool should return a result, not throw");
 });
 
-await test("generate: symbol checks are labelled as diagnostics, not compilation", { todo: "C-15: symbol presence is presented as compile safety" }, async () => {
+await test("generate: symbol checks are labelled as diagnostics, not compilation", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton" });
   assert.equal(structured(result).compile_verified, false);
 });
 
-await test("generate: unknown parameters are reported", { todo: "C-14c: unknown keys are silently ignored" }, async () => {
+await test("generate: unknown parameters are reported", async () => {
   const result = await call("bevy_generate_plugin", { template: "plugin-skeleton", params: { NOT_A_SLOT: "x" } });
   assert.ok((structured(result).ignored_params as string[]).includes("NOT_A_SLOT"));
 });

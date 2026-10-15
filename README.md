@@ -381,7 +381,7 @@ own `cargo doc`, adding engine examples, and what the build costs - see
 | `bevy_check_manifest` | Which Bevy features are on in *your* `Cargo.toml` (transitively), and whether a symbol, subcrate or plugin is available under them. |
 | `bevy_validate_systems` | Lint system signatures for Bevy's access-rule panics (B0001/B0002) *before* running - filter-aware, so B0001's own documented fix passes clean. |
 | `bevy_explain_error` | Paste a Bevy panic or warning → the cause and the worked fix, resolved against your pinned version. |
-| `bevy_generate_plugin` | Version-correct plugin scaffolds; every required symbol is verified against the index first. |
+| `bevy_generate_plugin` | Version-correct plugin scaffolds; self-contained output with required symbols checked against the index (not compiled). |
 | `bevy_perf_advisor` | Version-aware performance advice, and detection of anti-patterns such as `is_changed()`. |
 | `bevy_ecosystem_search` | Search indexed plugin corpora (`bevy_egui`, `bevy_rapier3d`, `leafwing_input_manager`), every result labelled with its crate. |
 | `bevy_ecosystem_compat` | Which plugin version goes with your Bevy - and which Bevy a plugin version needs. |

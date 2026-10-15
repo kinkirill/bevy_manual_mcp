@@ -69,6 +69,28 @@ try {
       }
     });
   }
+  await test("MCP ecosystem search reads a configured plugin corpus", { timeout: 30_000 }, async () => {
+    const docDir = path.join(root, "rdfixture", "target", "doc");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(REPO_ROOT, "build", "index.js")],
+      cwd: root,
+      env: fixtureEnv(root, dataDir, "9.9.9", {
+        corpora: [{ crate: "rdfixture", version: "9.9.9", docDir, source: "local rustdoc" }],
+      }),
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "ecosystem-tests", version: "1.0.0" });
+    try {
+      await client.connect(transport, { timeout: 15_000 });
+      const result = await client.callTool({ name: "bevy_ecosystem_search", arguments: { query: "Widget", crate: "rdfixture" } });
+      assert.notEqual(result.isError, true);
+      const data = result.structuredContent as Record<string, unknown> | undefined;
+      assert.deepEqual(data?.corpora_searched, ["rdfixture@9.9.9"]);
+      assert.ok((data?.total_hits as number) >= 1);
+      assert.match(responseText(result), /rdfixture::Widget|A widget resource/);
+    } finally { await client.close(); }
+  });
   await test("MCP historical reads and API diffs use each version's own index", { timeout: 30_000 }, async () => {
     const historical = path.join(root, "historical-docs");
     fs.cpSync(path.join(root, "rdfixture", "target", "doc"), historical, { recursive: true });

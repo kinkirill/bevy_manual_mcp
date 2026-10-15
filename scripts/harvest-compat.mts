@@ -87,10 +87,35 @@ async function main(): Promise<void> {
     console.log(`  ${entries.length} versions recorded`);
   }
 
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, JSON.stringify(compat, null, 2) + "\n");
   const total = Object.values(compat).reduce((n, list) => n + list.length, 0);
-  console.log(`\nWrote ${total} entries to ${outPath}`);
+  const complete = CRATES.every((crate) => (compat[crate]?.length ?? 0) > 0);
+  const snapshot = {
+    meta: {
+      harvested_at: new Date().toISOString(),
+      source: "crates.io API",
+      version_count: total,
+      plugin_count: Object.keys(compat).length,
+      complete,
+    },
+    plugins: compat,
+  };
+
+  // A partial harvest must not silently replace a good snapshot.
+  let target = outPath;
+  if (!complete && fs.existsSync(outPath)) {
+    let existingGood = false;
+    try {
+      const existing = JSON.parse(fs.readFileSync(outPath, "utf8")) as { meta?: { complete?: boolean } };
+      existingGood = existing?.meta?.complete !== false;
+    } catch { /* an unreadable existing file can be replaced */ }
+    if (existingGood) {
+      target = `${outPath}.partial.json`;
+      console.error(`\n! Harvest is incomplete (${total} entries); keeping the good snapshot and writing a partial result to ${target}.`);
+    }
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(snapshot, null, 2) + "\n");
+  console.log(`\nWrote ${total} entries to ${target}${complete ? "" : " (incomplete)"}`);
 }
 
 main().catch((error: unknown) => {
