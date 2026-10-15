@@ -68,6 +68,21 @@ cd bevy_manual_mcp && npm install
 node bin/bevy-mcp.js fetch-index 0.20.0
 ```
 
+### From source
+
+The TypeScript sources are `index.ts`, `server.ts`, `bin/bevy-mcp.ts`,
+`src/**/*.ts`, `scripts/**/*.mts` and `test/**/*.mts`. `npm install` compiles
+them into `build/` and generates the `.js`/`.mjs` launchers (`index.js`,
+`bin/bevy-mcp.js`, `scripts/*.mjs`, `test/*.mjs`) that MCP clients and the
+published package invoke.
+
+```bash
+npm run build       # tsc + regenerate the .js/.mjs launchers
+npm run typecheck   # tsc --noEmit
+npm test            # build, then every suite
+npm start           # node index.js (the generated launcher)
+```
+
 ### Configure it
 
 `bevy-mcp.config.json` is the whole setup - no environment variables needed. The
@@ -93,7 +108,8 @@ usually enough:
 
 ### Run it
 
-`index.js` is a **stdio MCP server**, not a daemon and not a web service. Your
+`index.js` (the generated launcher for `index.ts`) is a **stdio MCP server**,
+not a daemon and not a web service. Your
 MCP client (Claude, opencode, Zed, pi, …) spawns it as a child process and talks
 JSON-RPC over stdin/stdout. You do not "start it inside a project" - you register
 it with a client, and point the *config* at your project.
@@ -117,7 +133,8 @@ When no index is installed, the server builds from locally configured sources
 ## Registering with an MCP client
 
 All of these assume the settings live in `bevy-mcp.config.json`, so the only
-thing a client needs is the command. `index.js` takes no arguments.
+thing a client needs is the command. `index.js` (generated from `index.ts`) takes
+no arguments.
 
 If your client can spawn the command itself, `npx` works without a global
 install; pass the project path, since the Bevy version is read from
@@ -301,12 +318,12 @@ All keys are optional:
 |---|---|
 | `projectRoot` | Cargo project used to detect the Bevy version |
 | `bevyVersion` | Explicit version (`0.20.0`); alias `version` |
-| `docDir` | cargo `target/doc` directory, or a `fetch-docs.mjs` mirror |
+| `docDir` | cargo `target/doc` directory, or a `scripts/fetch-docs.mts` mirror |
 | `websiteDir` | bevy-website checkout (`./vendor/bevy-website` is bundled) |
 | `bevySrcDir` | bevy engine checkout (enables `examples/` and `errors/`) |
 | `examplesDir` / `errorsDir` | Explicit sub-directories |
 | `metaDir` | Vendored Bevy metadata (`./vendor/bevy-meta` is bundled) |
-| `mirrorDir` | Where `fetch-docs.mjs` writes downloads |
+| `mirrorDir` | Where `scripts/fetch-docs.mts` writes downloads |
 | `dataDir` | Where the persistent index is stored |
 | `offline` | Never contact crates.io |
 | `maxResults` | Default result count for search |
@@ -327,7 +344,7 @@ All keys are optional:
 | `BEVY_EXAMPLES_DIR` | Explicit examples dir | auto |
 | `BEVY_ERRORS_DIR` | Explicit `errors/` dir | auto |
 | `BEVY_EXTRA_VERSIONS` | Additional versions to hold, e.g. `0.18.1=/path/to/doc,0.17.0=/other` | none |
-| `BEVY_MIRROR_DIR` | Where `fetch-docs.mjs` writes downloads | `~/.cache/bevy-mcp/<version>` |
+| `BEVY_MIRROR_DIR` | Where `scripts/fetch-docs.mts` writes downloads | `~/.cache/bevy-mcp/<version>` |
 | `BEVY_MCP_CONFIG` | Explicit path to a config file | auto-discovered |
 | `BEVY_MCP_DATA_DIR` | Where the persistent index is stored | `<repo>/data` if present, else `~/.cache/bevy-mcp/data` |
 | `BEVY_MCP_MAX_RESULTS` | Default result count for search | `8` |
@@ -405,15 +422,18 @@ bevy_ecosystem_compat{ "crate": "bevy_egui" }
 bevy_check_version   { }
 ```
 
-`bevy_check_manifest` reads the project's own `Cargo.toml`, resolves the feature
-closure through the vendored metadata, and answers the question an agent
-actually has: *may I write `bevy::ui::Node` in this project?* It keeps "feature
-disabled" and "symbol does not exist here" distinct, because conflating them
-produces false alarms.
+`bevy_check_manifest` resolves the project's feature set from Cargo metadata
+when it is available (`cargo metadata --offline --locked`) and otherwise reads
+`Cargo.toml` directly as a labelled **partial** analysis. It answers the question
+an agent actually has: *may I write `bevy::ui::Node` in this project?* It keeps
+"feature disabled" and "symbol does not exist here" distinct, because
+conflating them produces false alarms, and it never reports a missing
+declaration as "defaults disabled".
 
-`bevy_validate_systems` is a linter for Bevy's **access rules**, not a Rust type
-checker. It says so in its own output, and it checks each suggested fix against
-the pinned version's rustdoc rather than reciting a remembered signature.
+`bevy_validate_systems` is a syntax-level linter for Bevy's **access rules**, not
+a Rust type checker. It says so in its own output, tracks component access per
+query tuple member, and reports constructs outside its supported subset as
+`analysis_complete: false` rather than claiming they are conflict-free.
 
 `bevy_ecosystem_compat` answers version compatibility from the vendored
 `vendor/ecosystem/compat.json` snapshot, so it works offline and never answers
