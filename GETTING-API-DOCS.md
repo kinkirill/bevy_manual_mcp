@@ -148,7 +148,7 @@ contain the same public API, so **the mirror is strictly better**. Reach for
 
 ## Startup cost
 
-A cold build of the full corpus takes roughly 5-7 minutes at a 2 GB heap and is
+A cold build of the full corpus takes roughly 13-15 minutes at a 2 GB heap and is
 then persisted. For Bevy 0.19.1 that is ~270k records: 265,741 rustdoc items,
 3,389 website prose chunks and 445 examples. You can skip the build entirely by
 installing a prebuilt index. Later runs validate `records.ndjson` and import
