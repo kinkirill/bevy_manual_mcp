@@ -505,3 +505,56 @@ structured content carries a `suggestions` array. Tests:
 `missing_symbol_returns_suggestions_over_stdio` (MCP), with a fixture
 migration-guide sentence so the prose path is exercised without downloaded
 indexes.
+
+## 22. Bundle and `fetch-index` (step 2 closed)
+
+A bundle is one version directory's compiled artifacts in a zstd tar:
+
+```
+bevy-<bevy>-fmt<format>.tar.zst
+  corpus.rkyv
+  tantivy/
+  corpus.manifest.json
+  meta.json            (when present)
+```
+
+`records.ndjson` stays canonical and is deliberately not shipped. Measured on
+0.20.0: **32.4 MB**, down from the TypeScript bundle's ~78 MB (the rkyv arena
+compresses well, and the text index is 15 MB instead of 120 MB).
+
+Release manifest (`index-manifest.json`, attached next to the asset):
+
+```json
+{
+  "manifest_version": 2,
+  "bevy_version": "0.20.0",
+  "asset": "bevy-0.20.0-fmt1.tar.zst",
+  "sha256": "…",
+  "size": 32380461,
+  "format_version": 1,
+  "revision": 1
+}
+```
+
+`manifest_version: 2` is the Rust bundle; 1 is the old TypeScript bundle and is
+rejected with an explanatory error instead of being half-installed.
+
+`bevy-mcp fetch-index <version>`:
+
+1. reads `<base>/v<version>/index-manifest.json` (base defaults to this
+   repository's GitHub Releases, overridable with `BEVY_MCP_INDEX_BASE_URL` for
+   mirrors and tests);
+2. refuses a manifest/format the binary cannot read;
+3. downloads the asset, verifies size and SHA-256;
+4. unpacks into a staging directory, rejects path traversal, and validates
+   `corpus.rkyv` with `bytecheck` before touching the install;
+5. moves the artifacts into `data/versions/<version>/`, keeping unrelated local
+   files such as `records.ndjson`.
+
+`BEVY_MCP_OFFLINE=1` refuses the download. `--force` reinstalls.
+
+`bevy-mcp build --pack <file>` produces the release asset from a local build.
+End-to-end test (`bundle_pack_and_fetch_round_trip`) builds a fixture, packs it,
+serves it from a directory, fetches it into a fresh data dir, and answers a
+lookup through the installed corpus; `fetch_rejects_a_typescript_manifest` locks
+in the version mismatch error.

@@ -5,16 +5,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_bevy-mcp");
-const CLEAR_ENV: [&str; 11] = [
+const CLEAR_ENV: [&str; 12] = [
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
     "BEVY_MCP_CONFIG",
     "BEVY_MCP_OFFLINE",
     "BEVY_MCP_MAX_RESULTS",
     "BEVY_MCP_DEBUG",
+    "BEVY_MCP_INDEX_BASE_URL",
     "BEVY_WEBSITE_DIR",
     "BEVY_EXAMPLES_DIR",
     "BEVY_META_DIR",
@@ -613,4 +615,123 @@ fn missing_symbol_suggests_near_names() {
         .expect("run lookup");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Command"), "{stdout}");
+}
+
+#[test]
+fn bundle_pack_and_fetch_round_trip() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let data_dir = dir.path().join("data");
+    let out_dir = data_dir.join("versions/9.9.9");
+    fs::create_dir_all(&out_dir).expect("out dir");
+    let records_path = out_dir.join("records.ndjson");
+    fs::write(&records_path, fixture_records()).expect("records");
+
+    let release = dir.path().join("releases/v9.9.9");
+    fs::create_dir_all(&release).expect("release dir");
+    let asset = release.join("bevy-9.9.9-fmt1.tar.zst");
+
+    let output = command(&data_dir)
+        .args(["build", "--records"])
+        .arg(&records_path)
+        .arg("--out")
+        .arg(&out_dir)
+        .arg("--pack")
+        .arg(&asset)
+        .output()
+        .expect("run build --pack");
+    assert!(
+        output.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(asset.is_file(), "bundle missing");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("- bundle:"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bytes = fs::read(&asset).expect("bundle bytes");
+    let sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    fs::write(
+        release.join("index-manifest.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "manifest_version": 2,
+            "bevy_version": "9.9.9",
+            "asset": "bevy-9.9.9-fmt1.tar.zst",
+            "sha256": sha256,
+            "size": bytes.len(),
+            "format_version": 1,
+            "revision": 1
+        }))
+        .expect("manifest json"),
+    )
+    .expect("write manifest");
+
+    let fresh = dir.path().join("fresh");
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9"])
+        .output()
+        .expect("run fetch-index");
+    assert!(
+        output.status.success(),
+        "fetch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("# index installed"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(fresh.join("versions/9.9.9/corpus.rkyv").is_file());
+    assert!(fresh.join("versions/9.9.9/tantivy").is_dir());
+
+    // The fetched corpus answers through the mmap.
+    let output = command(&fresh)
+        .args(["lookup", "Widget", "--json"])
+        .output()
+        .expect("run lookup");
+    let rows: Value = serde_json::from_slice(&output.stdout).expect("lookup json");
+    assert_eq!(rows.as_array().expect("rows").len(), 1, "{rows}");
+
+    // A second fetch is a no-op unless forced.
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9"])
+        .output()
+        .expect("run fetch-index");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("already installed"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn fetch_rejects_a_typescript_manifest() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let release = dir.path().join("releases/v9.9.9");
+    fs::create_dir_all(&release).expect("release dir");
+    fs::write(
+        release.join("index-manifest.json"),
+        r#"{"manifest_version":1,"bevy_version":"9.9.9","asset":"old.tar.gz","sha256":"00","revision":2}"#,
+    )
+    .expect("manifest");
+
+    let fresh = dir.path().join("fresh");
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9"])
+        .output()
+        .expect("run fetch-index");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("manifest version"), "{stderr}");
 }

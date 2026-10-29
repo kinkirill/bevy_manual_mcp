@@ -5,6 +5,7 @@
 //! maintainer and debugging surface.
 
 mod archive;
+mod bundle;
 mod config;
 mod format;
 mod ingest;
@@ -49,6 +50,9 @@ enum Command {
     FetchIndex {
         /// Bevy version, e.g. 0.20.0. Defaults to the detected version.
         version: Option<String>,
+        /// Reinstall even when a corpus is already present.
+        #[arg(long)]
+        force: bool,
     },
     /// Build a corpus bundle from local documentation.
     Build {
@@ -61,6 +65,9 @@ enum Command {
         /// Compile an existing records.ndjson instead of ingesting sources.
         #[arg(long)]
         records: Option<PathBuf>,
+        /// Also pack the built version into a release `.tar.zst` bundle.
+        #[arg(long)]
+        pack: Option<PathBuf>,
     },
     /// Search the corpus from the command line.
     Search {
@@ -145,14 +152,42 @@ fn main() -> anyhow::Result<()> {
             println!("{text}");
             Ok(())
         }
-        Command::FetchIndex { version } => bail!(
-            "`fetch-index {}` is not implemented yet (arrives with the published bundle)",
-            version.as_deref().unwrap_or("<detected>")
-        ),
+        Command::FetchIndex { version, force } => {
+            if config.offline {
+                bail!("BEVY_MCP_OFFLINE=1 forbids downloading an index");
+            }
+            let version = version
+                .or_else(|| config.bevy_version.clone())
+                .ok_or_else(|| {
+                    anyhow!("no Bevy version given and none detected; pass a version")
+                })?;
+            match bundle::fetch(&version, &config.data_dir, force)? {
+                Some(path) => {
+                    println!("# index installed");
+                    println!();
+                    println!("- Bevy version: {version}");
+                    println!("- location: {}", path.display());
+                    println!("- data dir: {}", config.data_dir.display());
+                    Ok(())
+                }
+                None => {
+                    println!(
+                        "Index for Bevy {version} is already installed at {}. Use --force to reinstall.",
+                        config
+                            .data_dir
+                            .join("versions")
+                            .join(registry::version_dir_name(&version))
+                            .display()
+                    );
+                    Ok(())
+                }
+            }
+        }
         Command::Build {
             doc_dir,
             out,
             records,
+            pack,
         } => {
             let version = config
                 .bevy_version
@@ -252,6 +287,14 @@ fn main() -> anyhow::Result<()> {
             );
             println!("- build: {} ms", report.build_ms);
             println!("- validated load: {} ms", report.load_test_ms);
+            if let Some(path) = pack {
+                let size = bundle::pack(&out_dir, &path)?;
+                println!(
+                    "- bundle: {} ({:.1} MB)",
+                    path.display(),
+                    size as f64 / 1_000_000.0
+                );
+            }
             Ok(())
         }
         Command::Search { query, json, limit } => {
