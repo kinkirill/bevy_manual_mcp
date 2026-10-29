@@ -45,7 +45,7 @@ indexed version or whether a corpus is installed. Then route by intent:
 | `bevy_check_version` | newest published Bevy and whether the bump is patch/minor | needs network; offline deployments should skip it |
 | `bevy_mcp_check_release_index` | whether this server's GitHub index release has a newer corpus or revision | needs network; use it to tell the user the `fetch-index` command |
 | `bevy_check_manifest` | enabled Cargo features and whether a symbol/subcrate/plugin is available | reads the project manifest; no feature graph means it cannot answer |
-| `bevy_validate_systems` | syntax-level B0001/B0002 lint for one or more `fn` items | no type checking; tuple-aware; reports `analysis_complete: false` when unsure |
+| `bevy_validate_systems` | syntax-level B0001/B0002 lint for one or more `fn` items | no type checking; tuple-aware; required query data counts as an implied `With<T>`; reports `analysis_complete: false` when unsure |
 | `bevy_explain_error` | explain a pasted Bevy panic/warning and look up its code | code lookup is version-checked; uncoded panics get an honest refusal |
 | `bevy_perf_advisor` | performance topics and `is_changed`/`is_added` anti-patterns | built-in guidance unless versioned perf metadata is installed |
 | `bevy_ecosystem_search` | search the Bevy corpus plus installed plugin corpora | labels every hit with its corpus; lists skipped corpora |

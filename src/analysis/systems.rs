@@ -6,10 +6,12 @@
 //! extracted from types, tuple-aware: `Query<(&mut A, &B)>` reads `B` and
 //! writes `A`.
 
+use std::collections::BTreeSet;
+
 use syn::{FnArg, ImplItem, Item, ItemImpl, ItemTrait, Signature, TraitItem, Type};
 
 use super::conflicts::{self, Access, AccessKind, Finding, ParamInfo, WorldKind};
-use super::filters::{self, FilterAtom};
+use super::filters::{self, FilterAtom, FilterKind};
 use super::{render_type, type_args, type_ident};
 
 #[derive(Debug, Default)]
@@ -255,9 +257,20 @@ impl FnContext {
             self.note(label, "has no query data argument");
             return;
         };
-        let (atoms, notes, unsupported) = filters::parse(&arguments[1..]);
+        let (mut atoms, notes, unsupported) = filters::parse(&arguments[1..]);
         self.notes.extend(notes);
         self.unanalyzed.extend(unsupported);
+        // Required query data is an implicit `With<T>`: `Query<&Player>` only
+        // matches entities that have `Player`. This is what lets a query be
+        // proven disjoint from another query's `Without<Player>`.
+        let mut required = BTreeSet::new();
+        required_components(data, &mut required);
+        for entity in required {
+            atoms.push(FilterAtom::Type {
+                kind: FilterKind::With,
+                entity,
+            });
+        }
         self.collect_query_data(data, &atoms, group, owner, label);
     }
 
@@ -383,6 +396,43 @@ impl FnContext {
     fn note(&mut self, label: &str, reason: &str) {
         self.notes.push(format!("`{label}` {reason}"));
         self.unanalyzed.push(label.to_string());
+    }
+}
+
+/// Components that must exist for this query data to match. `Option<&T>`,
+/// `AnyOf<...>` and `Has<T>` are optional and contribute nothing.
+fn required_components(ty: &Type, out: &mut BTreeSet<String>) {
+    match ty {
+        Type::Paren(paren) => required_components(&paren.elem, out),
+        Type::Group(wrapped) => required_components(&wrapped.elem, out),
+        Type::Tuple(tuple) => {
+            for element in &tuple.elems {
+                required_components(element, out);
+            }
+        }
+        Type::Reference(reference) => {
+            if let Some(name) = type_ident(&reference.elem) {
+                out.insert(name);
+            }
+        }
+        Type::Path(_) => {
+            let Some(ident) = type_ident(ty) else {
+                return;
+            };
+            match ident.as_str() {
+                "Ref" | "Mut" => {
+                    if let Some(inner) = type_args(ty).last()
+                        && let Some(name) = type_ident(inner)
+                    {
+                        out.insert(name);
+                    }
+                }
+                // Optional/optional-like query data does not require presence.
+                "Option" | "AnyOf" | "Has" | "Entity" => {}
+                _ => {}
+            }
+        }
+        _ => {}
     }
 }
 
@@ -518,6 +568,29 @@ mod tests {
         assert_eq!(velocity.findings.len(), 1, "{:?}", velocity.findings);
         assert_eq!(velocity.findings[0].rule, "R2");
         assert_eq!(velocity.findings[0].resource_type, "Velocity");
+    }
+
+    #[test]
+    fn required_query_data_implies_with() {
+        // `&RowHighlight` only matches entities that have RowHighlight, so it
+        // proves disjointness from the other query's Without<RowHighlight>.
+        let disjoint = systems(
+            "fn f(a: Query<(&mut Foo, &RowHighlight)>, b: Query<&Foo, Without<RowHighlight>>) {}",
+        );
+        assert!(disjoint.findings.is_empty(), "{:?}", disjoint.findings);
+
+        let referenced = systems(
+            "fn f(a: Query<(&mut Foo, Ref<RowHighlight>)>, b: Query<&Foo, Without<RowHighlight>>) {}",
+        );
+        assert!(referenced.findings.is_empty(), "{:?}", referenced.findings);
+
+        // Optional data matches entities without the component, so it cannot
+        // prove disjointness.
+        let optional = systems(
+            "fn f(a: Query<(&mut Foo, Option<&RowHighlight>)>, b: Query<&Foo, Without<RowHighlight>>) {}",
+        );
+        assert_eq!(optional.findings.len(), 1, "{:?}", optional.findings);
+        assert_eq!(optional.findings[0].resource_type, "Foo");
     }
 
     #[test]

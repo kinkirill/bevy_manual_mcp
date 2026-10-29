@@ -7,8 +7,8 @@ Two artifacts are published independently:
 1. the **crate** `bevy-manual-mcp` (binary `bevy-manual-mcp`) on crates.io;
 2. **index bundles** for each Bevy version on GitHub Releases.
 
-The crate version does not track a Bevy version. `0.2.0` is the current release;
-older `0.1.x` releases are yanked. No previews.
+The crate version does not track a Bevy version. `0.2.1` is the current release;
+older releases are yanked. No previews.
 
 ## Prerequisites
 
