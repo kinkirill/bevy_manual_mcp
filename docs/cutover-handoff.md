@@ -42,29 +42,19 @@ describe the TypeScript line.
 
 ## Remaining before merging `cutover` into `main`
 
-1. Rewrite the rest of the user-facing docs:
-   - `HOW-IT-WORKS.md`, `PUBLISHING.md`, `TROUBLESHOOTING.md`,
-     `THIRD-PARTY-NOTICES.md` (add Rust dependency licenses: scraper ISC, rmcp
-     Apache-2.0, zstd BSD-3-Clause, the rest MIT/Apache-2.0).
-   - Prompt examples (`default_prompt_example.md`, `migration_prompt_*.md`) for
-     `bevy-manual-mcp` and the current tool set.
-   - `docs/tool-contracts.md`: data-source paths and test names still point at
-     the deleted TypeScript modules. Add a cutover note and update the matrix.
-2. Replace the old workflows in `.github/workflows/`:
-   - CI: Rust matrix (Linux/macOS/Windows), fmt/clippy/test, `cargo package`.
-   - Release: per-version indexes via `fetch-docs`, examples checkout,
-     `harvest-meta`, `build --pack --manifest`, GitHub Release upload; optional
-     `cargo publish`.
-   - `server.json` still advertises npm; switch it to `registryType: "cargo"`,
-     `identifier: "bevy-manual-mcp"`, version `0.1.0`.
-3. Run the remaining parity gate from the oracle snapshot:
-   - `git worktree add /tmp/bevy-oracle pre-cutover-oracle`, `npm ci`,
-     point the TS harness at `target/release/bevy-manual-mcp`, and run
-     `mcp-e2e`, `resources-test`, corpus questions and the ranking snapshot.
-   - Confirm the contract rows in `docs/tool-contracts.md`.
-   - Clean-install check: `cargo install --path .` into a fresh prefix, start
-     with a Cargo project, let auto-fetch run, run one query.
-4. Merge `cutover` into `main` (no-ff), push, then finish the release:
+1. Run the remaining parity gate from the oracle snapshot:
+   - `git worktree add /tmp/bevy-oracle pre-cutover-oracle`, `npm ci`, then the
+     TypeScript unit/contract suites (the TS-specific e2e/resources harness
+     launches the Node server directly and needs an adapter to target Rust; the
+     Rust MCP suite now covers the same stdio/resources surfaces).
+   - Compare corpus questions and the ranking snapshot; review any ranking diff.
+   - The 15-tool field report on 0.20.0 is 13/15 with two known environmental
+     limitations (network version check; cross-version diff needs another
+     corpus). `bevy_ecosystem_compat` failure was a stale running binary.
+2. Clean-install gate: already passing via the
+   `clean_install_auto_fetches_the_bundle_and_its_metadata` MCP test and a
+   manual `cargo install --path .` run.
+3. Merge `cutover` into `main` (no-ff), push, then finish the release:
    - publish `bevy-manual-mcp` 0.1.0 only after the gate;
    - build/upload six bundles (0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1, 0.20.0)
      plus their manifests;

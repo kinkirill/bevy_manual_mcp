@@ -1012,7 +1012,7 @@ npm-only launcher/package scripts. GitHub release automation belongs to step 7.
 The `explain` CLI verb remains a stub; search exposes total scores, not a
 component breakdown.
 
-Tests: **124** (91 unit, 11 archive, 22 MCP), `clippy -D warnings` clean.
+Tests: **125** (91 unit, 11 archive, 23 MCP), `clippy -D warnings` clean.
 
 ## 30. Step 7 checkpoint: cutover tree
 
@@ -1049,7 +1049,10 @@ Field test of all 15 tools on 0.20.0: 13/15 clean, two environmental/known
 limitations (`bevy_check_version` needs network; `bevy_api_diff` needs another
 compiled corpus). `bevy_ecosystem_compat` initially failed because a running
 server predated the snapshot schema; rebuilding the binary fixed it — an old MCP
-process keeps its old executable mapped.
+process keeps its old executable mapped. The clean-install gate now runs as an
+integration test: `cargo install --path .`, first-start auto-fetch from a local
+release, then search + feature check + error guide + compatibility from the
+bundle metadata, with an empty `vendor/`.
 
 Remaining before publishing 0.1.0: run the TypeScript oracle from the
 `pre-cutover-oracle` tag against the Rust binary (mcp-e2e, resources, corpus and

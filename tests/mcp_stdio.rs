@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_bevy-manual-mcp");
 const TIMEOUT: Duration = Duration::from_secs(20);
-const CLEAR_ENV: [&str; 13] = [
+const CLEAR_ENV: [&str; 14] = [
     "BEVY_VERSION",
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
@@ -24,6 +24,7 @@ const CLEAR_ENV: [&str; 13] = [
     "BEVY_META_DIR",
     "BEVY_ERRORS_DIR",
     "BEVY_MCP_COMPAT_PATH",
+    "BEVY_MCP_INDEX_BASE_URL",
     "INIT_CWD",
 ];
 
@@ -1437,4 +1438,139 @@ fn explain_error_is_version_checked_and_refuses_uncoded_panics() {
     let structured = &response["result"]["structuredContent"];
     assert_eq!(structured["tier"], 3);
     assert_eq!(structured["no_error_code_found"], true);
+}
+
+#[test]
+fn clean_install_auto_fetches_the_bundle_and_its_metadata() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let out = dir.path().join("versions/9.9.9");
+    let metadata = out.join("metadata");
+    std::fs::create_dir_all(metadata.join("error-codes")).expect("metadata dir");
+    std::fs::write(
+        metadata.join("features.json"),
+        serde_json::to_string(&json!({
+            "bevy_version": "9.9.9",
+            "features": { "bevy_ui": ["bevy_ui"], "default": ["bevy_ui"] },
+            "closure": { "bevy_ui": ["bevy_ui"], "default": ["bevy_ui"] },
+            "default_features": ["bevy_ui"],
+            "plugin_gates": [{ "plugin": "UiPlugin", "requires_feature": "bevy_ui" }]
+        }))
+        .expect("features json"),
+    )
+    .expect("write features");
+    std::fs::write(
+        metadata.join("compat.json"),
+        serde_json::to_string(&json!({
+            "meta": { "harvested_at": "2026-01-02T00:00:00Z", "source": "fixture", "version_count": 1, "plugin_count": 1, "complete": true },
+            "plugins": {
+                "bevy_egui": [
+                    { "plugin": "bevy_egui", "plugin_version": "0.43.1", "requires_bevy": "^9.9.0" }
+                ]
+            }
+        }))
+        .expect("compat json"),
+    )
+    .expect("write compat");
+    std::fs::write(
+        metadata.join("error-codes/B0001.md"),
+        "# B0001\n\n## Fix\n\nUse `Without<T>`.\n",
+    )
+    .expect("write error code");
+
+    let release = dir.path().join("releases/v9.9.9");
+    std::fs::create_dir_all(&release).expect("release dir");
+    let asset = release.join("bevy-9.9.9-fmt1.tar.zst");
+    let manifest = release.join("index-manifest.json");
+    let empty = dir.path().join("no-sources");
+    std::fs::create_dir_all(&empty).expect("empty dir");
+    let records = out.join("records.ndjson");
+    let output = base_command(dir.path())
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_EXAMPLES_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty)
+        .args(["build", "--records"])
+        .arg(&records)
+        .arg("--out")
+        .arg(&out)
+        .arg("--pack")
+        .arg(&asset)
+        .arg("--manifest")
+        .arg(&manifest)
+        .output()
+        .expect("repack the fixture");
+    assert!(
+        output.status.success(),
+        "repack failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let fresh = dir.path().join("fresh-data");
+    let project = dir.path().join("auto-project");
+    std::fs::create_dir_all(&project).expect("project dir");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname = \"auto-project\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nbevy = { version = \"9.9.9\", default-features = false, features = [\"bevy_ui\"] }\n",
+    )
+    .expect("project manifest");
+    let empty_meta = dir.path().join("empty-meta");
+    std::fs::create_dir_all(&empty_meta).expect("empty meta");
+
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_MCP_DATA_DIR", fresh.to_str().expect("fresh path")),
+            (
+                "BEVY_MCP_INDEX_BASE_URL",
+                release
+                    .parent()
+                    .expect("release parent")
+                    .to_str()
+                    .expect("release path"),
+            ),
+            ("BEVY_MCP_OFFLINE", "0"),
+            ("BEVY_META_DIR", empty_meta.to_str().expect("meta path")),
+            ("BEVY_PROJECT_ROOT", project.to_str().expect("project path")),
+        ],
+    );
+    server.initialize();
+
+    assert!(
+        fresh.join("versions/9.9.9/corpus.rkyv").is_file(),
+        "auto-fetch did not install the corpus"
+    );
+    assert!(
+        fresh
+            .join("versions/9.9.9/metadata/features.json")
+            .is_file(),
+        "auto-fetch did not install the metadata"
+    );
+
+    let response = server.call_tool("bevy_search", json!({ "query": "Widget" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+
+    let response = server.call_tool("bevy_check_manifest", json!({ "check": "bevy_ui" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["available"], true,
+        "{response}"
+    );
+
+    let response = server.call_tool(
+        "bevy_explain_error",
+        json!({ "message": "error[B0001]: Query<&mut Transform>" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["guide_available"], true,
+        "{response}"
+    );
+
+    let response = server.call_tool("bevy_ecosystem_compat", json!({ "crate": "bevy_egui" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["compatible"], true,
+        "{response}"
+    );
 }
