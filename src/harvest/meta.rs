@@ -38,12 +38,21 @@ struct Profile {
     enables: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct Subcrate {
+    optional: bool,
+    /// Features that enable this optional dependency. Empty for unconditional
+    /// dependencies such as `bevy_input`.
+    features: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct FeaturesFile {
     bevy_version: String,
     features: BTreeMap<String, Vec<String>>,
     closure: BTreeMap<String, Vec<String>>,
     profiles: BTreeMap<String, Profile>,
+    subcrates: BTreeMap<String, Subcrate>,
     default_features: Vec<String>,
     plugin_gates: Vec<PluginGate>,
     panic_sites: BTreeMap<String, Vec<PanicSite>>,
@@ -128,6 +137,46 @@ fn parse_features(internal_toml: &str, facade_toml: Option<&str>) -> Result<Feat
         }
     }
 
+    let mut subcrates: BTreeMap<String, Subcrate> = BTreeMap::new();
+    for (dependency_key, value) in &dependencies {
+        let package = value
+            .get("package")
+            .and_then(toml::Value::as_str)
+            .unwrap_or(dependency_key)
+            .replace('-', "_");
+        let optional = value
+            .get("optional")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false);
+        let mut features = BTreeSet::new();
+        if optional {
+            // Cargo's implicit optional-dependency feature.
+            features.insert(dependency_key.clone());
+            for (feature, entries) in &raw_features {
+                let Some(entries) = entries.as_array() else {
+                    continue;
+                };
+                for entry in entries {
+                    let Some(entry) = entry.as_str() else {
+                        continue;
+                    };
+                    let base = entry.split('/').next().unwrap_or(entry);
+                    let target = base.strip_prefix("dep:").unwrap_or(base);
+                    if target == dependency_key {
+                        features.insert(feature.clone());
+                    }
+                }
+            }
+        }
+        subcrates.insert(
+            package,
+            Subcrate {
+                optional,
+                features: features.into_iter().collect(),
+            },
+        );
+    }
+
     let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (name, value) in &raw_features {
         let mut enables = BTreeSet::new();
@@ -198,6 +247,7 @@ fn parse_features(internal_toml: &str, facade_toml: Option<&str>) -> Result<Feat
         closure: closure(&graph),
         features: graph,
         profiles,
+        subcrates,
         default_features,
         plugin_gates: Vec::new(),
         panic_sites: BTreeMap::new(),
@@ -433,6 +483,7 @@ default = ["bevy_ui"]
 bevy_ui = ["dep:bevy_ui_crate", "bevy_render/texture"]
 
 [dependencies]
+bevy_input = "0.20.0"
 bevy_ui_crate = { package = "bevy_ui", optional = true }
 bevy_render = { optional = true }
 serde = "1"
@@ -451,6 +502,13 @@ ui = ["bevy_ui"]
         assert!(!parsed.features.contains_key("serde"));
         assert_eq!(parsed.default_features, vec!["2d", "ui"]);
         assert!(parsed.profiles.contains_key("2d"));
+        let bevy_ui = &parsed.subcrates["bevy_ui"];
+        assert!(bevy_ui.optional);
+        assert!(bevy_ui.features.contains(&"bevy_ui".to_string()));
+        assert!(!parsed.subcrates["bevy_render"].features.is_empty());
+        let bevy_input = &parsed.subcrates["bevy_input"];
+        assert!(!bevy_input.optional);
+        assert!(bevy_input.features.is_empty());
         let default_closure = &parsed.closure["default"];
         assert!(default_closure.contains(&"ui".to_string()));
         assert!(default_closure.contains(&"bevy_ui".to_string()));

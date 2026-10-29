@@ -23,6 +23,8 @@ pub struct FeaturesData {
     #[serde(default)]
     pub profiles: Option<BTreeMap<String, Profile>>,
     #[serde(default)]
+    pub subcrates: Option<BTreeMap<String, Subcrate>>,
+    #[serde(default)]
     pub default_features: Option<Vec<String>>,
     #[serde(default)]
     pub plugin_gates: Option<Vec<PluginGate>>,
@@ -32,6 +34,14 @@ pub struct FeaturesData {
 pub struct Profile {
     #[serde(default)]
     pub enables: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Subcrate {
+    #[serde(default)]
+    pub optional: bool,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -517,24 +527,90 @@ fn check_inner(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdi
     }
 
     if let Some(subcrate) = subcrate_of(query) {
+        if let Some(info) = data
+            .subcrates
+            .as_ref()
+            .and_then(|subcrates| subcrates.get(&subcrate))
+        {
+            if !info.optional {
+                return Verdict {
+                    unknown: false,
+                    recognized: true,
+                    available: true,
+                    reason: format!("subcrate \"{subcrate}\" is an unconditional Bevy dependency"),
+                    gating_feature: None,
+                    text: format!("✓ `{query}` — subcrate \"{subcrate}\" is always included"),
+                };
+            }
+            if info.features.is_empty() {
+                return Verdict {
+                    unknown: true,
+                    recognized: true,
+                    available: false,
+                    reason: format!(
+                        "subcrate \"{subcrate}\" is optional, but no enabling feature is recorded"
+                    ),
+                    gating_feature: None,
+                    text: format!(
+                        "? `{query}` — subcrate \"{subcrate}\" is optional, but its feature gate is unknown"
+                    ),
+                };
+            }
+            let enabled_features: Vec<&str> = info
+                .features
+                .iter()
+                .filter(|feature| enabled(feature))
+                .map(String::as_str)
+                .collect();
+            let is_enabled = !enabled_features.is_empty();
+            let gates = info.features.join(" or ");
+            return Verdict {
+                unknown: false,
+                recognized: true,
+                available: is_enabled,
+                reason: format!("subcrate \"{subcrate}\" is gated by feature \"[{gates}]\""),
+                gating_feature: info.features.first().cloned(),
+                text: format!(
+                    "{} `{query}` — subcrate \"{subcrate}\" {}",
+                    if is_enabled { "✓" } else { "✗" },
+                    if is_enabled {
+                        "is available".to_string()
+                    } else {
+                        format!("requires `[{gates}]`")
+                    }
+                ),
+            };
+        }
+
         let gating = gating_feature_for(&subcrate, data);
-        let is_enabled = gating.as_deref().is_some_and(enabled);
+        let Some(gating) = gating else {
+            return Verdict {
+                unknown: true,
+                recognized: true,
+                available: false,
+                reason: format!(
+                    "no feature gate is recorded for subcrate \"{subcrate}\"; it may be unconditional or metadata may be incomplete"
+                ),
+                gating_feature: None,
+                text: format!(
+                    "? `{query}` — subcrate \"{subcrate}\" has no recorded feature gate (unknown)"
+                ),
+            };
+        };
+        let is_enabled = enabled(&gating);
         return Verdict {
             unknown: false,
             recognized: true,
             available: is_enabled,
-            reason: format!(
-                "subcrate \"{subcrate}\" gated by feature \"[{}]\"",
-                gating.as_deref().unwrap_or("unknown")
-            ),
-            gating_feature: gating.clone(),
+            reason: format!("subcrate \"{subcrate}\" gated by feature \"[{gating}]\""),
+            gating_feature: Some(gating.clone()),
             text: format!(
                 "{} `{query}` — subcrate \"{subcrate}\" {}",
                 if is_enabled { "✓" } else { "✗" },
                 if is_enabled {
                     "is available".to_string()
                 } else {
-                    format!("requires `[{}]`", gating.as_deref().unwrap_or("unknown"))
+                    format!("requires `[{gating}]`")
                 }
             ),
         };
@@ -790,6 +866,32 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
         let disabled = check("DefaultPlugins", &data(), &[]);
         assert!(!disabled.available);
         assert!(disabled.reason.contains("default"), "{}", disabled.reason);
+    }
+
+    #[test]
+    fn subcrate_map_marks_unconditional_crates_available() {
+        let data: FeaturesData = serde_json::from_value(serde_json::json!({
+            "features": {
+                "bevy_ui": ["bevy_ui"]
+            },
+            "subcrates": {
+                "bevy_input": { "optional": false, "features": [] },
+                "bevy_ui": { "optional": true, "features": ["bevy_ui"] }
+            }
+        }))
+        .expect("features");
+        let enabled = vec!["bevy_ui".to_string()];
+
+        let input = check("bevy::input::keyboard::KeyboardInput", &data, &enabled);
+        assert!(input.available, "{}", input.text);
+        assert!(!input.unknown);
+
+        let ui = check("bevy::ui::Node", &data, &enabled);
+        assert!(ui.available, "{}", ui.text);
+
+        let disabled = check("bevy::ui::Node", &data, &[]);
+        assert!(!disabled.available, "{}", disabled.text);
+        assert_eq!(disabled.gating_feature.as_deref(), Some("bevy_ui"));
     }
 
     #[test]

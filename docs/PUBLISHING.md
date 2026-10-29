@@ -10,10 +10,12 @@ Two artifacts are published independently:
 The crate version does not track a Bevy version. Releases are not previews;
 use the current version on crates.io.
 
-Index bundles only need rebuilding when corpus content, the rkyv layout, the
-Tantivy schema/tokenizer, or the bundle manifest changes. A crate-only change
-does not require new index bundles. Existing bundles remain compatible as long
-as `FORMAT_VERSION` and `RUST_MANIFEST_VERSION` are unchanged.
+Index bundles only need rebuilding when corpus content, bundle metadata
+(including `features.json`), the rkyv layout, the Tantivy schema/tokenizer, or
+the bundle manifest changes. A crate-only change does not require new index
+bundles. Existing bundles remain compatible as long as `FORMAT_VERSION` and
+`RUST_MANIFEST_VERSION` are unchanged, but new metadata fields only appear after
+the bundle is rebuilt and published under a new revision.
 
 ## Prerequisites
 

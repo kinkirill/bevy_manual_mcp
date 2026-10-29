@@ -64,7 +64,9 @@ path: a damaged archive is rebuilt or re-downloaded, never migrated.
 - Feature graphs, error-code guides and the plugin compatibility snapshot ship
   inside the bundle under `metadata/`. On a checkout, `vendor/bevy-meta` and
   `vendor/ecosystem` are the source of truth; installed bundle metadata takes
-  precedence over them.
+  precedence over them. `features.json` also records each Bevy subcrate's
+  optional/unconditional dependency status and its enabling features, so
+  `bevy_check_manifest` does not have to guess from the module path.
 
 ## Tools
 
