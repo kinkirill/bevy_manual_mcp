@@ -1,5 +1,13 @@
 # Tool contracts
 
+> **Cutover note.** This document began as the TypeScript contract oracle. The
+> Rust implementation is now the source of truth; the TypeScript line and its
+> tests are preserved in git history (`pre-cutover-oracle`). The discrepancy
+> table below records the pre-cutover findings: C-01…C-16 are implemented in
+> Rust, C-17 remains a documented version-policy question. Data-source paths in
+> the matrix refer to the Rust modules; test names in the historical table are
+> the old TypeScript names.
+
 This document is the maintained map from every registered MCP tool to the data
 path it actually uses. It exists so that a tool's description, its handler and
 its tests can be checked against the same contract, and so that a failure can be
@@ -43,26 +51,26 @@ successful exhaustive search.
 
 ## Tool contract matrix
 
-Data sources are the code paths in `src/tools/*.ts` and their callees. "Version
+Data sources are the Rust modules in `src/` and their tests. "Version
 behavior" states how the tool chooses an index.
 
 | Tool | Purpose | Required inputs | Data source (actual) | Version behavior | Failure / partial states | Status |
 |---|---|---|---|---|---|---|
-| `bevy_search` | Hybrid search over API, book, migration guides, examples. | `query` (string) | Active `BevyIndex` via `hybridSearch` | Optional `version`; refuses unindexed versions | Unindexed version → error; no hits → empty success | Verified |
-| `bevy_api` | Exact symbol → signature, docs, documented `Default`. | `symbol` | `index.lookupSymbol`, falls back to `hybridSearch(source=rustdoc)` | Optional `version`; refuses unindexed versions | Unknown symbol → error (or "related items" success) | Verified |
-| `bevy_examples` | Runnable example source for a task. | `task` | `hybridSearch(kind=code_example)` on the active index | **No `version` input**; always the active index | No matches → error | Verified |
-| `bevy_migration` | Breaking changes between two versions. | `to_version` or pinned version | `findMigrations` over website records in the active index | Compares doc metadata only; never loads another index | No target version → error; no notes → empty success | Verified |
-| `bevy_api_diff` | Compare one symbol across named indexed versions. | `symbol`; `versions` when >2 indexed | `registry.get(version).lookupSymbol` per version | Explicit versions; refuses to substitute | <2 versions / unknown version / symbol absent → error | Verified |
-| `bevy_check_version` | Is the index stale? Patch vs breaking. | none | `createVersionChecker` → crates.io (`/crates/bevy`), 6h cache | Compares against `config.bevyVersion` | Offline / HTTP failure → error | Verified |
+| `bevy_search` | Hybrid search over API, book, migration guides, examples. | `query` (string) | Active corpus via `search::search` | Optional `version`; refuses unindexed versions | Unindexed version → error; no hits → empty success | Verified |
+| `bevy_api` | Exact symbol → signature, docs, documented `Default`. | `symbol` | `LoadedCorpus::lookup` | Optional `version`; refuses unindexed versions | Unknown symbol → error (or "related items" success) | Verified |
+| `bevy_examples` | Runnable example source for a task. | `task` | `search::search(kind=code_example)` on the active index | **No `version` input**; always the active index | No matches → error | Verified |
+| `bevy_migration` | Breaking changes between two versions. | `to_version` or pinned version | `search::find_migrations` over website records | Compares doc metadata only; never loads another index | No target version → error; no notes → empty success | Verified |
+| `bevy_api_diff` | Compare one symbol across named indexed versions. | `symbol`; `versions` when >2 indexed | per-version archive lookup via `LoadedCorpus` | Explicit versions; refuses to substitute | <2 versions / unknown version / symbol absent → error | Verified |
+| `bevy_check_version` | Is the index stale? Patch vs breaking. | none | `run_check_version` → sparse index, then crates.io API | Compares against `config.bevyVersion` | Offline / HTTP failure → error | Verified |
 | `bevy_indexed_versions` | Which versions can this server answer for? | none | `registry` manifest + active `index` | Lists registry entries | None | Verified |
-| `bevy_index_status` | Self-diagnosis of the active index. | none | `formatStatus(index, config)` | Reports `bevy_version`, `doc_version`, `has_api_index` | None | Partial (distinguishes API vs prose via `has_api_index`) |
+| `bevy_index_status` | Self-diagnosis of the active index. | none | `status::status` | Reports `bevy_version`, `doc_version`, `has_api_index` | None | Partial (distinguishes API vs prose via `has_api_index`) |
 | `bevy_check_manifest` | Which Bevy features are enabled, and is a symbol/subcrate available? | optional `check` | `cargo metadata --offline --locked` when available, else `analyzeToml` + `vendor/bevy-meta/<ver>/features.json` | Pinned version only | No feature graph → error; Cargo unavailable → `partial: true` | Verified |
 | `bevy_validate_systems` | Lint system signatures for access-rule panics. | `code` | `extractFnSignatures` + `parseQueryData` + `checkConflicts` | None; version is decorative | No `fn` found → error; unsupported constructs → `analysis_complete: false` | Verified (syntax-level linter, not a type checker) |
-| `bevy_explain_error` | Explain a pasted Bevy panic/warning. | `message` | `vendor/bevy-meta/<ver>/error-codes/B####.md` | Pinned version only; rejects codes absent from it | Uncoded panic → tier-3 honest refusal | Verified |
+| `bevy_explain_error` | Explain a pasted Bevy panic/warning. | `message` | `analysis::errors` + `vendor/bevy-meta/<ver>/error-codes/B####.md` | Pinned version only; rejects codes absent from it | Uncoded panic → tier-3 honest refusal | Verified |
 | `bevy_ecosystem_search` | Search the Bevy index and every configured plugin corpus, labelled by crate. | `query` | `CorpusRegistry` loaded from `config.corpora` + the active `BevyIndex` | Pinned Bevy version; each plugin corpus carries its own crate version | No plugin corpora → Bevy-only with an explicit note; unknown crate → error; failed corpus → `failures` | Verified |
 | `bevy_ecosystem_compat` | Plugin ↔ Bevy version compatibility. | optional `crate` | Vendored `vendor/ecosystem/compat.json` via `evaluateRequirement` (offline) | Compares requirements to `config.bevyVersion`; per-plugin versions shown | Unknown crate → error; no version / unsupported requirement → `verdict: "unknown"` | Verified |
 | `bevy_generate_plugin` | Version-correct plugin scaffolds. | `template`, optional `params` | Self-contained templates + `index.lookupSymbol` name check | Pinned version only; refuses when symbols missing | Unknown template / malformed value → error | Verified (`compile_verified: false`) |
-| `bevy_perf_advisor` | Performance advice and anti-pattern detection. | optional `topic` / `code` | `vendor/bevy-meta/<ver>/perf.json` else built-ins | Pinned version only | Unknown topic → listed alternatives | Partial (no `perf.json` is currently vendored) |
+| `bevy_perf_advisor` | Performance advice and anti-pattern detection. | optional `topic` / `code` | `analysis::perf` (`perf.json` else built-ins) | Pinned version only | Unknown topic → listed alternatives | Partial (no `perf.json` is currently vendored) |
 
 ### `bevy_perf_advisor` note
 
@@ -152,14 +160,10 @@ version.
 Reproduce the contract baseline and the performance baseline:
 
 ```bash
-npm ci
-npm run typecheck
-# Full suite, including the P0 contract regressions (todo = known failing).
-npm test
-# Just the contract regression file:
-node build/test/contract-regressions.mjs
-# Informational performance baseline (real index when installed, else synthetic):
-npm run bench
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+# The Rust archive/MCP suites are the executable contracts now.
 ```
 
 `npm test` stays green while a discrepancy is open because its regression test

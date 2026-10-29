@@ -1,8 +1,0 @@
-{
-  "id": "bevy_egui@0.43.1",
-  "crate": "bevy_egui",
-  "crate_version": "0.43.1",
-  "requires_bevy": "^0.20.0",
-  "source": "rustdoc",
-  "records": "records.ndjson"
-}

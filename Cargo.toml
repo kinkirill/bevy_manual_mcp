@@ -1,0 +1,53 @@
+[package]
+name = "bevy-manual-mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Version-accurate Bevy API docs, guides, examples and migration notes as an MCP server"
+license = "MIT"
+repository = "https://github.com/kinkirill/bevy_manual_mcp"
+homepage = "https://github.com/kinkirill/bevy_manual_mcp"
+readme = "README.md"
+keywords = ["bevy", "mcp", "documentation", "search", "gamedev"]
+categories = ["development-tools", "game-development"]
+# Ship the server, not the TypeScript tree or vendor corpora.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/docs/rust-rewrite.md",
+    "src/**/*.rs",
+]
+
+[[bin]]
+name = "bevy-manual-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.6", features = ["derive"] }
+memmap2 = "0.9"
+percent-encoding = "2"
+quote = "1"
+regex = "1"
+rkyv = "=0.8.18"
+schemars = "1"
+scraper = "0.24"
+tantivy = "=0.27.0"
+rmcp = { version = "=3.8.0", default-features = false, features = ["macros", "server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.11"
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+tar = "0.4"
+ureq = "3"
+zstd = "0.14"
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "time"] }
+toml = "0.9"
+
+[dev-dependencies]
+sha2 = "0.11"
+tempfile = "3"

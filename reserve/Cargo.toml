@@ -1,0 +1,11 @@
+[package]
+name = "bevy-manual-mcp"
+version = "0.0.1"
+edition = "2024"
+description = "Name reservation; the native Bevy MCP server is not published yet."
+license = "MIT"
+repository = "https://github.com/kinkirill/bevy_manual_mcp"
+readme = "README.md"
+keywords = ["bevy", "mcp"]
+categories = ["development-tools"]
+include = ["/Cargo.toml", "/README.md", "src/lib.rs"]

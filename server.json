@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kinkirill/bevy-mcp",
-  "title": "Bevy MCP",
-  "description": "Version-accurate Bevy API docs, Book, migration guides and examples for AI agents.",
-  "version": "0.20.0",
+  "name": "io.github.kinkirill/bevy-manual-mcp",
+  "title": "Bevy Manual MCP",
+  "description": "Version-accurate Bevy API docs, Book, migration guides and examples for AI agents. Native Rust, pinned to the project's Bevy version.",
+  "version": "0.1.0",
   "websiteUrl": "https://github.com/kinkirill/bevy_manual_mcp",
   "repository": {
     "url": "https://github.com/kinkirill/bevy_manual_mcp",
@@ -11,10 +11,9 @@
   },
   "packages": [
     {
-      "registryType": "npm",
-      "identifier": "bevy-mcp",
-      "version": "0.20.0",
-      "runtimeHint": "npx",
+      "registryType": "cargo",
+      "identifier": "bevy-manual-mcp",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       },
@@ -29,18 +28,17 @@
           "description": "Explicit Bevy version override, e.g. 0.20.0 (otherwise read from Cargo.lock)."
         },
         {
-          "name": "BEVY_DOC_DIR",
-          "description": "cargo target/doc directory, or a scripts/fetch-docs.mts mirror.",
-          "format": "filepath"
-        },
-        {
           "name": "BEVY_MCP_DATA_DIR",
           "description": "Where the persistent search index is stored.",
           "format": "filepath"
         },
         {
           "name": "BEVY_MCP_OFFLINE",
-          "description": "Set to 1 to disable the crates.io update check."
+          "description": "Set to 1 to disable index downloads and the version check."
+        },
+        {
+          "name": "BEVY_MCP_INDEX_BASE_URL",
+          "description": "Mirror base URL for index bundles (defaults to this repository's GitHub Releases)."
         }
       ]
     }

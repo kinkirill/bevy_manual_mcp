@@ -1,27 +1,20 @@
-node_modules/
+# Rust build output
+target/
 
-# TypeScript output and generated compatibility launchers
-/build/
-/index.js
-/bin/*.js
-/scripts/*.mjs
-/scripts/rebuild-all-indexes.sh
-/test/*.mjs
-
-# Large, version-specific indexes are distributed via GitHub Releases.
+# Installed corpora and bundles (distributed through GitHub Releases)
 data/
+dist/
 
-# Rustdoc mirrors are fetched on demand.
+# Local docs/website mirrors
 bevy-docs-*/
 vendor/bevy-docs-*/
-
-# The full website checkout is local; prose lives in vendor/bevy-website/.
 /bevy-website/
 
-/dist/
-
-# local, machine-specific configuration
+# Local, machine-specific configuration
 bevy-mcp.config.json
+
+# CodeGraph
+.codegraph/
 
 *.log
 .DS_Store

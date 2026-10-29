@@ -1,109 +1,100 @@
 name: release
 
-# Publish prebuilt indexes for Bevy version tags; npm publication is opt-in.
-# Configure npm trusted publishing as described in PUBLISHING.md.
-
+# Build one index bundle per dispatch. Assets are published under the Bevy
+# version tag (v0.20.0), separately from the crate version.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Bevy version to build (e.g. 0.20.0)"
+        description: "Bevy version, e.g. 0.20.0"
         required: true
+      revision:
+        description: "Index revision for this Bevy version"
+        required: false
+        default: "1"
+      publish_crate:
+        description: "Also publish bevy-manual-mcp to crates.io"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
-  id-token: write # required for npm trusted publishing (OIDC)
 
 jobs:
-  release:
+  bundle:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
-      VERSION: ${{ github.event.inputs.version || github.ref_name }}
-      NODE_OPTIONS: --max-old-space-size=4096
-      BEVY_MCP_OFFLINE: "1"
+      VERSION: ${{ inputs.version }}
+      REVISION: ${{ inputs.revision }}
+      BEVY_MCP_DATA_DIR: ${{ runner.temp }}/data
+      BEVY_META_DIR: ${{ runner.temp }}/bevy-meta
+      BEVY_WEBSITE_DIR: ${{ runner.temp }}/bevy-website
+      BEVY_EXAMPLES_DIR: ${{ runner.temp }}/bevy-src/examples
     steps:
       - uses: actions/checkout@v4
-
-      # Avoid dependency caches in release builds to reduce cache poisoning risk.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-
-      - run: npm ci
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run test:package
-
-      - name: Normalise version
-        run: echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+      - name: Test
+        run: cargo test --locked
+      - name: Build the server
+        run: cargo build --release --locked
 
       - name: Mirror rustdoc from docs.rs
         env:
           FETCH_CONCURRENCY: "6"
-        run: node build/scripts/fetch-docs.mjs "$VERSION" --out "$RUNNER_TEMP/bevy-docs"
+        run: |
+          target/release/bevy-manual-mcp fetch-docs "$VERSION" \
+            --out "$RUNNER_TEMP/bevy-docs"
 
-      - name: Fetch Bevy engine examples (sparse)
+      - name: Fetch Bevy engine examples
         run: |
           git clone --depth 1 --branch "v${VERSION}" --filter=blob:none --sparse \
             https://github.com/bevyengine/bevy.git "$RUNNER_TEMP/bevy-src"
           git -C "$RUNNER_TEMP/bevy-src" sparse-checkout set examples
 
-      - name: Build the search index
-        env:
-          BEVY_VERSION: ${{ env.VERSION }}
-          BEVY_DOC_DIR: ${{ runner.temp }}/bevy-docs
-          BEVY_SRC_DIR: ${{ runner.temp }}/bevy-src
-          BEVY_MCP_DATA_DIR: ${{ github.workspace }}/data
-        run: node build/scripts/build-index.mjs "$VERSION" --force
+      - name: Harvest metadata
+        run: |
+          target/release/bevy-manual-mcp harvest-meta "$VERSION" \
+            --out "$BEVY_META_DIR/$VERSION" --force
+          target/release/bevy-manual-mcp harvest-compat \
+            --out "$RUNNER_TEMP/ecosystem"
+          target/release/bevy-manual-mcp fetch-website \
+            --out "$BEVY_WEBSITE_DIR"
 
-      - name: Package the index bundle
-        run: node build/scripts/publish-index.mjs "$VERSION" --data ./data --out ./dist
+      - name: Build the index bundle
+        run: |
+          mkdir -p dist
+          target/release/bevy-manual-mcp build \
+            --doc-dir "$RUNNER_TEMP/bevy-docs" \
+            --out "$BEVY_MCP_DATA_DIR/versions/$VERSION" \
+            --pack "dist/bevy-$VERSION-fmt1.tar.zst" \
+            --manifest dist/index-manifest.json \
+            --revision "$REVISION"
 
-      - name: Attach bundle to the GitHub Release
+      - name: Attach the bundle to the Bevy release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
-          files: |
-            dist/bevy-index-*.tar.gz
-            dist/index-manifest.json
           name: "Bevy ${{ env.VERSION }} index"
           body: |
-            Prebuilt Bevy ${{ env.VERSION }} index for bevy-mcp.
+            Prebuilt Bevy ${{ env.VERSION }} index for `bevy-manual-mcp`.
 
-            ## Install / download
-
+            Install it with:
             ```
-            npx --allow-git=all github:kinkirill/bevy_manual_mcp fetch-index ${{ env.VERSION }}
+            bevy-manual-mcp fetch-index ${{ env.VERSION }}
             ```
-
-            Downloads the prebuilt index; the current revision and SHA-256 are recorded in `index-manifest.json`. Re-running the command updates it when a newer revision is published.
-
-            ## Use
-
-            Register the server with your MCP client:
-
-            ```json
-            {
-              "mcpServers": {
-                "bevy": {
-                  "command": "npx",
-                  "args": ["-y", "--allow-git=all", "github:kinkirill/bevy_manual_mcp"],
-                  "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
-                }
-              }
-            }
-            ```
-
-            Full setup: https://github.com/kinkirill/bevy_manual_mcp#registering-with-an-mcp-client
+          files: |
+            dist/bevy-${{ env.VERSION }}-fmt1.tar.zst
+            dist/index-manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # PUBLISH_NPM and an npm trusted publisher are required for this optional step.
-      - name: Publish to npm (trusted publishing, opt-in)
-        if: vars.PUBLISH_NPM == 'true'
-        run: npm publish --access public --provenance
+  crate:
+    if: ${{ inputs.publish_crate }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish
+        run: cargo publish --locked --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
