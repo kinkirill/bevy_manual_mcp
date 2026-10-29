@@ -594,6 +594,19 @@ mod tests {
     }
 
     #[test]
+    fn intra_query_component_conflicts_are_reported() {
+        let analysis = systems("fn f(q: Query<(&Growth, &mut Growth)>) {}");
+        assert_eq!(analysis.findings.len(), 1, "{:?}", analysis.findings);
+        let finding = &analysis.findings[0];
+        assert_eq!(finding.rule, "R1");
+        assert_eq!(finding.error_code, Some("B0001"));
+        assert_eq!(finding.resource_type, "Growth");
+
+        let reads = systems("fn f(q: Query<(&Growth, &Growth)>) {}");
+        assert!(reads.findings.is_empty(), "{:?}", reads.findings);
+    }
+
+    #[test]
     fn param_sets_may_hold_conflicting_queries() {
         let analysis = systems(
             r#"

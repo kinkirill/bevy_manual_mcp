@@ -98,7 +98,8 @@ pub fn search<'a>(
                 id,
                 score
                     * record_weight(root, record)
-                    * relevance_boost(root, record, &subjects, &surfaces),
+                    * relevance_boost(root, record, &subjects, &surfaces)
+                    * docs_coverage_boost(root, record, &subjects),
             ));
         }
     }
@@ -366,6 +367,20 @@ fn canonical_subjects(terms: &[String]) -> Vec<String> {
     subjects
 }
 
+/// Concept queries benefit from records whose prose names all the subjects.
+fn docs_coverage_boost(root: &ArchivedCorpus, record: &ArchivedRecord, subjects: &[String]) -> f32 {
+    if subjects.is_empty() {
+        return 1.0;
+    }
+    let docs = root.string(record.docs).to_lowercase();
+    let signature = root.string(record.signature).to_lowercase();
+    let matched = subjects
+        .iter()
+        .filter(|term| docs.contains(term.as_str()) || signature.contains(term.as_str()))
+        .count();
+    1.0 + matched as f32 * 0.12
+}
+
 /// How many of `subjects` appear in a record's name or owner.
 fn name_coverage(root: &ArchivedCorpus, record: &ArchivedRecord, subjects: &[String]) -> usize {
     let leaf = base_name(root.string(record.name));
@@ -482,6 +497,24 @@ pub(crate) fn definition_key(root: &ArchivedCorpus, record: &ArchivedRecord) -> 
     }
 }
 
+/// Collapse re-export aliases that point at the same documented item.
+pub fn dedupe_records<'a>(
+    root: &ArchivedCorpus,
+    records: impl IntoIterator<Item = &'a ArchivedRecord>,
+) -> Vec<&'a ArchivedRecord> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for record in records {
+        let key = definition_key(root, record);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(record);
+    }
+    out
+}
+
 /// Other methods/associated items on the same owner, for `bevy_api`.
 pub fn related_records<'a>(
     root: &'a ArchivedCorpus,
@@ -530,6 +563,46 @@ mod tests {
         assert!(!is_definition("method"));
         assert!(is_member("method"));
         assert!(!is_member("struct"));
+    }
+
+    fn reexport_record(full_path: &str) -> crate::archive::RecordInput {
+        crate::archive::RecordInput {
+            source: "rustdoc".into(),
+            kind: "struct".into(),
+            name: "ChildOf".into(),
+            full_path: full_path.into(),
+            crate_name: Some("bevy".into()),
+            module: "bevy::ecs::hierarchy".into(),
+            signature: "pub struct ChildOf(pub Entity);".into(),
+            docs: "A hierarchy relationship.".into(),
+            source_ref: Some("docs.rs/bevy/0.20.1/bevy_ecs/hierarchy/struct.ChildOf.html".into()),
+            bevy_version: Some("0.20.1".into()),
+            file: "bevy_ecs/hierarchy/struct.ChildOf.html".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn dedupe_collapses_reexport_aliases() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let out = dir.path().join("version");
+        crate::archive::build(
+            vec![
+                reexport_record("bevy::ecs::hierarchy::ChildOf"),
+                reexport_record("bevy::ecs::prelude::ChildOf"),
+            ],
+            &out,
+            &crate::archive::BuildOptions {
+                bevy_version: Some("0.20.1".into()),
+                ..Default::default()
+            },
+        )
+        .expect("build");
+        let corpus = LoadedCorpus::open(&out.join(crate::archive::ARCHIVE_FILE)).expect("corpus");
+        let hits = corpus.lookup("ChildOf");
+        assert_eq!(hits.len(), 2);
+        let unique = dedupe_records(corpus.root(), hits);
+        assert_eq!(unique.len(), 1);
     }
 
     #[test]
@@ -846,29 +919,19 @@ pub fn find_migrations<'a>(
     let from_core = from.map(major_minor);
     let to_core = to.map(major_minor);
     let topic = topic.map(str::to_lowercase);
-    let matches_topic = |record: &ArchivedRecord| {
-        let Some(topic) = &topic else {
-            return true;
-        };
-        let mut haystack = String::new();
-        for id in [record.name, record.heading, record.docs, record.full_path] {
-            haystack.push_str(root.string(id));
-            haystack.push(' ');
-        }
-        for breadcrumb in record.breadcrumb.iter() {
-            haystack.push_str(root.string(*breadcrumb));
-            haystack.push(' ');
-        }
-        haystack.to_lowercase().contains(topic)
-    };
+    let topic_terms = topic.as_deref().map(topic_terms).unwrap_or_default();
 
-    let mut scored: Vec<(i32, &ArchivedRecord)> = Vec::new();
+    let mut scored: Vec<(i32, i32, &ArchivedRecord)> = Vec::new();
     for record in root.records.iter() {
-        if !matches_topic(record) {
+        let topic_score = match &topic {
+            Some(topic) => topic_relevance(root, record, topic, &topic_terms),
+            None => 0,
+        };
+        if topic.is_some() && topic_score == 0 {
             continue;
         }
         let kind = root.string(record.kind);
-        let score = match kind {
+        let base = match kind {
             "migration_guide" => {
                 let guide_from = major_minor(root.string(record.from_version));
                 let guide_to = major_minor(root.string(record.to_version));
@@ -900,12 +963,26 @@ pub fn find_migrations<'a>(
             }
             _ => continue,
         };
-        scored.push((score, record));
+        scored.push((base, topic_score, record));
+    }
+
+    // If a section actually names the topic, drop documents that only mention
+    // it somewhere in their prose.
+    if topic.is_some() {
+        let best_topic = scored
+            .iter()
+            .map(|(_, topic_score, _)| *topic_score)
+            .max()
+            .unwrap_or(0);
+        if best_topic >= 20 {
+            scored.retain(|(_, topic_score, _)| *topic_score >= 20);
+        }
     }
 
     // At most `per_doc` chunks per source document, then rank globally.
     let mut by_doc: Vec<(String, Vec<(i32, &ArchivedRecord)>)> = Vec::new();
-    for (score, record) in scored {
+    for (base, topic_score, record) in scored {
+        let score = base + topic_score;
         let key = root.string(record.full_path).to_string();
         match by_doc.iter_mut().find(|(existing, _)| *existing == key) {
             Some((_, entries)) => entries.push((score, record)),
@@ -921,6 +998,61 @@ pub fn find_migrations<'a>(
     out.into_iter()
         .map(|(score, record)| (record, score))
         .collect()
+}
+
+fn topic_terms(topic: &str) -> Vec<String> {
+    topic
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|term| term.len() > 1)
+        .map(str::to_string)
+        .collect()
+}
+
+fn topic_relevance(
+    root: &ArchivedCorpus,
+    record: &ArchivedRecord,
+    topic: &str,
+    terms: &[String],
+) -> i32 {
+    let mut high = String::new();
+    for id in [
+        record.name,
+        record.title,
+        record.heading,
+        record.full_path,
+        record.module,
+    ] {
+        high.push_str(root.string(id));
+        high.push(' ');
+    }
+    for breadcrumb in record.breadcrumb.iter() {
+        high.push_str(root.string(*breadcrumb));
+        high.push(' ');
+    }
+    let high = high.to_lowercase();
+    let docs = root.string(record.docs).to_lowercase();
+
+    let mut score = 0;
+    if high.contains(topic) {
+        score += 40;
+    } else if !terms.is_empty() && terms.iter().all(|term| high.contains(term)) {
+        score += 30;
+    } else {
+        score += terms
+            .iter()
+            .filter(|term| high.contains(term.as_str()))
+            .count() as i32
+            * 8;
+    }
+    if docs.contains(topic) {
+        score += 4;
+    } else {
+        score += terms
+            .iter()
+            .filter(|term| docs.contains(term.as_str()))
+            .count() as i32;
+    }
+    score
 }
 
 fn major_minor(version: &str) -> &str {

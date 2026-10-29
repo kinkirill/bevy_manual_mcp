@@ -734,6 +734,67 @@ fn bundle_pack_and_fetch_round_trip() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
+
+    // A revision-only update needs --force; the plain command is a no-op.
+    fs::write(
+        release.join("index-manifest.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "manifest_version": 2,
+            "bevy_version": "9.9.9",
+            "asset": "bevy-9.9.9-fmt1.tar.zst",
+            "sha256": sha256,
+            "size": bytes.len(),
+            "format_version": 1,
+            "revision": 2
+        }))
+        .expect("manifest json"),
+    )
+    .expect("write revision 2 manifest");
+
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9"])
+        .output()
+        .expect("run fetch-index");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("already installed"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9", "--force"])
+        .output()
+        .expect("run forced fetch-index");
+    assert!(
+        output.status.success(),
+        "forced fetch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let installed: Value = serde_json::from_str(
+        &fs::read_to_string(fresh.join("versions/9.9.9/.installed-index.json"))
+            .expect("installed manifest"),
+    )
+    .expect("installed manifest json");
+    assert_eq!(installed["revision"], 2);
+
+    // An existing but unusable install is repaired without --force.
+    fs::remove_dir_all(fresh.join("versions/9.9.9/tantivy")).expect("remove text index");
+    let output = command(&fresh)
+        .env("BEVY_MCP_INDEX_BASE_URL", dir.path().join("releases"))
+        .env("BEVY_MCP_OFFLINE", "0")
+        .args(["fetch-index", "9.9.9"])
+        .output()
+        .expect("run repair fetch-index");
+    assert!(
+        output.status.success(),
+        "repair fetch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fresh.join("versions/9.9.9/tantivy").is_dir());
 }
 
 #[test]

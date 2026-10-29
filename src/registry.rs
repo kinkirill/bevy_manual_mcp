@@ -106,7 +106,11 @@ impl Registry {
                 let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                     continue;
                 };
-                if entry.path().join("meta.json").is_file() && !versions.contains(&name) {
+                let path = entry.path();
+                if (path.join("meta.json").is_file()
+                    || path.join(crate::archive::ARCHIVE_FILE).is_file())
+                    && !versions.contains(&name)
+                {
                     versions.push(name);
                 }
             }

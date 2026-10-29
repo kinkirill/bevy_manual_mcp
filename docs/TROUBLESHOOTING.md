@@ -33,6 +33,19 @@ version, the server reports the ambiguity instead of guessing; set
 `bevy-manual-mcp status` shows the project version, the corpus version that
 actually supplied the data, the record count and the text-index state.
 
+## The installed index is corrupt or incomplete
+
+Startup validates the archive and text index. A corrupt archive, or a valid
+archive with a missing/unreadable Tantivy index, is treated as unusable and the
+server starts a forced background reinstall. Offline, run it explicitly:
+
+```bash
+bevy-manual-mcp fetch-index 0.20.1 --force
+```
+
+A normal `fetch-index <version>` also repairs a damaged exact-version install,
+but it is a no-op when the installed generation is valid.
+
 ## A rebuilt tool still behaves like the old build
 
 A running MCP server keeps its old executable mapped. After `cargo build`,

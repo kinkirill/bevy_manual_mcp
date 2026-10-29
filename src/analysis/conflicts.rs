@@ -77,11 +77,11 @@ pub fn check(system: &str, accesses: &[Access], params: &[ParamInfo]) -> Vec<Fin
 
     for (index, a) in accesses.iter().enumerate() {
         for b in &accesses[index + 1..] {
-            if a.owner == b.owner {
-                continue;
-            }
             if a.group.is_some() && a.group == b.group {
                 // ParamSet members are borrowed one at a time.
+                continue;
+            }
+            if a.owner == b.owner && !matches!(a.kind, AccessKind::Component) {
                 continue;
             }
             let rule = match (a.kind, b.kind) {
@@ -226,14 +226,18 @@ mod tests {
     }
 
     #[test]
-    fn same_param_and_param_set_members_are_exempt() {
+    fn same_param_component_conflicts_are_reported() {
         let same = check(
             "sys",
             &[access(0, "A", true), access(0, "A", false)],
             &[param("a")],
         );
-        assert!(same.is_empty());
+        assert_eq!(same.len(), 1);
+        assert_eq!(same[0].rule, "R1");
+    }
 
+    #[test]
+    fn param_set_members_are_exempt() {
         let mut first = access(0, "A", true);
         let mut second = access(0, "A", true);
         first.group = Some(1);

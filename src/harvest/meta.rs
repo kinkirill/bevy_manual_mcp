@@ -93,8 +93,18 @@ fn closure(graph: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String
 fn parse_features(internal_toml: &str, facade_toml: Option<&str>) -> Result<FeaturesFile> {
     let internal: toml::Value =
         toml::from_str(internal_toml).context("cannot parse crates/bevy_internal/Cargo.toml")?;
+    let facade: Option<toml::Value> = match facade_toml {
+        Some(text) => Some(toml::from_str(text).context("cannot parse facade Cargo.toml")?),
+        None => None,
+    };
     let raw_features = internal
         .get("features")
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default();
+    let facade_features = facade
+        .as_ref()
+        .and_then(|facade| facade.get("features"))
         .and_then(toml::Value::as_table)
         .cloned()
         .unwrap_or_default();
@@ -107,6 +117,7 @@ fn parse_features(internal_toml: &str, facade_toml: Option<&str>) -> Result<Feat
     // Cargo creates an implicit feature for every optional dependency unless
     // the package suppresses it with `dep:`; Bevy gates plugins on those names.
     let mut feature_names: BTreeSet<String> = raw_features.keys().cloned().collect();
+    feature_names.extend(facade_features.keys().cloned());
     for (name, value) in &dependencies {
         if value
             .get("optional")
@@ -131,26 +142,39 @@ fn parse_features(internal_toml: &str, facade_toml: Option<&str>) -> Result<Feat
         }
         graph.insert(name.clone(), enables.into_iter().collect());
     }
+    // Facade features such as `2d`, `ui` and `ui_api` are part of the public
+    // feature graph, not just profile labels. Merge them so the closure can
+    // cascade through them.
+    for (name, value) in &facade_features {
+        let mut enables = BTreeSet::new();
+        if let Some(entries) = value.as_array() {
+            for entry in entries {
+                if let Some(entry) = entry.as_str()
+                    && let Some(feature) = resolve_entry(entry, &feature_names)
+                {
+                    enables.insert(feature);
+                }
+            }
+        }
+        graph.insert(name.clone(), enables.into_iter().collect());
+    }
     for name in &feature_names {
         graph.entry(name.clone()).or_default();
     }
 
     let mut profiles = BTreeMap::new();
     let mut default_features = Vec::new();
-    if let Some(facade_toml) = facade_toml {
-        let facade: toml::Value =
-            toml::from_str(facade_toml).context("cannot parse facade Cargo.toml")?;
+    if let Some(facade) = &facade {
         if let Some(features) = facade.get("features").and_then(toml::Value::as_table) {
             for (name, value) in features {
                 let Some(entries) = value.as_array() else {
                     continue;
                 };
-                let enables: Vec<String> = entries
+                let mut enables: Vec<String> = entries
                     .iter()
                     .filter_map(toml::Value::as_str)
                     .map(str::to_string)
                     .collect();
-                let mut enables = enables;
                 enables.sort();
                 if name == "default" {
                     default_features = enables;
@@ -423,9 +447,14 @@ ui = ["bevy_ui"]
         let parsed = parse_features(internal, Some(facade)).expect("features");
         assert!(parsed.features.contains_key("bevy_ui_crate"));
         assert!(parsed.features.contains_key("bevy_render"));
+        assert!(parsed.features.contains_key("ui"));
         assert!(!parsed.features.contains_key("serde"));
         assert_eq!(parsed.default_features, vec!["2d", "ui"]);
         assert!(parsed.profiles.contains_key("2d"));
+        let default_closure = &parsed.closure["default"];
+        assert!(default_closure.contains(&"ui".to_string()));
+        assert!(default_closure.contains(&"bevy_ui".to_string()));
+        assert!(default_closure.contains(&"bevy_render".to_string()));
     }
 
     #[test]

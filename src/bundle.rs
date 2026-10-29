@@ -267,7 +267,7 @@ pub(crate) fn swap_directories(replacement: &Path, target: &Path) -> Result<()> 
     }
 }
 
-fn validate_installation(dir: &Path) -> Result<()> {
+pub(crate) fn validate_installation(dir: &Path) -> Result<()> {
     let corpus_path = dir.join(ARCHIVE_FILE);
     if !corpus_path.is_file() {
         bail!("bundle is incomplete: {} is missing", corpus_path.display());
@@ -426,13 +426,18 @@ pub fn installed_manifest(version_dir: &Path) -> Option<ReleaseManifest> {
 /// resolve same-minor corpora on demand.
 pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathBuf>> {
     // An explicit fetch upgrades to the requested exact corpus. Same-minor
-    // fallback is a loader concern, not an "already installed" shortcut.
-    let exact = data_dir
-        .join("versions")
-        .join(version_dir_name(version))
-        .join(ARCHIVE_FILE);
+    // fallback is a loader concern, not an "already installed" shortcut. An
+    // existing but unusable directory is repaired even without --force.
+    let exact_dir = data_dir.join("versions").join(version_dir_name(version));
+    let exact = exact_dir.join(ARCHIVE_FILE);
     if exact.is_file() && !force {
-        return Ok(None);
+        match validate_installation(&exact_dir) {
+            Ok(()) => return Ok(None),
+            Err(error) => eprintln!(
+                "[bevy-manual-mcp] installed index at {} is unusable ({error}); reinstalling",
+                exact_dir.display()
+            ),
+        }
     }
 
     let base = std::env::var("BEVY_MCP_INDEX_BASE_URL")

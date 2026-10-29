@@ -609,6 +609,39 @@ fn examples_and_migration_tools_answer() {
 }
 
 #[test]
+fn migration_rejects_the_same_version_pair() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_migration",
+        json!({ "from_version": "9.9", "to_version": "9.9" }),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        tool_text(&response).contains("same"),
+        "{}",
+        tool_text(&response)
+    );
+}
+
+#[test]
+fn api_diff_reports_the_installed_corpus_it_can_see() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool("bevy_api_diff", json!({ "symbol": "Widget" }));
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("9.9.9"), "{text}");
+    assert!(!text.contains("installed: ."), "{text}");
+}
+
+#[test]
 fn api_diff_compares_installed_versions() {
     let dir = fixture();
     build_corpus(dir.path());
@@ -910,6 +943,7 @@ fn check_manifest_falls_back_to_the_manifest_and_reports_gates() {
     let structured = &response["result"]["structuredContent"];
     assert_eq!(structured["bevy_version"], "9.9.9");
     assert_eq!(structured["source"], "Cargo.toml");
+    assert!(structured["metadata_error"].is_string(), "{structured}");
     assert_eq!(structured["no_manifest"], false);
     assert_eq!(structured["default_features_enabled"], false);
     assert_eq!(structured["explicit"], json!(["bevy_ui"]));
@@ -1106,6 +1140,31 @@ fn perf_advisor_reports_builtin_topics_and_anti_patterns() {
     assert_eq!(names, vec!["change-detection", "archetypes", "scheduling"]);
 }
 
+#[test]
+fn perf_advisor_analyzes_code_without_a_topic() {
+    let dir = fixture();
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_perf_advisor",
+        json!({ "code": "if q.get(entity).is_changed() { }" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("Anti-Patterns Detected"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    let findings = structured["anti_patterns"]
+        .as_array()
+        .expect("anti patterns");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding["pattern"] == "is_changed()"),
+        "{findings:?}"
+    );
+}
+
 fn write_compat_fixture(root: &Path) -> std::path::PathBuf {
     let dir = root.join("ecosystem");
     std::fs::create_dir_all(&dir).expect("ecosystem dir");
@@ -1267,6 +1326,41 @@ fn ecosystem_search_fans_out_and_labels_corpora() {
     assert_eq!(
         response["result"]["structuredContent"]["total_hits"],
         json!(0)
+    );
+}
+
+#[test]
+fn ecosystem_search_names_a_compat_known_but_uninstalled_crate() {
+    let dir = fixture();
+    let compat = write_compat_fixture(dir.path());
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_MCP_OFFLINE", "1"),
+            (
+                "BEVY_MCP_COMPAT_PATH",
+                compat.to_str().expect("compat path"),
+            ),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_ecosystem_search",
+        json!({ "query": "Button", "crate": "bevy_egui" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("bevy_egui"), "{text}");
+    assert!(!text.contains("No matching symbols were found"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["corpora_searched"], json!([]));
+    let skipped = structured["corpora_skipped"]
+        .as_array()
+        .expect("corpora skipped");
+    assert!(
+        skipped.iter().any(|row| row["crate"] == "bevy_egui"),
+        "{skipped:?}"
     );
 }
 

@@ -58,6 +58,7 @@ struct IndexStore {
     data_dir: PathBuf,
     project_version: Option<String>,
     snapshot: Mutex<Option<Arc<IndexSnapshot>>>,
+    last_error: Mutex<Option<String>>,
 }
 
 impl IndexStore {
@@ -66,6 +67,7 @@ impl IndexStore {
             data_dir,
             project_version,
             snapshot: Mutex::new(None),
+            last_error: Mutex::new(None),
         }
     }
 
@@ -74,11 +76,42 @@ impl IndexStore {
     }
 
     fn reload(&self) -> Result<Option<Arc<IndexSnapshot>>, String> {
-        let snapshot = load_index(&self.data_dir, self.project_version.as_deref())?.map(Arc::new);
+        let snapshot = match load_index(&self.data_dir, self.project_version.as_deref()) {
+            Ok(snapshot) => snapshot.map(Arc::new),
+            Err(error) => {
+                if let Ok(mut last_error) = self.last_error.lock() {
+                    *last_error = Some(error.clone());
+                }
+                return Err(error);
+            }
+        };
         if let Ok(mut state) = self.snapshot.lock() {
             *state = snapshot.clone();
         }
+        if let Ok(mut last_error) = self.last_error.lock() {
+            *last_error = None;
+        }
         Ok(snapshot)
+    }
+
+    /// `(force, reason)` when the current installation is missing or unusable.
+    fn needs_refresh(&self, version: &str, data_dir: &Path) -> Option<(bool, String)> {
+        if let Some(snapshot) = self.current() {
+            if snapshot.search_state().is_some() {
+                return None;
+            }
+            return Some((
+                true,
+                "the installed text index is missing or unreadable".to_string(),
+            ));
+        }
+        if let Some(error) = self.last_error.lock().ok().and_then(|error| error.clone()) {
+            return Some((true, error));
+        }
+        if crate::archive::resolve_version_dir(data_dir, version).is_some() {
+            return Some((true, "the installed corpus could not be loaded".to_string()));
+        }
+        Some((false, "no index is installed".to_string()))
     }
 }
 
@@ -520,12 +553,11 @@ impl BevyMcp {
                 snapshot.corpus_version
             )
         })?;
-        let records: Vec<_> = state
-            .root()
-            .lookup(&params.symbol)
-            .into_iter()
-            .take(6)
-            .collect();
+        let records: Vec<_> =
+            search::dedupe_records(state.root(), state.root().lookup(&params.symbol))
+                .into_iter()
+                .take(6)
+                .collect();
         let related = if params.include_related.unwrap_or(true) && !records.is_empty() {
             search::related_records(state.root(), records[0], 12)
         } else {
@@ -581,7 +613,13 @@ impl BevyMcp {
             ..Default::default()
         };
         let limit = params.limit.unwrap_or(5).clamp(1, 15);
-        let hits = search::search(&state, &params.task, limit, &filters);
+        let mut hits = search::search(&state, &params.task, limit, &filters);
+        let terms = crate::text::query_terms(&params.task);
+        hits.sort_by(|a, b| {
+            example_relevance(state.root(), b.record, &terms)
+                .total_cmp(&example_relevance(state.root(), a.record, &terms))
+                .then_with(|| b.score.total_cmp(&a.score))
+        });
         if hits.is_empty() {
             let count = state
                 .root()
@@ -641,6 +679,17 @@ impl BevyMcp {
             .clone()
             .or_else(|| self.config.bevy_version.clone())
             .ok_or_else(|| anyhow!("specify `to_version`, or set BEVY_VERSION"))?;
+        if let Some(from) = params.from_version.as_deref() {
+            let from_core =
+                crate::versions::minor_label(from).unwrap_or_else(|| from.trim().to_string());
+            let to_core =
+                crate::versions::minor_label(&to).unwrap_or_else(|| to.trim().to_string());
+            if from_core == to_core {
+                bail!(
+                    "`from_version` and `to_version` are both Bevy {from_core}; there is no migration between the same release line. Specify two different Bevy versions."
+                );
+            }
+        }
         let entries = search::find_migrations(
             state.root(),
             params.from_version.as_deref(),
@@ -679,31 +728,37 @@ impl BevyMcp {
     }
 
     fn run_api_diff(&self, params: DiffParams) -> anyhow::Result<(String, Value)> {
-        let installed: Vec<String> = self
+        let mut installed: Vec<String> = self
             .registry
             .indexed_versions()
             .into_iter()
             .filter(|version| archive::archive_path_for(&self.config.data_dir, version).is_file())
             .collect();
+        if let Some(snapshot) = self.snapshot()
+            && archive::archive_path_for(&self.config.data_dir, &snapshot.corpus_version).is_file()
+            && !installed.contains(&snapshot.corpus_version)
+        {
+            installed.push(snapshot.corpus_version.clone());
+            installed.sort_by(|a, b| cmp_version(a, b));
+        }
+        let installed_label = if installed.is_empty() {
+            "none".to_string()
+        } else {
+            installed.join(", ")
+        };
         let wanted: Vec<String> = match &params.versions {
             Some(list) => split_versions(list),
             None => installed.clone(),
         };
         if wanted.len() < 2 {
             bail!(
-                "need at least two compiled corpora to diff; installed: {}. Build or fetch another version first.",
-                if installed.is_empty() {
-                    "none".to_string()
-                } else {
-                    installed.join(", ")
-                }
+                "need at least two compiled corpora to diff; installed: {installed_label}. Build or fetch another version first."
             );
         }
         for version in &wanted {
             if !installed.contains(version) {
                 bail!(
-                    "version {version} has no compiled corpus; installed: {}. Run `bevy-manual-mcp fetch-index {version}` first.",
-                    installed.join(", ")
+                    "version {version} has no compiled corpus; installed: {installed_label}. Run `bevy-manual-mcp fetch-index {version}` first."
                 );
             }
         }
@@ -922,13 +977,21 @@ impl BevyMcp {
                                 update_available = json!(true);
                                 reason = "revision";
                                 command = Some(format!(
-                                    "bevy-manual-mcp fetch-index {}",
+                                    "bevy-manual-mcp fetch-index {} --force",
                                     manifest.bevy_version
                                 ));
                             }
                             (Some(_), Some(_)) => {
                                 update_available = json!(false);
                                 reason = "current";
+                            }
+                            (None, Some(_)) => {
+                                update_available = json!("unknown");
+                                reason = "revision_unknown";
+                                command = Some(format!(
+                                    "bevy-manual-mcp fetch-index {} --force",
+                                    manifest.bevy_version
+                                ));
                             }
                             _ => {
                                 update_available = json!("unknown");
@@ -972,13 +1035,23 @@ impl BevyMcp {
         match &update_available {
             Value::Bool(true) => {
                 if let Some(command) = &command {
-                    text.push_str(&format!("\n⬆ **Update available** (`{reason}`):\n\n```bash\n{command}\n```\n"));
+                    text.push_str(&format!(
+                        "\n⬆ **Update available** (`{reason}`):\n\n```bash\n{command}\n```\n"
+                    ));
                 }
             }
             Value::Bool(false) => text.push_str("\nInstalled index is current.\n"),
-            _ => text.push_str(
-                "\nWhether a revision-only update exists cannot be determined (no installed release manifest).\n",
-            ),
+            _ => {
+                if let Some(command) = &command {
+                    text.push_str(&format!(
+                        "\nThe available index has revision information, but the installed manifest does not. Reinstall with:\n\n```bash\n{command}\n```\n"
+                    ));
+                } else {
+                    text.push_str(
+                        "\nWhether a revision-only update exists cannot be determined (the release manifest has no revision).\n",
+                    );
+                }
+            }
         }
         if let Some(newer) = &newer_bevy {
             let stable = newer["bevy_version"].as_str().unwrap_or("newer");
@@ -1121,6 +1194,13 @@ impl BevyMcp {
         let enabled = features::enabled(&self.config.project_root, &data);
         let source = enabled.source;
         let no_manifest = !enabled.manifest_found;
+        let confidence = if source == "cargo metadata" {
+            "high"
+        } else if no_manifest {
+            "none"
+        } else {
+            "low"
+        };
 
         if let Some(query) = params
             .check
@@ -1131,8 +1211,11 @@ impl BevyMcp {
             let verdict = features::check(query, &data, &enabled.transitive);
             let mut text = format!("## Check: `{query}`\n\n{}\n\n", verdict.text);
             text.push_str(&format!(
-                "- Feature graph: Bevy {graph_version}\n- Feature source: {source}\n"
+                "- Feature graph: Bevy {graph_version}\n- Feature source: {source}\n- Confidence: {confidence}\n"
             ));
+            if let Some(error) = &enabled.metadata_error {
+                text.push_str(&format!("- `cargo metadata` unavailable: {error}\n"));
+            }
             if no_manifest {
                 text.push_str(
                     "- No Cargo.toml found in the project root; no features are enabled.\n",
@@ -1147,6 +1230,8 @@ impl BevyMcp {
                     "gating_feature": verdict.gating_feature,
                     "bevy_version": graph_version,
                     "source": source,
+                    "confidence": confidence,
+                    "metadata_error": enabled.metadata_error,
                     "no_manifest": no_manifest,
                 }),
             ));
@@ -1165,7 +1250,12 @@ impl BevyMcp {
                 "> No Cargo.toml found in the project root. Showing known features for this version.\n\n",
             );
         } else {
-            text.push_str(&format!("Feature source: {source}.\n"));
+            text.push_str(&format!(
+                "Feature source: {source}. Confidence: {confidence}.\n"
+            ));
+        }
+        if let Some(error) = &enabled.metadata_error {
+            text.push_str(&format!("> `cargo metadata` unavailable: {error}\n"));
         }
         text.push_str(&format!(
             "**Explicit**: {}\n",
@@ -1220,6 +1310,8 @@ impl BevyMcp {
             json!({
                 "bevy_version": graph_version,
                 "source": source,
+                "confidence": confidence,
+                "metadata_error": enabled.metadata_error,
                 "no_manifest": no_manifest,
                 "default_features_enabled": enabled.default_features,
                 "explicit": enabled.explicit,
@@ -1423,6 +1515,7 @@ impl BevyMcp {
                     "bevy_version": version,
                     "found": true,
                     "source": source,
+                    "guidance_versioned": !vendored.is_empty(),
                     "rationale": matched.rationale,
                     "symptoms": matched.symptoms,
                     "recommend": matched.recommend,
@@ -1444,6 +1537,20 @@ impl BevyMcp {
                 .unwrap_or_default();
             text.push_str(&format!("- `{}`{summary}\n", topic.topic));
         }
+        if params.code.is_some() {
+            text.push_str(
+                "\nNo topic was specified, so the code was scanned for all known anti-patterns.\n",
+            );
+            if anti_patterns_json.is_empty() {
+                text.push_str("\nNo anti-patterns detected in the provided code.\n");
+            } else {
+                text.push_str("\n### Anti-Patterns Detected\n\n");
+                for finding in &anti_patterns {
+                    text.push_str(&format!("- **Found**: `{}`\n", finding.pattern));
+                    text.push_str(&format!("  - **Suggestion**: {}\n", finding.suggestion));
+                }
+            }
+        }
         let note = if overall_source == "builtin" {
             " Built-in guidance is not pinned to a Bevy release; no version-specific perf metadata was loaded."
         } else {
@@ -1456,11 +1563,39 @@ impl BevyMcp {
                 "bevy_version": version,
                 "found": true,
                 "source": overall_source,
+                "guidance_versioned": !vendored.is_empty(),
                 "topics": available,
                 "anti_patterns": anti_patterns_json,
             }),
         )
     }
+}
+
+fn example_relevance(
+    root: &crate::archive::ArchivedCorpus,
+    record: &crate::archive::ArchivedRecord,
+    terms: &[String],
+) -> f32 {
+    let mut high = String::new();
+    for id in [record.name, record.full_path, record.title, record.heading] {
+        high.push_str(root.string(id));
+        high.push(' ');
+    }
+    for category in record.categories.iter() {
+        high.push_str(root.string(*category));
+        high.push(' ');
+    }
+    let high = high.to_lowercase();
+    let docs = root.string(record.docs).to_lowercase();
+    let high_hits = terms
+        .iter()
+        .filter(|term| high.contains(term.as_str()))
+        .count();
+    let docs_hits = terms
+        .iter()
+        .filter(|term| docs.contains(term.as_str()))
+        .count();
+    high_hits as f32 * 4.0 + docs_hits as f32
 }
 
 fn corpus_hits(
@@ -1671,6 +1806,37 @@ impl BevyMcp {
                 .into_iter()
                 .filter(|skip| filter.is_none() || Some(skip.crate_name.as_str()) == filter),
         );
+        if let Some(name) = filter
+            && name != "bevy"
+            && !sources.iter().any(|source| source.crate_name == name)
+            && !skipped.iter().any(|skip| skip.crate_name == name)
+        {
+            let compat_entry = self
+                .config
+                .compat_path()
+                .and_then(|path| compat::load_file(&path).ok())
+                .and_then(|snapshot| snapshot.plugins.get(name).cloned());
+            let (version, reason) = match compat_entry.as_deref().and_then(compat::newest) {
+                Some(entry) => (
+                    Some(entry.plugin_version.clone()),
+                    format!(
+                        "no compiled plugin corpus is installed; the compat snapshot records {} {} for Bevy {}",
+                        name,
+                        entry.plugin_version,
+                        self.config.bevy_version.as_deref().unwrap_or("unknown")
+                    ),
+                ),
+                None => (
+                    None,
+                    "no compiled plugin corpus is configured or installed".to_string(),
+                ),
+            };
+            skipped.push(ecosystem::Skipped {
+                crate_name: name.to_string(),
+                version,
+                reason,
+            });
+        }
         for source in sources {
             if let Some(filter) = filter
                 && filter != "bevy"
@@ -1714,7 +1880,7 @@ impl BevyMcp {
                 text.push_str(markdown);
             }
         }
-        if total_hits == 0 {
+        if total_hits == 0 && !searched.is_empty() {
             text.push_str("\nNo matching symbols were found in the searched corpora.\n");
         }
         if !skipped.is_empty() {
@@ -1769,6 +1935,8 @@ impl BevyMcp {
         };
         let snapshot = compat::load_file(&path)?;
         let provenance = serde_json::to_value(&snapshot.provenance)?;
+        let snapshot_age_days = compat_age_days(&snapshot.provenance.harvested_at);
+        let stale = snapshot_age_days.is_some_and(|days| days > 14);
         let version = self.config.bevy_version.clone();
 
         let Some(name) = params
@@ -1819,6 +1987,8 @@ impl BevyMcp {
                 json!({
                     "bevy_version": version,
                     "plugins": plugins,
+                    "snapshot_age_days": snapshot_age_days,
+                    "stale": stale,
                     "provenance": provenance,
                 }),
             ));
@@ -1914,6 +2084,8 @@ impl BevyMcp {
                 "newest_version": newest.map(|entry| entry.plugin_version.clone()),
                 "newest_requires_bevy": newest.map(|entry| entry.requires_bevy.clone()),
                 "available_versions": available_versions,
+                "snapshot_age_days": snapshot_age_days,
+                "stale": stale,
                 "provenance": provenance,
             }),
         ))
@@ -2001,12 +2173,30 @@ fn generic_error_fix(code: &str) -> Option<&'static str> {
 }
 
 fn compat_footer(snapshot: &compat::Snapshot) -> String {
-    format!(
+    let mut footer = format!(
         "\n> Snapshot: {} versions across {} crate(s), harvested {} ({}).\n",
         snapshot.provenance.version_count,
         snapshot.provenance.crates.len(),
         snapshot.provenance.harvested_at,
         snapshot.provenance.source
+    );
+    if let Some(age) = compat_age_days(&snapshot.provenance.harvested_at)
+        && age > 14
+    {
+        footer.push_str(&format!(
+            "> Warning: this compat snapshot is {age} days old; verify the plugin release on crates.io before relying on an OK verdict.\n"
+        ));
+    }
+    footer
+}
+
+fn compat_age_days(harvested_at: &str) -> Option<i64> {
+    let harvested = chrono::DateTime::parse_from_rfc3339(harvested_at).ok()?;
+    Some(
+        chrono::Utc::now()
+            .signed_duration_since(harvested.with_timezone(&chrono::Utc))
+            .num_days()
+            .max(0),
     )
 }
 
@@ -2387,22 +2577,27 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let index = server.index.clone();
 
     if let Some(version) = config.bevy_version.clone()
-        && archive::resolve_version_dir(&config.data_dir, &version).is_none()
+        && let Some((force, reason)) = index.needs_refresh(&version, &config.data_dir)
     {
+        let command = if force {
+            format!("bevy-manual-mcp fetch-index {version} --force")
+        } else {
+            format!("bevy-manual-mcp fetch-index {version}")
+        };
         if config.offline {
             config.log(format!(
-                "No index for Bevy {version} is installed. BEVY_MCP_OFFLINE=1 is set; run `bevy-manual-mcp fetch-index {version}` when online."
+                "Index for Bevy {version} cannot be used ({reason}). BEVY_MCP_OFFLINE=1 is set; run `{command}` when online."
             ));
         } else {
             let fetch_config = config.clone();
             tokio::spawn(async move {
                 fetch_config.log(format!(
-                    "No index for Bevy {version} is installed; downloading it in the background. The MCP server is available now and will start answering corpus queries after the install completes."
+                    "Index for Bevy {version} needs installation or repair ({reason}); downloading it in the background with `{command}`. The MCP server is available now and will start answering corpus queries after the install completes."
                 ));
                 let data_dir = fetch_config.data_dir.clone();
                 let fetch_version = version.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    crate::bundle::fetch(&fetch_version, &data_dir, false)
+                    crate::bundle::fetch(&fetch_version, &data_dir, force)
                 })
                 .await;
                 match result {
@@ -2424,14 +2619,14 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
                             }
                         }
                         Ok(None) => fetch_config.log(format!(
-                            "no index was installed for Bevy {version}; run `bevy-manual-mcp fetch-index {version}`"
+                            "no index was installed for Bevy {version}; run `{command}`"
                         )),
                         Err(error) => fetch_config.log(format!(
-                            "downloaded the index for Bevy {version}, but loading it failed: {error}"
+                            "downloaded the index for Bevy {version}, but loading it failed: {error}; run `{command}`"
                         )),
                     },
                     Ok(Err(error)) => fetch_config.log(format!(
-                        "could not download the index for Bevy {version}: {error}; run `bevy-manual-mcp fetch-index {version}`"
+                        "could not download the index for Bevy {version}: {error}; run `{command}`"
                     )),
                     Err(error) => {
                         fetch_config.log(format!("index download task failed: {error}"))
@@ -2484,6 +2679,56 @@ mod version_source_tests {
         assert_eq!(
             crate::bundle::sparse_index_url("syn"),
             "https://index.crates.io/3/s/syn"
+        );
+    }
+
+    fn build_test_index(root: &Path) {
+        let out = root.join("versions/9.9.9");
+        crate::archive::build(
+            Vec::new(),
+            &out,
+            &crate::archive::BuildOptions {
+                bevy_version: Some("9.9.9".into()),
+                ..Default::default()
+            },
+        )
+        .expect("build index");
+    }
+
+    #[test]
+    fn a_missing_text_index_triggers_a_forced_refresh() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        build_test_index(dir.path());
+        std::fs::remove_dir_all(dir.path().join("versions/9.9.9/tantivy"))
+            .expect("remove text index");
+        let store = IndexStore::new(dir.path().to_path_buf(), Some("9.9.9".into()));
+        let snapshot = store.reload().expect("load corpus").expect("snapshot");
+        assert!(snapshot.search_state().is_none());
+        let (force, reason) = store
+            .needs_refresh("9.9.9", dir.path())
+            .expect("refresh needed");
+        assert!(force, "{reason}");
+        assert!(reason.contains("text index"), "{reason}");
+    }
+
+    #[test]
+    fn a_corrupt_archive_triggers_a_forced_refresh() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        build_test_index(dir.path());
+        std::fs::write(
+            dir.path().join("versions/9.9.9/corpus.rkyv"),
+            b"not an archive",
+        )
+        .expect("corrupt archive");
+        let store = IndexStore::new(dir.path().to_path_buf(), Some("9.9.9".into()));
+        assert!(store.reload().is_err());
+        let (force, reason) = store
+            .needs_refresh("9.9.9", dir.path())
+            .expect("refresh needed");
+        assert!(force, "{reason}");
+        assert!(
+            reason.contains("validation") || reason.contains("archive"),
+            "{reason}"
         );
     }
 }

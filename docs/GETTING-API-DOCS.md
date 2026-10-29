@@ -19,6 +19,9 @@ SHA-256, assembles the complete replacement in a staging directory, validates
 `corpus.rkyv` with `bytecheck` and opens the new text index, then swaps the whole
 generation into `data/versions/<exact-version>/`. Local files such as
 `records.ndjson` are carried over, and a failed swap keeps the previous install.
+An existing install that fails validation, including a missing text index, is
+repaired by a normal fetch; a revision-only update needs `fetch-index <version>
+--force` because the exact version is already present.
 
 Where the bundle comes from:
 

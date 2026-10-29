@@ -5,8 +5,9 @@
 //! inheritance, target tables and `default-features = false`).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
@@ -20,9 +21,17 @@ pub struct FeaturesData {
     #[serde(default)]
     pub closure: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
+    pub profiles: Option<BTreeMap<String, Profile>>,
+    #[serde(default)]
     pub default_features: Option<Vec<String>>,
     #[serde(default)]
     pub plugin_gates: Option<Vec<PluginGate>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Profile {
+    #[serde(default)]
+    pub enables: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +48,8 @@ pub struct Enabled {
     /// Bevy dependency is still a manifest; `no_manifest` means missing.
     pub manifest_found: bool,
     pub source: &'static str,
+    /// Why `cargo metadata` could not be used, when the fallback parser ran.
+    pub metadata_error: Option<String>,
 }
 
 pub fn load_path(path: &Path) -> Option<FeaturesData> {
@@ -49,7 +60,9 @@ pub fn load_path(path: &Path) -> Option<FeaturesData> {
 pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
     let manifest_found = project_root.join("Cargo.toml").is_file();
     let manual = parse_manifest(project_root);
-    if let Some((features, default_features, source)) = cargo_metadata_features(project_root) {
+    let metadata = cargo_metadata_features(project_root);
+    let metadata_error = metadata.as_ref().err().cloned();
+    if let Ok((features, default_features, source)) = metadata {
         let explicit = manual
             .as_ref()
             .map(|(features, _)| features.clone())
@@ -60,6 +73,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             default_features,
             manifest_found: true,
             source,
+            metadata_error: None,
         };
     }
 
@@ -72,6 +86,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
                 default_features,
                 manifest_found,
                 source: "Cargo.toml",
+                metadata_error,
             }
         }
         None => Enabled {
@@ -84,42 +99,74 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             } else {
                 "none"
             },
+            metadata_error,
         },
     }
 }
 
 /// Resolved features for the `bevy` package, via `cargo metadata`.
-fn cargo_metadata_features(root: &Path) -> Option<(Vec<String>, bool, &'static str)> {
-    let output = Command::new("cargo")
+fn cargo_metadata_features(root: &Path) -> Result<(Vec<String>, bool, &'static str), String> {
+    let cargo = cargo_executable();
+    let output = Command::new(&cargo)
         .args(["metadata", "--format-version", "1", "--offline", "--locked"])
         .current_dir(root)
         .output()
-        .ok()?;
+        .map_err(|error| format!("could not run {}: {error}", cargo.display()))?;
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.lines().next().unwrap_or("no stderr").trim();
+        return Err(format!("cargo metadata failed: {detail}"));
     }
-    let data: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("cargo metadata returned invalid JSON: {error}"))?;
     let package_id = data["packages"]
-        .as_array()?
-        .iter()
-        .find(|package| package["name"] == "bevy")?["id"]
-        .as_str()?
+        .as_array()
+        .and_then(|packages| packages.iter().find(|package| package["name"] == "bevy"))
+        .and_then(|package| package["id"].as_str())
+        .ok_or_else(|| "cargo metadata did not include a `bevy` package".to_string())?
         .to_string();
     let node = data["resolve"]["nodes"]
-        .as_array()?
-        .iter()
-        .find(|node| node["id"].as_str() == Some(package_id.as_str()))?;
+        .as_array()
+        .and_then(|nodes| {
+            nodes
+                .iter()
+                .find(|node| node["id"].as_str() == Some(package_id.as_str()))
+        })
+        .ok_or_else(|| "cargo metadata did not resolve the `bevy` package".to_string())?;
     let features: BTreeSet<String> = node["features"]
-        .as_array()?
+        .as_array()
+        .ok_or_else(|| "cargo metadata omitted resolved features".to_string())?
         .iter()
         .filter_map(|feature| feature.as_str().map(str::to_string))
         .collect();
     let default_features = features.contains("default");
-    Some((
+    Ok((
         features.into_iter().collect(),
         default_features,
         "cargo metadata",
     ))
+}
+
+/// MCP clients launched from a GUI often have a PATH without Cargo.
+fn cargo_executable() -> PathBuf {
+    if let Some(path) = env::var_os("CARGO")
+        && !path.is_empty()
+        && Path::new(&path).is_file()
+    {
+        return PathBuf::from(path);
+    }
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
+    if let Some(home) = cargo_home {
+        let cargo = home
+            .join("bin")
+            .join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+        if cargo.is_file() {
+            return cargo;
+        }
+    }
+    PathBuf::from("cargo")
 }
 
 /// Parse the bevy dependency from Cargo.toml as a fallback.
@@ -238,11 +285,27 @@ fn closure(explicit: &[String], default_features: bool, data: &FeaturesData) -> 
     loop {
         let mut added = false;
         for feature in enabled.clone() {
-            if let Some(values) = data.closure.as_ref().and_then(|c| c.get(&feature)) {
-                for value in values {
-                    if enabled.insert(value.clone()) {
-                        added = true;
-                    }
+            let mut next: Vec<String> = Vec::new();
+            if let Some(values) = data.features.get(&feature) {
+                next.extend(values.iter().cloned());
+            }
+            if let Some(profile) = data
+                .profiles
+                .as_ref()
+                .and_then(|profiles| profiles.get(&feature))
+            {
+                next.extend(profile.enables.iter().cloned());
+            }
+            if let Some(values) = data
+                .closure
+                .as_ref()
+                .and_then(|closure| closure.get(&feature))
+            {
+                next.extend(values.iter().cloned());
+            }
+            for value in next {
+                if enabled.insert(value) {
+                    added = true;
                 }
             }
         }
@@ -511,6 +574,34 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
         assert!(enabled.transitive.contains(&"bevy_render".to_string()));
         assert!(enabled.transitive.contains(&"bevy_ui".to_string()));
         assert!(!enabled.explicit.contains(&"derive".to_string()));
+    }
+
+    #[test]
+    fn profile_features_cascade_transitively() {
+        let data: FeaturesData = serde_json::from_value(serde_json::json!({
+            "bevy_version": "9.9.9",
+            "features": {
+                "bevy_ui": ["bevy_ui"],
+                "bevy_render": ["bevy_render"],
+                "ui_api": [],
+                "ui_bevy_render": ["bevy_render"]
+            },
+            "profiles": {
+                "ui": { "description": "", "enables": ["ui_api", "ui_bevy_render", "bevy_ui"] }
+            },
+            "default_features": ["ui"]
+        }))
+        .expect("features");
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nbevy = \"9.9.9\"\n",
+        )
+        .expect("manifest");
+        let enabled = enabled(dir.path(), &data);
+        assert!(enabled.transitive.contains(&"ui".to_string()));
+        assert!(enabled.transitive.contains(&"bevy_ui".to_string()));
+        assert!(enabled.transitive.contains(&"bevy_render".to_string()));
     }
 
     #[test]
