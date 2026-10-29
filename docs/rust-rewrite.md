@@ -81,11 +81,12 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
   `Cargo.lock`, `README.md`, `LICENSE` and this document. Without it Cargo would
   ship the TypeScript tree and the vendored website (1,012 files); with it the
   package is 22 files / 85 KB compressed.
-- **A lib-only 0.0.1 reservation is published** from `reserve/` to claim the
-  name. It has no binary and its README says the server is not published yet;
-  `cargo install` fails with "no binaries", which is the honest state.
-  crates.io names are first-come and permanent (yank, never delete), so the
-  placeholder is visible forever — the trade accepted for the reservation.
+- **A lib-only 0.0.1 reservation is published** from `reserve/`:
+  <https://crates.io/crates/bevy-manual-mcp> (6 files, 1.2 KB, no binary).
+  Its README says the server is not published yet; `cargo install` fails with
+  "no binaries" until 0.1.0, which is the honest state. crates.io names are
+  first-come and permanent (yank, never delete), so the placeholder is visible
+  forever — the trade accepted for the reservation.
 - **The first real publish is 0.1.0 at parity.** No previews. A crate version no
   longer tracks a Bevy version; the binary reports its own version and the
   indexes it can serve.
