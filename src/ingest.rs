@@ -3,3 +3,4 @@
 pub mod examples;
 pub mod markdown;
 pub mod meta;
+pub mod rustdoc;

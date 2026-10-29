@@ -80,7 +80,7 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
 - **Packaging:** `include` names only `src/**/*.rs`, `Cargo.toml`,
   `Cargo.lock`, `README.md`, `LICENSE` and this document. Without it Cargo would
   ship the TypeScript tree and the vendored website (1,012 files); with it the
-  package is 35 files / 131 KB compressed.
+  package is 42 files / 152 KB compressed.
 - **A lib-only 0.0.1 reservation is published** from `reserve/`:
   <https://crates.io/crates/bevy-manual-mcp> (6 files, 1.2 KB, no binary).
   Its README says the server is not published yet; `cargo install` fails with
@@ -924,3 +924,75 @@ snapshot are read from `vendor/` and are not yet embedded in or downloaded with
 the binary, so a clean `cargo install` (where no checkout exists) cannot run the
 metadata-backed tools until that data ships in the bundle or as `include_str!`
 fixtures. Plugin corpora also need a documented build/publish path.
+
+## 29. Step 6: local rebuilds and harvesters
+
+The last piece of the data pipeline is real: `bevy-manual-mcp build` can ingest
+a local rustdoc tree instead of requiring canonical NDJSON, and the maintenance
+harvesters are Rust subcommands. The MCP tool surface is unchanged (15 tools).
+
+### Rustdoc HTML ingest
+
+`src/ingest/rustdoc.rs` is a port of `src/ingest/rustdoc.ts` onto a real DOM
+(`scraper`, html5ever): items, struct fields, enum variants, doc examples,
+impl-header owner/trait extraction, standard-trait filtering, `data-nosnippet`
+line-number removal, and the same dependency-crate and tuple-field exclusions.
+`build --doc-dir <dir>` (or `BEVY_DOC_DIR`) now runs it; `--records` remains the
+canonical NDJSON path. Website prose, engine examples and error codes are still
+added on top.
+
+Measured against the complete 0.20.0 docs.rs mirror (8,665 HTML pages, release
+build):
+
+| measurement | value |
+|---|---:|
+| raw records from HTML | 255,740 |
+| duplicate merges | 6,387 |
+| rustdoc records | **249,353** |
+| symbol keys | **653,264** |
+| full build with website/examples/error codes | **253,196 records** |
+| text index | 15.2 MB / 247,316 documents |
+| archive | 124.9 MB |
+| release wall clock (ingest + build) | **30 s** |
+| release ingest alone (rustdoc only) | 29 s |
+| debug ingest (rustdoc only) | 352 s |
+
+Those counts are **identical** to the canonical TypeScript-built corpus: 249,353
+rustdoc + 3,389 website + 448 examples + 6 error codes = 253,196, and 653,264
+exact symbol keys. Local rebuilds no longer need the TS pipeline.
+
+The integration test `build_ingests_rustdoc_html_from_a_local_doc_dir` generates
+a crate with `cargo doc` and asserts items, fields, variants, local-trait
+methods, std-trait filtering, tuple-field exclusion and searchability.
+
+### Harvesters
+
+Four maintenance verbs join the CLI; none are needed to serve MCP:
+
+| verb | behaviour |
+|---|---|
+| `fetch-docs [version] [--out]` | docs.rs `all.html` discovery, cached page list, resume, shared throttle, 4 workers, version manifest |
+| `fetch-website [--out] [--ref]` | sparse `git clone --filter=blob:none`, prose/`.rs`/LICENSE only, staged atomic swap |
+| `harvest-meta <version> [--tag] [--out] [--force]` | error-code guides, feature graph + closure (implicit optional deps included), default features, profiles, plugin gates, panic sites, provenance |
+| `harvest-compat [--out]` | compat snapshot + `compat-meta.json` from the **crates.io sparse index** (one request per crate) instead of the API |
+
+Live validation:
+
+- `fetch-docs` against the existing 0.20.0 mirror: cached 8,664-page list, 0
+  missing, 0 failed.
+- `harvest-meta 0.20.0`: 162 features, 162 closure entries and the same four
+  default profiles as the vendored graph; 6 error codes; 40 plugin gates versus
+  the vendored 39. The extra gate is real (`AccessibilityPlugin` ←
+  `bevy_window`), present in the v0.20.0 `default_plugins.rs`; the older
+  TypeScript regex missed it.
+- `harvest-compat`: 72 entries across the three crates, including the hyphenated
+  canonical name `leafwing-input-manager`. The live index now has a newer
+  `leafwing_input_manager` 0.22.0; the committed snapshot stays pinned, so this
+  run validated the harvester without silently changing tool answers.
+
+Not ported yet: `publish-index`, `index-release`, `rebuild-all-indexes` and the
+npm-only launcher/package scripts. GitHub release automation belongs to step 7.
+The `explain` CLI verb remains a stub; search exposes total scores, not a
+component breakdown.
+
+Tests: **124** (91 unit, 11 archive, 22 MCP), `clippy -D warnings` clean.

@@ -11,6 +11,7 @@ mod config;
 mod ecosystem;
 mod features;
 mod format;
+mod harvest;
 mod ingest;
 mod pagination;
 mod plugin;
@@ -23,7 +24,7 @@ mod text;
 mod versions;
 
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -97,6 +98,42 @@ enum Command {
         /// Emit structured JSON instead of markdown.
         #[arg(long)]
         json: bool,
+    },
+    /// Mirror docs.rs rustdoc HTML for a Bevy version (maintainer tool).
+    FetchDocs {
+        /// Bevy version, e.g. 0.20.0. Defaults to the detected version.
+        version: Option<String>,
+        /// Mirror directory. Defaults to the cache next to the data dir.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Fetch bevy-website prose with a sparse git checkout (maintainer tool).
+    FetchWebsite {
+        /// Output directory. Defaults to <vendor>/bevy-website.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Branch or tag to fetch.
+        #[arg(long = "ref", default_value = "main")]
+        reference: String,
+    },
+    /// Harvest feature graphs and error codes from the Bevy repo (maintainer tool).
+    HarvestMeta {
+        version: String,
+        /// Git tag to harvest. Defaults to v<version>.
+        #[arg(long)]
+        tag: Option<String>,
+        /// Output directory. Defaults to <vendor>/bevy-meta/<version>.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Replace an existing harvest.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Harvest plugin compatibility from crates.io (maintainer tool).
+    HarvestCompat {
+        /// Output directory. Defaults to <vendor>/ecosystem.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -205,27 +242,34 @@ fn main() -> anyhow::Result<()> {
                     .join("versions")
                     .join(registry::version_dir_name(&version))
             });
-            let records_path = match records {
-                Some(path) => path,
+            let doc_root = doc_dir
+                .clone()
+                .or_else(|| config.doc_dir.clone())
+                .or_else(|| {
+                    registry::Registry::load(&config.data_dir)
+                        .meta(&version)
+                        .and_then(|meta| meta.doc_dir.map(PathBuf::from))
+                });
+            let mut inputs = match records.as_ref() {
+                Some(path) => archive::read_ndjson(path)?,
                 None => {
-                    if let Some(doc_dir) = doc_dir {
+                    let Some(doc_root) = doc_root.as_deref() else {
                         bail!(
-                            "ingest from {} arrives in step 6; pass --records for now",
-                            doc_dir.display()
+                            "no --records given and no rustdoc directory found; pass --doc-dir or set BEVY_DOC_DIR"
                         );
-                    }
-                    out_dir.join("records.ndjson")
+                    };
+                    eprintln!(
+                        "[bevy-manual-mcp] ingesting rustdoc from {}",
+                        doc_root.display()
+                    );
+                    ingest::rustdoc::ingest_rustdoc(Some(doc_root), Some(version.as_str()))
                 }
             };
             let registry = registry::Registry::load(&config.data_dir);
             let meta = registry.meta(&version);
             let options = archive::BuildOptions {
                 bevy_version: Some(version.clone()),
-                doc_dir: doc_dir
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .or_else(|| config.doc_dir.as_ref().map(|p| p.display().to_string()))
-                    .or_else(|| meta.as_ref().and_then(|m| m.doc_dir.clone())),
+                doc_dir: doc_root.as_ref().map(|path| path.display().to_string()),
                 website_dir: config
                     .website_dir
                     .as_ref()
@@ -244,8 +288,8 @@ fn main() -> anyhow::Result<()> {
                 source_fingerprint: meta.as_ref().and_then(|m| m.fingerprint.clone()),
             };
             eprintln!(
-                "[bevy-manual-mcp] compiling {} for Bevy {version} into {}",
-                records_path.display(),
+                "[bevy-manual-mcp] compiling {} source record(s) for Bevy {version} into {}",
+                inputs.len(),
                 out_dir.display()
             );
 
@@ -269,7 +313,6 @@ fn main() -> anyhow::Result<()> {
                 examples.len(),
                 error_codes.len()
             );
-            let mut inputs = archive::read_ndjson(&records_path)?;
             inputs.extend(website);
             inputs.extend(examples);
             inputs.extend(error_codes);
@@ -426,6 +469,60 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Explain { query, json } => {
             bail!("`explain {query:?}` is not implemented yet (arrives in step 2); json={json}")
+        }
+        Command::FetchDocs { version, out } => {
+            let version = version
+                .or_else(|| config.bevy_version.clone())
+                .ok_or_else(|| anyhow!("no Bevy version given and none detected"))?;
+            let out = out.unwrap_or_else(|| {
+                config
+                    .data_dir
+                    .parent()
+                    .map(|parent| parent.join(format!("bevy-{version}")))
+                    .unwrap_or_else(|| PathBuf::from(format!("bevy-{version}")))
+            });
+            harvest::docs::fetch_docs(&version, &out)?;
+            Ok(())
+        }
+        Command::FetchWebsite { out, reference } => {
+            let vendor = config
+                .meta_dir
+                .as_ref()
+                .and_then(|meta| meta.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| config.data_dir.clone());
+            let out = out.unwrap_or_else(|| vendor.join("bevy-website"));
+            harvest::website::fetch_website(&out, &reference)?;
+            Ok(())
+        }
+        Command::HarvestMeta {
+            version,
+            tag,
+            out,
+            force,
+        } => {
+            let out = out
+                .or_else(|| config.meta_dir.as_ref().map(|meta| meta.join(&version)))
+                .unwrap_or_else(|| harvest::meta::default_out(&version));
+            harvest::meta::harvest_meta(&harvest::meta::MetaOptions {
+                version,
+                tag,
+                out,
+                force,
+            })?;
+            Ok(())
+        }
+        Command::HarvestCompat { out } => {
+            let out = out.unwrap_or_else(|| {
+                config
+                    .meta_dir
+                    .as_ref()
+                    .and_then(|meta| meta.parent())
+                    .map(|vendor| vendor.join("ecosystem"))
+                    .unwrap_or_else(|| PathBuf::from("vendor").join("ecosystem"))
+            });
+            harvest::compat::harvest_compat(&out)?;
+            Ok(())
         }
     }
 }

@@ -738,3 +738,180 @@ fn fetch_rejects_a_typescript_manifest() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("manifest version"), "{stderr}");
 }
+
+/// Build a real rustdoc tree with `cargo doc` and ingest it through the CLI.
+fn rustdoc_fixture(dir: &Path) -> PathBuf {
+    let crate_dir = dir.join("demo");
+    fs::create_dir_all(crate_dir.join("src")).expect("crate src");
+    fs::write(
+        crate_dir.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("crate manifest");
+    fs::write(
+        crate_dir.join("src/lib.rs"),
+        r#"//! Fixture crate documentation.
+
+/// A widget resource.
+pub struct Widget {
+    /// The widget id.
+    pub id: u32,
+    /// The widget label.
+    pub label: String,
+}
+
+/// A mode.
+pub enum Mode {
+    /// Enabled.
+    On,
+    /// Disabled.
+    Off,
+}
+
+/// A local trait.
+pub trait LocalTrait {
+    /// A local method.
+    fn local(&self);
+}
+
+impl Widget {
+    /// Creates a widget.
+    ///
+    /// ```
+    /// let w = Widget::new(7);
+    /// assert_eq!(w.id(), 7);
+    /// ```
+    pub fn new(id: u32) -> Self {
+        Self { id, label: String::new() }
+    }
+
+    /// Reads the id.
+    pub fn id(&self) -> u32 { self.id }
+}
+
+impl LocalTrait for Widget {
+    fn local(&self) {}
+}
+
+impl Clone for Widget {
+    fn clone(&self) -> Self { Self { id: self.id, label: self.label.clone() } }
+}
+
+/// A tuple widget.
+pub struct TupleWidget(pub u32, pub String);
+"#,
+    )
+    .expect("crate lib");
+
+    let output = Command::new("cargo")
+        .args(["doc", "--no-deps", "--offline", "-q"])
+        .current_dir(&crate_dir)
+        .output()
+        .expect("run cargo doc");
+    assert!(
+        output.status.success(),
+        "cargo doc failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    crate_dir.join("target/doc")
+}
+
+#[test]
+fn build_ingests_rustdoc_html_from_a_local_doc_dir() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let doc_dir = rustdoc_fixture(dir.path());
+    let data_dir = dir.path().join("data");
+    let out_dir = data_dir.join("versions/9.9.9");
+    fs::create_dir_all(&out_dir).expect("out dir");
+
+    let output = command(&data_dir)
+        .args(["build", "--doc-dir"])
+        .arg(&doc_dir)
+        .arg("--out")
+        .arg(&out_dir)
+        .output()
+        .expect("run build");
+    assert!(
+        output.status.success(),
+        "rustdoc build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("# corpus built"), "{stdout}");
+
+    let lookup = |symbol: &str| -> Vec<Value> {
+        let output = command(&data_dir)
+            .args(["lookup", symbol, "--json"])
+            .output()
+            .expect("run lookup");
+        assert!(
+            output.status.success(),
+            "lookup {symbol} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("lookup json")
+    };
+
+    let widget = lookup("Widget");
+    let widget = widget
+        .iter()
+        .find(|row| row["kind"] == "struct")
+        .expect("Widget struct");
+    assert_eq!(widget["full_path"], "demo::Widget");
+    assert!(
+        widget["docs"]
+            .as_str()
+            .expect("docs")
+            .contains("widget resource")
+    );
+
+    let field = lookup("Widget::id");
+    assert!(
+        field
+            .iter()
+            .any(|row| row["kind"] == "field" && row["signature"].as_str() == Some("id: u32")),
+        "{field:?}"
+    );
+
+    let method = lookup("Widget::new");
+    assert!(
+        method.iter().any(|row| row["kind"] == "method"
+            && row["docs"]
+                .as_str()
+                .expect("docs")
+                .contains("Creates a widget")),
+        "{method:?}"
+    );
+
+    let variant = lookup("Mode::On");
+    assert!(
+        variant.iter().any(|row| row["kind"] == "variant"),
+        "{variant:?}"
+    );
+
+    assert!(
+        lookup("TupleWidget::0").is_empty(),
+        "tuple fields must not become symbol records"
+    );
+    assert!(
+        lookup("Widget::clone").is_empty(),
+        "std trait impl methods must be filtered"
+    );
+    assert!(
+        lookup("Widget::local")
+            .iter()
+            .any(|row| row["kind"] == "method"),
+        "crate-local trait impl methods must be kept"
+    );
+
+    let output = command(&data_dir)
+        .args(["search", "widget", "--json"])
+        .output()
+        .expect("run search");
+    assert!(output.status.success());
+    let rows: Value = serde_json::from_slice(&output.stdout).expect("search json");
+    assert!(
+        !rows["results"].as_array().expect("results").is_empty(),
+        "{rows}"
+    );
+}
