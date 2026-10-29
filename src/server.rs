@@ -3,6 +3,7 @@
 //! Step 0 exposes the two tools that answer from `registry.json` and
 //! `versions/<v>/meta.json`: `bevy_index_status` and `bevy_indexed_versions`.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -21,11 +22,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::analysis::{perf, report, systems};
+use crate::analysis::{compat, errors, perf, report, systems};
 use crate::archive::{self, LoadedCorpus};
 use crate::config::Config;
+use crate::ecosystem;
 use crate::features;
 use crate::format;
+use crate::plugin;
 use crate::registry::Registry;
 use crate::search::{self, SearchFilters, SearchState};
 use crate::status;
@@ -270,6 +273,66 @@ impl BevyMcp {
     ) -> CallToolResult {
         let (text, structured) = self.run_perf_advisor(params);
         with_structured(text, structured)
+    }
+
+    /// Explain a pasted Bevy panic or warning.
+    #[tool(
+        name = "bevy_explain_error",
+        description = "Takes a pasted panic or warning message from Bevy and explains the cause, severity and suggested fix. Extracts error codes such as B0001/B0002 automatically, resolves them against the pinned version's vendored guides, and rejects codes that do not exist in that version. Uncoded panics get an honest refusal with the parsed resource type and access patterns - this tool never guesses."
+    )]
+    async fn bevy_explain_error(
+        &self,
+        Parameters(params): Parameters<ExplainErrorParams>,
+    ) -> CallToolResult {
+        match self.run_explain_error(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Fan-out search over the Bevy corpus and installed plugin corpora.
+    #[tool(
+        name = "bevy_ecosystem_search",
+        description = "Fans out search across the primary Bevy corpus and any compiled plugin corpora installed under data/corpora/<crate>/<version>/ (or listed in the config's `corpora` array). Every result is labelled with its corpus id so bevy_egui::Button and bevy_ui::Button stay distinct. corpora_searched and corpora_skipped are reported truthfully; a plugin corpus that is configured but not installed is named, not silently ignored."
+    )]
+    async fn bevy_ecosystem_search(
+        &self,
+        Parameters(params): Parameters<EcosystemSearchParams>,
+    ) -> CallToolResult {
+        match self.run_ecosystem_search(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Plugin ↔ Bevy version compatibility from the vendored snapshot.
+    #[tool(
+        name = "bevy_ecosystem_compat",
+        description = "Answers both directions of the plugin compatibility question: which plugin versions go with the pinned Bevy, and what does a plugin require. Uses the vendored vendor/ecosystem/compat.json snapshot only (offline, no crates.io fallback) and reports its provenance. Unsupported requirement operators yield compatible: \"unknown\", never a negative verdict, and candidate plugin versions are returned explicitly."
+    )]
+    async fn bevy_ecosystem_compat(
+        &self,
+        Parameters(params): Parameters<EcosystemCompatParams>,
+    ) -> CallToolResult {
+        match self.run_ecosystem_compat(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Generate a self-contained plugin scaffold.
+    #[tool(
+        name = "bevy_generate_plugin",
+        description = "Generates a self-contained plugin scaffold for the pinned Bevy version and fills supported parameters (PLUGIN_NAME, RESOURCE_TYPE, SYSTEM_NAME, SYSTEM_SET, UPDATE). The result is parsed with `syn` before it is returned, and every template is complete on its own. Symbol presence is reported as diagnostics only: compile_verified is always false because no compiler runs."
+    )]
+    async fn bevy_generate_plugin(
+        &self,
+        Parameters(params): Parameters<GeneratePluginParams>,
+    ) -> CallToolResult {
+        match self.run_generate_plugin(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
     }
 }
 
@@ -769,7 +832,7 @@ impl BevyMcp {
                 "bevy_version": graph_version,
                 "source": source,
                 "no_manifest": no_manifest,
-                "default_features": enabled.default_features,
+                "default_features_enabled": enabled.default_features,
                 "explicit": enabled.explicit,
                 "transitive": enabled.transitive,
                 "disabled": disabled,
@@ -837,6 +900,7 @@ impl BevyMcp {
                 "systems": analysed,
                 "analysis_complete": analysis.complete(),
                 "unsupported": analysis.unsupported,
+                "unanalyzed": analysis.unanalyzed,
                 "type_checked": false,
             }),
         ))
@@ -1009,6 +1073,548 @@ impl BevyMcp {
     }
 }
 
+fn corpus_hits(
+    state: &SearchState<'_>,
+    corpus_id: &str,
+    query: &str,
+    limit: usize,
+) -> (Vec<Value>, String) {
+    let hits = search::search(state, query, limit, &SearchFilters::default());
+    let root = state.root();
+    let mut values = Vec::new();
+    let mut markdown = String::new();
+    for hit in &hits {
+        let record = hit.record;
+        let mut value = format::hit_json(state, hit);
+        if let Value::Object(map) = &mut value {
+            map.insert("corpus".into(), json!(corpus_id));
+        }
+        values.push(value);
+        markdown.push_str(&format!(
+            "- `{}` — [{}] — `{}`\n",
+            root.string(record.name),
+            root.string(record.kind),
+            root.string(record.full_path)
+        ));
+        let docs = root.string(record.docs);
+        if !docs.is_empty() {
+            let snippet: String = docs.chars().take(200).collect();
+            markdown.push_str(&format!("  {}\n", snippet.replace('\n', " ")));
+        }
+    }
+    (values, markdown)
+}
+
+impl BevyMcp {
+    fn run_explain_error(&self, params: ExplainErrorParams) -> anyhow::Result<(String, Value)> {
+        let extracted = errors::extract(&params.message);
+        let version = self.config.bevy_version.clone();
+        let meta_dir = self.config.meta_dir.clone();
+        let codes_dir = meta_dir.as_ref().map(|meta| match version.as_deref() {
+            Some(version) => meta.join(version).join("error-codes"),
+            None => meta.join("error-codes"),
+        });
+        let version_indexed = codes_dir.as_ref().is_some_and(|dir| dir.is_dir());
+
+        let Some(code) = extracted.code.as_deref() else {
+            let mut text = String::from("## Error Explanation\n\n");
+            text.push_str("⚠️ **No error code was extracted from the message.**\n\n");
+            text.push_str(
+                "This is not a recognised Bevy error code, so the tool will not guess at a cause.\n\n",
+            );
+            if let Some(resource) = &extracted.resource_type {
+                text.push_str(&format!("- Resource type: `{resource}`\n"));
+            }
+            for access in &extracted.access_list {
+                text.push_str(&format!("- Access pattern: `{access}`\n"));
+            }
+            text.push_str(
+                "\nFor unknown panics, use `bevy_search` or `bevy_api` to look up the types and systems named in the message.",
+            );
+            return Ok((
+                text,
+                json!({
+                    "tier": 3,
+                    "no_error_code_found": true,
+                    "resource_type": extracted.resource_type,
+                    "access_list": extracted.access_list,
+                    "applicable_version": version,
+                    "version_indexed": version_indexed,
+                }),
+            ));
+        };
+
+        let lookup_available = version_indexed && version.is_some();
+        let mut guide = None;
+        let mut exists_in_version = false;
+        if lookup_available
+            && let (Some(version), Some(meta_dir)) = (version.as_deref(), meta_dir.as_deref())
+        {
+            let path = errors::guide_path(meta_dir, version, code);
+            exists_in_version = path.is_file();
+            if exists_in_version {
+                guide = std::fs::read_to_string(path).ok();
+            }
+        }
+
+        if lookup_available && !exists_in_version {
+            let mut text = String::from("## Error Explanation\n\n");
+            text.push_str(&format!(
+                "⚠️ **Error code [{code}] does not exist in Bevy {}.**\n\n",
+                version.as_deref().unwrap_or("UNKNOWN")
+            ));
+            text.push_str(
+                "This code may have been introduced after your pinned version. The tool will not answer from a different version's index.",
+            );
+            return Ok((
+                text,
+                json!({
+                    "code": code,
+                    "severity": extracted.severity.unwrap_or("unknown"),
+                    "system_name": extracted.system_name,
+                    "resource_type": extracted.resource_type,
+                    "access_list": extracted.access_list,
+                    "applicable_version": version,
+                    "version_indexed": version_indexed,
+                    "does_not_exist_in_version": true,
+                    "guide_available": false,
+                }),
+            ));
+        }
+
+        let mut text = String::from("## Error Explanation\n\n");
+        text.push_str(&format!("**Error Code**: `{code}`\n"));
+        text.push_str(&format!(
+            "**Severity**: {}\n",
+            extracted.severity.unwrap_or("unknown")
+        ));
+        if let Some(system) = &extracted.system_name {
+            text.push_str(&format!("**System**: `{system}`\n"));
+        }
+        if let Some(resource) = &extracted.resource_type {
+            text.push_str(&format!("**Resource Type**: `{resource}`\n"));
+        }
+        if !extracted.access_list.is_empty() {
+            text.push_str(&format!(
+                "**Access**: {}\n",
+                extracted.access_list.join(", ")
+            ));
+        }
+        text.push_str("\n---\n\n");
+
+        let mut guide_available = false;
+        if let Some(guide) = &guide {
+            guide_available = true;
+            let body = if params.full.unwrap_or(false) {
+                guide.trim().to_string()
+            } else {
+                errors::short_guide(guide)
+            };
+            text.push_str("### Guide\n\n");
+            text.push_str(&body);
+            text.push('\n');
+            if !params.full.unwrap_or(false) && !guide.contains("## Fix") {
+                text.push_str(
+                    "\n> This is the opening of the pinned guide. Request `full: true` for the complete document.\n",
+                );
+            }
+        } else {
+            text.push_str(&format!("No detailed guide available for `{code}`.\n\n"));
+            if let Some(fix) = generic_error_fix(code) {
+                text.push_str(&format!("**General fix**: {fix}\n"));
+            }
+            if !lookup_available {
+                text.push_str(&format!(
+                    "\nNo vendored error-code directory is available for Bevy {}; the answer cannot be version-checked.\n",
+                    version.as_deref().unwrap_or("UNKNOWN")
+                ));
+            }
+            text.push_str("\nRequest `full: true` for the full guide when one is installed.\n");
+        }
+
+        Ok((
+            text,
+            json!({
+                "code": code,
+                "severity": extracted.severity.unwrap_or("unknown"),
+                "system_name": extracted.system_name,
+                "resource_type": extracted.resource_type,
+                "access_list": extracted.access_list,
+                "applicable_version": version,
+                "version_indexed": version_indexed,
+                "version_checked": lookup_available,
+                "does_not_exist_in_version": false,
+                "guide_available": guide_available,
+            }),
+        ))
+    }
+
+    fn run_ecosystem_search(
+        &self,
+        params: EcosystemSearchParams,
+    ) -> anyhow::Result<(String, Value)> {
+        let limit = params.limit.unwrap_or(8).clamp(1, 20);
+        let filter = params
+            .crate_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        let include_bevy = filter.is_none() || filter == Some("bevy");
+
+        let mut rows: Vec<(String, Vec<Value>, String)> = Vec::new();
+        let mut searched: Vec<String> = Vec::new();
+        let mut skipped: Vec<ecosystem::Skipped> = Vec::new();
+
+        if include_bevy
+            && let (Some(corpus), Some(text)) = (self.corpus.as_deref(), self.text.as_ref())
+        {
+            let state = SearchState { corpus, text };
+            let id = format!(
+                "bevy@{}",
+                self.config.bevy_version.as_deref().unwrap_or("unknown")
+            );
+            let (hits, markdown) = corpus_hits(&state, &id, &params.query, limit);
+            searched.push(id.clone());
+            rows.push((id, hits, markdown));
+        }
+
+        let (sources, discovered_skips) =
+            ecosystem::discover(&self.config.data_dir, &self.config.corpora);
+        skipped.extend(
+            discovered_skips
+                .into_iter()
+                .filter(|skip| filter.is_none() || Some(skip.crate_name.as_str()) == filter),
+        );
+        for source in sources {
+            if let Some(filter) = filter
+                && filter != "bevy"
+                && source.crate_name != filter
+            {
+                continue;
+            }
+            if filter == Some("bevy") {
+                continue;
+            }
+            match ecosystem::load(&source) {
+                Ok(loaded) => {
+                    let state = SearchState {
+                        corpus: &loaded.corpus,
+                        text: &loaded.text,
+                    };
+                    let (hits, markdown) = corpus_hits(&state, &loaded.id, &params.query, limit);
+                    searched.push(loaded.id.clone());
+                    rows.push((loaded.id.clone(), hits, markdown));
+                }
+                Err(error) => skipped.push(ecosystem::Skipped {
+                    crate_name: source.crate_name.clone(),
+                    version: source.version.clone(),
+                    reason: error.to_string(),
+                }),
+            }
+        }
+
+        let total_hits: usize = rows.iter().map(|(_, hits, _)| hits.len()).sum();
+        let mut text = format!("# Ecosystem search: \"{}\"\n\n", params.query);
+        if searched.is_empty() {
+            text.push_str("No corpora were searched. ");
+        } else {
+            text.push_str(&format!("**Corpora searched:** {}\n", searched.join(", ")));
+        }
+        for (id, hits, markdown) in &rows {
+            text.push_str(&format!("\n## {id} — {} hit(s)\n\n", hits.len()));
+            if hits.is_empty() {
+                text.push_str("No matching symbols in this corpus.\n");
+            } else {
+                text.push_str(markdown);
+            }
+        }
+        if total_hits == 0 {
+            text.push_str("\nNo matching symbols were found in the searched corpora.\n");
+        }
+        if !skipped.is_empty() {
+            text.push_str("\n### Corpora skipped\n\n");
+            for skip in &skipped {
+                let version = skip
+                    .version
+                    .as_deref()
+                    .map(|version| format!("@{version}"))
+                    .unwrap_or_default();
+                text.push_str(&format!(
+                    "- `{}{version}`: {}\n",
+                    skip.crate_name, skip.reason
+                ));
+            }
+        }
+
+        let results: Vec<Value> = rows.into_iter().flat_map(|(_, hits, _)| hits).collect();
+        let skipped_json: Vec<Value> = skipped
+            .iter()
+            .map(|skip| {
+                json!({
+                    "crate": skip.crate_name,
+                    "version": skip.version,
+                    "reason": skip.reason,
+                })
+            })
+            .collect();
+        Ok((
+            text,
+            json!({
+                "query": params.query,
+                "bevy_version": self.config.bevy_version,
+                "corpora_searched": searched,
+                "corpora_skipped": skipped_json,
+                "total_hits": total_hits,
+                "results": results,
+            }),
+        ))
+    }
+
+    fn run_ecosystem_compat(
+        &self,
+        params: EcosystemCompatParams,
+    ) -> anyhow::Result<(String, Value)> {
+        let Some(snapshot) =
+            compat::load(self.config.meta_dir.as_deref(), &self.config.project_root)?
+        else {
+            bail!(
+                "No compat snapshot installed. Expected vendor/ecosystem/compat.json (or set BEVY_MCP_COMPAT_PATH)."
+            );
+        };
+        let provenance = serde_json::to_value(&snapshot.provenance)?;
+        let version = self.config.bevy_version.clone();
+
+        let Some(name) = params
+            .crate_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            let mut text = String::from("## Plugin Compatibility\n\n");
+            match version.as_deref() {
+                Some(version) => text.push_str(&format!("For Bevy {version}:\n\n")),
+                None => text.push_str("No Bevy version is pinned.\n\n"),
+            }
+            let mut plugins = Vec::new();
+            for (plugin_name, entries) in &snapshot.plugins {
+                let verdict = compat::aggregate(entries, version.as_deref());
+                let matching = compat::matching_versions(entries, version.as_deref());
+                let newest = compat::newest(entries);
+                let marker = match verdict {
+                    compat::Verdict::Satisfied => "OK",
+                    compat::Verdict::NotSatisfied => "WARN",
+                    compat::Verdict::Unknown => "UNKNOWN",
+                };
+                let detail = if matching.is_empty() {
+                    newest
+                        .map(|entry| {
+                            format!(
+                                "newest {} requires `{}`",
+                                entry.plugin_version, entry.requires_bevy
+                            )
+                        })
+                        .unwrap_or_else(|| "(no recorded releases)".to_string())
+                } else {
+                    matching.join(", ")
+                };
+                text.push_str(&format!("[{marker}] `{plugin_name}`: {detail}\n"));
+                plugins.push(json!({
+                    "crate": plugin_name,
+                    "compatible": verdict.as_json(),
+                    "matching_versions": matching,
+                    "newest_version": newest.map(|entry| entry.plugin_version.clone()),
+                    "newest_requires_bevy": newest.map(|entry| entry.requires_bevy.clone()),
+                }));
+            }
+            text.push_str(&compat_footer(&snapshot));
+            return Ok((
+                text,
+                json!({
+                    "bevy_version": version,
+                    "plugins": plugins,
+                    "provenance": provenance,
+                }),
+            ));
+        };
+
+        let Some(entries) = snapshot.plugins.get(name) else {
+            bail!(
+                "No compat data for `{name}`. Available plugins: {}.",
+                snapshot.provenance.crates.join(", ")
+            );
+        };
+        let verdict = compat::aggregate(entries, version.as_deref());
+        let matching = compat::matching_versions(entries, version.as_deref());
+        let newest = compat::newest(entries);
+        let mut available_versions = Vec::new();
+        let mut seen = BTreeSet::new();
+        for entry in entries {
+            if seen.insert(entry.plugin_version.clone()) {
+                available_versions.push(entry.plugin_version.clone());
+            }
+        }
+
+        let mut text = String::from("## Plugin Compatibility\n\n");
+        match verdict {
+            compat::Verdict::Satisfied => {
+                text.push_str(&format!(
+                    "[OK] `{name}` is compatible with Bevy {}.\n\n",
+                    version.as_deref().unwrap_or("UNKNOWN")
+                ));
+                text.push_str(&format!(
+                    "Candidate plugin versions: {}.\n",
+                    matching.join(", ")
+                ));
+            }
+            compat::Verdict::NotSatisfied => {
+                text.push_str(&format!(
+                    "[WARN] `{name}` has no recorded release compatible with Bevy {}.\n\n",
+                    version.as_deref().unwrap_or("UNKNOWN")
+                ));
+                if let Some(newest) = newest {
+                    text.push_str(&format!(
+                        "Newest recorded release: {} requires `{}` (you are on {}).\n",
+                        newest.plugin_version,
+                        newest.requires_bevy,
+                        version.as_deref().unwrap_or("UNKNOWN")
+                    ));
+                }
+                text.push_str(&format!(
+                    "Available versions: {}.\n",
+                    available_versions.join(", ")
+                ));
+            }
+            compat::Verdict::Unknown => {
+                text.push_str(&format!(
+                    "[UNKNOWN] Compatibility of `{name}` with Bevy {} cannot be decided.\n\n",
+                    version.as_deref().unwrap_or("UNKNOWN")
+                ));
+                match version.as_deref() {
+                    None => text.push_str(
+                        "No Bevy version is pinned, so no requirement can be evaluated.\n",
+                    ),
+                    Some(_) => text.push_str(
+                        "At least one recorded release uses a requirement operator this build does not evaluate, so the answer is unknown rather than incompatible.\n",
+                    ),
+                }
+                if !matching.is_empty() {
+                    text.push_str(&format!(
+                        "Other releases that do match: {}.\n",
+                        matching.join(", ")
+                    ));
+                }
+                text.push_str(&format!(
+                    "Available versions: {}.\n",
+                    available_versions.join(", ")
+                ));
+            }
+        }
+        text.push_str(&compat_footer(&snapshot));
+
+        let verdict_label = match verdict {
+            compat::Verdict::Satisfied => "satisfied",
+            compat::Verdict::NotSatisfied => "not_satisfied",
+            compat::Verdict::Unknown => "unknown",
+        };
+        Ok((
+            text,
+            json!({
+                "crate": name,
+                "bevy_version": version,
+                "compatible": verdict.as_json(),
+                "verdict": verdict_label,
+                "matching_versions": matching,
+                "newest_version": newest.map(|entry| entry.plugin_version.clone()),
+                "newest_requires_bevy": newest.map(|entry| entry.requires_bevy.clone()),
+                "available_versions": available_versions,
+                "provenance": provenance,
+            }),
+        ))
+    }
+
+    fn run_generate_plugin(&self, params: GeneratePluginParams) -> anyhow::Result<(String, Value)> {
+        let Some(template) = plugin::find(&params.template) else {
+            let available: Vec<String> = plugin::templates()
+                .iter()
+                .map(|template| format!("`{}`", template.id))
+                .collect();
+            bail!(
+                "Unknown template id `{}`. Available: {}.",
+                params.template,
+                available.join(", ")
+            );
+        };
+        let defaults = BTreeMap::new();
+        let rendered = plugin::render(&template, params.params.as_ref().unwrap_or(&defaults))
+            .map_err(|error| anyhow!(error))?;
+
+        let mut symbol_checks = Vec::new();
+        let mut missing = Vec::new();
+        if let Some(corpus) = self.corpus.as_deref() {
+            for symbol in template.requires {
+                let found = !corpus.lookup(symbol).is_empty();
+                symbol_checks.push(json!({ "symbol": symbol, "found": found }));
+                if !found {
+                    missing.push(*symbol);
+                }
+            }
+            if !missing.is_empty() {
+                bail!(
+                    "Template requires symbols not found in Bevy {}: {}.",
+                    self.config.bevy_version.as_deref().unwrap_or("UNKNOWN"),
+                    missing.join(", ")
+                );
+            }
+        }
+        let symbol_check = if self.corpus.is_some() {
+            "checked"
+        } else {
+            "unavailable"
+        };
+
+        let text = format!(
+            "## Plugin Scaffold\n\n```rust\n{}\n```\n\n> Symbol checks are diagnostics only. The scaffold was parsed with `syn` but not compiled (`compile_verified: false`).\n",
+            rendered.code
+        );
+        Ok((
+            text,
+            json!({
+                "template_id": template.id,
+                "title": template.title,
+                "bevy_version": self.config.bevy_version,
+                "code": rendered.code,
+                "compile_verified": false,
+                "symbol_check": symbol_check,
+                "symbols_checked": symbol_checks,
+                "missing_symbols": missing,
+                "ignored_params": rendered.ignored_params,
+            }),
+        ))
+    }
+}
+
+fn generic_error_fix(code: &str) -> Option<&'static str> {
+    match code {
+        "B0001" | "B0003" => Some(
+            "Use `Without<T>` to prove the queries are disjoint, or combine the conflicting access in a `ParamSet<(…)>`.",
+        ),
+        "B0002" | "B0004" => Some(
+            "Do not mix mutable and immutable access to the same resource; use a `ParamSet` or defer one access.",
+        ),
+        _ => None,
+    }
+}
+
+fn compat_footer(snapshot: &compat::Snapshot) -> String {
+    format!(
+        "\n> Snapshot: {} versions across {} crate(s), harvested {} ({}).\n",
+        snapshot.provenance.version_count,
+        snapshot.provenance.crates.len(),
+        snapshot.provenance.harvested_at,
+        snapshot.provenance.source
+    )
+}
+
 fn join_or_none(values: &[String]) -> String {
     if values.is_empty() {
         "(none)".to_string()
@@ -1112,6 +1718,43 @@ struct PerfAdvisorParams {
     /// Max topics to list (default 8).
     #[serde(default)]
     limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ExplainErrorParams {
+    /// A pasted Bevy panic or warning message to explain.
+    message: String,
+    /// Include the complete guide instead of just the fix (default false).
+    #[serde(default)]
+    full: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EcosystemSearchParams {
+    /// Search query for API symbols, types or concepts.
+    query: String,
+    /// Restrict to one corpus crate, e.g. bevy_egui (or "bevy" for the engine corpus).
+    #[serde(default, rename = "crate")]
+    crate_name: Option<String>,
+    /// Max results per corpus (default 8).
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EcosystemCompatParams {
+    /// Plugin crate name, e.g. bevy_egui. Omit to get the full matrix.
+    #[serde(default, rename = "crate")]
+    crate_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct GeneratePluginParams {
+    /// Template id: plugin-skeleton, plugin-with-systemset.
+    template: String,
+    /// Optional slot values: PLUGIN_NAME, RESOURCE_TYPE, SYSTEM_NAME, SYSTEM_SET, UPDATE.
+    #[serde(default)]
+    params: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

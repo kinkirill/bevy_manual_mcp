@@ -466,6 +466,26 @@ b = { package = "bevy", version = "9.9.9", default-features = false, features = 
     }
 
     #[test]
+    fn implicit_default_features_are_enabled() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+
+[dependencies]
+bevy = "9.9.9"
+"#,
+        )
+        .expect("manifest");
+        let enabled = enabled(dir.path(), &data());
+        assert!(enabled.default_features);
+        assert!(enabled.transitive.contains(&"bevy_render".to_string()));
+    }
+
+    #[test]
     fn workspace_inheritance_and_target_tables_are_read() {
         let dir = tempfile::tempdir().expect("temp dir");
         fs::write(
@@ -477,6 +497,7 @@ version = "0.1.0"
 
 [workspace.dependencies]
 bevy = { version = "9.9.9", default-features = false }
+serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_render"] }
@@ -490,6 +511,7 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
         assert!(!enabled.default_features);
         assert!(enabled.transitive.contains(&"bevy_render".to_string()));
         assert!(enabled.transitive.contains(&"bevy_ui".to_string()));
+        assert!(!enabled.explicit.contains(&"derive".to_string()));
     }
 
     #[test]

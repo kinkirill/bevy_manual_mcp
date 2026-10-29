@@ -6,7 +6,9 @@
 //! still a syntax-level linter: it does not type-check, resolve aliases or
 //! prove lifetimes, and B0001/B0002 are Bevy *runtime* panics.
 
+pub mod compat;
 pub mod conflicts;
+pub mod errors;
 pub mod filters;
 pub mod perf;
 pub mod report;

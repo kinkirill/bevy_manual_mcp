@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_bevy-manual-mcp");
 const TIMEOUT: Duration = Duration::from_secs(20);
-const CLEAR_ENV: [&str; 12] = [
+const CLEAR_ENV: [&str; 13] = [
     "BEVY_VERSION",
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
@@ -23,6 +23,7 @@ const CLEAR_ENV: [&str; 12] = [
     "BEVY_EXAMPLES_DIR",
     "BEVY_META_DIR",
     "BEVY_ERRORS_DIR",
+    "BEVY_MCP_COMPAT_PATH",
     "INIT_CWD",
 ];
 
@@ -224,6 +225,10 @@ fn handshake_reports_server_identity_and_tools() {
         "bevy_validate_systems",
         "bevy_check_manifest",
         "bevy_perf_advisor",
+        "bevy_explain_error",
+        "bevy_ecosystem_search",
+        "bevy_ecosystem_compat",
+        "bevy_generate_plugin",
     ] {
         assert!(names.contains(&name), "missing {name}: {names:?}");
     }
@@ -863,7 +868,7 @@ fn check_manifest_falls_back_to_the_manifest_and_reports_gates() {
     assert_eq!(structured["bevy_version"], "9.9.9");
     assert_eq!(structured["source"], "Cargo.toml");
     assert_eq!(structured["no_manifest"], false);
-    assert_eq!(structured["default_features"], false);
+    assert_eq!(structured["default_features_enabled"], false);
     assert_eq!(structured["explicit"], json!(["bevy_ui"]));
     let transitive = structured["transitive"].as_array().expect("transitive");
     assert!(transitive.contains(&json!("bevy_ui")), "{transitive:?}");
@@ -909,7 +914,7 @@ fn check_manifest_prefers_cargo_metadata_when_the_project_resolves() {
     assert_eq!(structured["source"], "cargo metadata");
     assert_eq!(structured["no_manifest"], false);
     assert_eq!(structured["explicit"], json!(["bevy_ui"]));
-    assert_eq!(structured["default_features"], false);
+    assert_eq!(structured["default_features_enabled"], false);
     let transitive = structured["transitive"].as_array().expect("transitive");
     assert!(transitive.contains(&json!("bevy_ui")), "{transitive:?}");
     assert!(
@@ -988,6 +993,15 @@ fn validate_systems_checks_tuple_accesses_and_ignores_phantoms() {
     assert_eq!(findings[0]["rule"], "R1");
     assert_eq!(findings[0]["error_code"], "B0001");
     assert_eq!(findings[0]["system"], "bad");
+
+    let response = server.call_tool(
+        "bevy_validate_systems",
+        json!({ "code": "fn custom(p: MyCustomParam) {}" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["analysis_complete"], false);
+    assert_eq!(structured["unanalyzed"], json!(["MyCustomParam"]));
 }
 
 #[test]
@@ -1047,4 +1061,373 @@ fn perf_advisor_reports_builtin_topics_and_anti_patterns() {
         .filter_map(|topic| topic["topic"].as_str())
         .collect();
     assert_eq!(names, vec!["change-detection", "archetypes", "scheduling"]);
+}
+
+fn write_compat_fixture(root: &Path) -> std::path::PathBuf {
+    let dir = root.join("ecosystem");
+    std::fs::create_dir_all(&dir).expect("ecosystem dir");
+    let path = dir.join("compat.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "bevy_egui": [
+                { "plugin": "bevy_egui", "plugin_version": "0.43.1", "requires_bevy": "^0.20.0" },
+                { "plugin": "bevy_egui", "plugin_version": "0.42.0", "requires_bevy": "^0.19" },
+                { "plugin": "bevy_egui", "plugin_version": "0.0.1", "requires_bevy": "^0.0.3" }
+            ],
+            "edge_plugin": [
+                { "plugin": "edge_plugin", "plugin_version": "1.0.0", "requires_bevy": ">=0.20.0" }
+            ]
+        }))
+        .expect("compat json"),
+    )
+    .expect("write compat");
+    std::fs::write(
+        dir.join("compat-meta.json"),
+        serde_json::to_string_pretty(&json!({
+            "harvested_at": "2026-01-02T00:00:00Z",
+            "source": "fixture",
+            "version_count": 4
+        }))
+        .expect("meta json"),
+    )
+    .expect("write compat meta");
+    path
+}
+
+fn write_error_codes(meta: &Path) {
+    let dir = meta.join("9.9.9/error-codes");
+    std::fs::create_dir_all(&dir).expect("error codes dir");
+    std::fs::write(
+        dir.join("B0001.md"),
+        "# B0001\n\nBevy cannot prove these queries are disjoint.\n\n```rust\nfn bad(a: Query<&mut Transform>, b: Query<&Transform>) {}\n```\n\n## Fix\n\nUse `Without<T>` to prove the queries are disjoint, or combine them in a `ParamSet<(…)>`.\n",
+    )
+    .expect("B0001");
+    std::fs::write(
+        dir.join("B0002.md"),
+        "# B0002\n\nResMut and Res conflict.\n\n## Fix\n\nUse a `ParamSet` or defer one access.\n",
+    )
+    .expect("B0002");
+}
+
+fn build_plugin_corpus(dir: &Path) {
+    let out = dir.join("corpora/bevy_egui/0.43.1");
+    std::fs::create_dir_all(&out).expect("plugin corpus dir");
+    let records = [
+        json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": "EguiContexts",
+            "full_path": "bevy_egui::EguiContexts",
+            "module": "bevy_egui",
+            "signature": "pub struct EguiContexts<'w, 's> { .. }",
+            "docs": "The main access point for egui contexts in Bevy systems.",
+            "file": "struct.EguiContexts.html",
+            "crate": "bevy_egui",
+            "bevy_version": "9.9.9"
+        }),
+        json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": "Button",
+            "full_path": "bevy_egui::Button",
+            "module": "bevy_egui",
+            "signature": "pub struct Button { .. }",
+            "docs": "An egui button widget newtype.",
+            "file": "struct.Button.html",
+            "crate": "bevy_egui",
+            "bevy_version": "9.9.9"
+        }),
+    ]
+    .iter()
+    .map(|record| record.to_string())
+    .collect::<Vec<_>>()
+    .join("\n");
+    let records_path = dir.join("plugin-records.ndjson");
+    std::fs::write(&records_path, records).expect("plugin records");
+
+    let empty = dir.join("no-sources");
+    std::fs::create_dir_all(&empty).expect("empty dir");
+    let output = base_command(dir)
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_EXAMPLES_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty)
+        .args(["build", "--records"])
+        .arg(&records_path)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .expect("run plugin build");
+    assert!(
+        output.status.success(),
+        "plugin build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn ecosystem_search_fans_out_and_labels_corpora() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    build_plugin_corpus(dir.path());
+    std::fs::write(
+        dir.path().join("bevy-mcp.config.json"),
+        serde_json::to_string(&json!({
+            "corpora": [{ "crate": "bevy_egui", "version": "0.43.1" }]
+        }))
+        .expect("config json"),
+    )
+    .expect("write config");
+
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool("bevy_ecosystem_search", json!({ "query": "Button" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("bevy_egui@0.43.1"), "{text}");
+    assert!(text.contains("Button"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    let searched = structured["corpora_searched"]
+        .as_array()
+        .expect("corpora searched");
+    assert!(searched.contains(&json!("bevy@9.9.9")), "{searched:?}");
+    assert!(
+        searched.contains(&json!("bevy_egui@0.43.1")),
+        "{searched:?}"
+    );
+    assert!(
+        structured["total_hits"].as_u64().expect("total hits") >= 1,
+        "{structured}"
+    );
+
+    let response = server.call_tool(
+        "bevy_ecosystem_search",
+        json!({ "query": "Button", "crate": "bevy_egui" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["corpora_searched"],
+        json!(["bevy_egui@0.43.1"])
+    );
+
+    let response = server.call_tool(
+        "bevy_ecosystem_search",
+        json!({ "query": "zzzznomatchzzz" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(
+        tool_text(&response).contains("No matching symbols"),
+        "{}",
+        tool_text(&response)
+    );
+    assert_eq!(
+        response["result"]["structuredContent"]["total_hits"],
+        json!(0)
+    );
+}
+
+#[test]
+fn ecosystem_compat_reports_candidates_provenance_and_unknowns() {
+    let dir = fixture();
+    let compat = write_compat_fixture(dir.path());
+    let compat = compat.to_str().expect("compat path");
+
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[("BEVY_VERSION", "0.20.0"), ("BEVY_MCP_COMPAT_PATH", compat)],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_ecosystem_compat", json!({ "crate": "bevy_egui" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("compatible"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["compatible"], true);
+    assert_eq!(structured["matching_versions"], json!(["0.43.1"]));
+    assert_eq!(structured["provenance"]["version_count"], 4);
+    assert_eq!(
+        structured["provenance"]["harvested_at"],
+        "2026-01-02T00:00:00Z"
+    );
+
+    let response = server.call_tool("bevy_ecosystem_compat", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["plugins"]
+            .as_array()
+            .expect("plugins")
+            .len(),
+        2
+    );
+
+    let response = server.call_tool(
+        "bevy_ecosystem_compat",
+        json!({ "crate": "missing_plugin" }),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        tool_text(&response).contains("No compat data"),
+        "{response}"
+    );
+
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[("BEVY_VERSION", "0.1.0"), ("BEVY_MCP_COMPAT_PATH", compat)],
+    );
+    server.initialize();
+    let response = server.call_tool("bevy_ecosystem_compat", json!({ "crate": "bevy_egui" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(response["result"]["structuredContent"]["compatible"], false);
+    assert!(
+        tool_text(&response).contains("^0.20.0"),
+        "{}",
+        tool_text(&response)
+    );
+
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[("BEVY_VERSION", "0.21.0"), ("BEVY_MCP_COMPAT_PATH", compat)],
+    );
+    server.initialize();
+    let response = server.call_tool("bevy_ecosystem_compat", json!({ "crate": "edge_plugin" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["compatible"],
+        "unknown"
+    );
+}
+
+#[test]
+fn ecosystem_compat_without_a_pinned_version_is_unknown() {
+    let dir = fixture();
+    let compat = write_compat_fixture(dir.path());
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_VERSION", ""),
+            (
+                "BEVY_MCP_COMPAT_PATH",
+                compat.to_str().expect("compat path"),
+            ),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_ecosystem_compat", json!({ "crate": "bevy_egui" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["compatible"],
+        "unknown"
+    );
+}
+
+#[test]
+fn generate_plugin_templates_are_self_contained_and_validated() {
+    let dir = fixture();
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_generate_plugin",
+        json!({ "template": "does-not-exist" }),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        tool_text(&response).contains("Unknown template"),
+        "{response}"
+    );
+
+    let response = server.call_tool(
+        "bevy_generate_plugin",
+        json!({ "template": "plugin-with-systemset" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    let code = structured["code"].as_str().expect("code");
+    assert!(!code.contains("OtherSystem"), "{code}");
+    assert!(code.contains("#[derive("), "{code}");
+    assert!(code.contains("SystemSet"), "{code}");
+    assert_eq!(structured["compile_verified"], false);
+
+    let response = server.call_tool(
+        "bevy_generate_plugin",
+        json!({
+            "template": "plugin-skeleton",
+            "params": { "PLUGIN_NAME": "FooPlugin", "NOT_A_SLOT": "x", "a(": "x" }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    let code = structured["code"].as_str().expect("code");
+    assert!(code.contains("pub struct FooPlugin;"), "{code}");
+    let ignored = structured["ignored_params"].as_array().expect("ignored");
+    assert!(ignored.contains(&json!("NOT_A_SLOT")), "{ignored:?}");
+    assert!(ignored.contains(&json!("a(")), "{ignored:?}");
+    assert_eq!(structured["compile_verified"], false);
+}
+
+#[test]
+fn explain_error_is_version_checked_and_refuses_uncoded_panics() {
+    let dir = fixture();
+    let meta = dir.path().join("meta");
+    write_error_codes(&meta);
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[("BEVY_META_DIR", meta.to_str().expect("meta path"))],
+    );
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_explain_error",
+        json!({
+            "message": "error[B0002]: ResMut<Assets<StandardMaterial>> conflicts with Res<Assets<StandardMaterial>>"
+        }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["code"], "B0002");
+    assert_eq!(structured["severity"], "panic");
+    assert_eq!(structured["resource_type"], "Assets<StandardMaterial>");
+    assert_eq!(structured["version_indexed"], true);
+    assert_eq!(structured["does_not_exist_in_version"], false);
+
+    let response = server.call_tool(
+        "bevy_explain_error",
+        json!({ "message": "error[B0007]: something" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["does_not_exist_in_version"],
+        true
+    );
+
+    let short = server.call_tool(
+        "bevy_explain_error",
+        json!({ "message": "error[B0001]: x" }),
+    );
+    let full = server.call_tool(
+        "bevy_explain_error",
+        json!({ "message": "error[B0001]: x", "full": true }),
+    );
+    assert!(
+        tool_text(&short).contains("Without"),
+        "{}",
+        tool_text(&short)
+    );
+    assert!(
+        tool_text(&full).len() > tool_text(&short).len(),
+        "full should include more of the guide"
+    );
+
+    let response = server.call_tool(
+        "bevy_explain_error",
+        json!({ "message": "thread 'main' panicked at 'something unknown happened'" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["tier"], 3);
+    assert_eq!(structured["no_error_code_found"], true);
 }

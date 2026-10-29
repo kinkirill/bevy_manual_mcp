@@ -90,7 +90,17 @@ async function main(): Promise<void> {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(compat, null, 2) + "\n");
   const total = Object.values(compat).reduce((n, list) => n + list.length, 0);
-  console.log(`\nWrote ${total} entries to ${outPath}`);
+
+  // Provenance travels beside the snapshot so `bevy_ecosystem_compat` can say
+  // when and from where the data came without a network lookup.
+  const metaPath = path.join(path.dirname(outPath), "compat-meta.json");
+  fs.writeFileSync(metaPath, JSON.stringify({
+    harvested_at: new Date().toISOString(),
+    source: "crates.io API via scripts/harvest-compat.mts",
+    crates: CRATES,
+    version_count: total,
+  }, null, 2) + "\n");
+  console.log(`\nWrote ${total} entries to ${outPath} (+ compat-meta.json)`);
 }
 
 main().catch((error: unknown) => {

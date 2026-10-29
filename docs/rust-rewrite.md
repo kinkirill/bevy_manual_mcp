@@ -80,7 +80,7 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
 - **Packaging:** `include` names only `src/**/*.rs`, `Cargo.toml`,
   `Cargo.lock`, `README.md`, `LICENSE` and this document. Without it Cargo would
   ship the TypeScript tree and the vendored website (1,012 files); with it the
-  package is 22 files / 85 KB compressed.
+  package is 35 files / 131 KB compressed.
 - **A lib-only 0.0.1 reservation is published** from `reserve/`:
   <https://crates.io/crates/bevy-manual-mcp> (6 files, 1.2 KB, no binary).
   Its README says the server is not published yet; `cargo install` fails with
@@ -243,8 +243,10 @@ are not interchangeable.
 
 - Config file (`bevy-mcp.config.json`), environment variables
   (`BEVY_PROJECT_ROOT`, `BEVY_VERSION`, `BEVY_DOC_DIR`, `BEVY_MCP_DATA_DIR`,
-  `BEVY_MCP_OFFLINE`) and precedence stay unchanged. Only the executable is
-  renamed: the config filename, the `~/.cache/bevy-mcp` data directory and the
+  `BEVY_MCP_OFFLINE`, `BEVY_MCP_COMPAT_PATH`) and precedence stay unchanged. The
+  config also accepts a `corpora` array of `{ crate, version?, auto? }` entries.
+  Only the executable is renamed: the config filename, the
+  `~/.cache/bevy-mcp` data directory and the
   `BEVY_MCP_*` variables keep their short spelling so existing setups keep
   working.
 - **Version detection stays file-based** (Cargo.lock first, Cargo.toml
@@ -759,8 +761,9 @@ regex version missed. `With`/`Without` disjointness still suppresses a finding,
 including through `Or<…>` branches.
 
 Honesty gate: the analysis is a **syntax-level linter**. Any parameter, query
-item or filter it cannot classify is listed under `unsupported` and flips
-`analysis_complete` to `false`; unparsable input is a tool error. The result
+item or filter it cannot classify is listed under `unsupported` (prose) and
+`unanalyzed` (type names) and flips `analysis_complete` to `false`; unparsable
+input is a tool error. The result
 never claims type checking, and the report says B0001/B0002 are runtime panics,
 not compile errors. Intra-query duplicate borrows are not checked.
 
@@ -800,3 +803,124 @@ for `change-detection` (and for code-only calls, which default to it).
 
 `quote` and `syn` (`full`, `parsing`, `printing`) join the dependency set;
 `clippy -D warnings` is clean.
+
+## 28. Step 5: ecosystem tools, generation, error explanations
+
+Step 5 adds four tools (**15 total**): `bevy_ecosystem_search`,
+`bevy_ecosystem_compat`, `bevy_generate_plugin` and `bevy_explain_error`. It
+also closes the contract field gaps left by step 4.
+
+### Ecosystem corpora and search
+
+The TypeScript `CorpusRegistry` documented `data/corpora/<crate>-<version>/`
+but was never wired into `registerAll`, so `bevy_ecosystem_search` always
+searched an empty map (C-01). The Rust implementation defines the layout and
+uses it:
+
+```
+data/corpora/<crate>/<version>/
+  corpus.rkyv          same format as a Bevy corpus
+  tantivy/             same text index
+```
+
+The older `<crate>-<version>` spelling is accepted when a config entry names the
+exact version. A plugin corpus is built with the existing builder:
+
+```bash
+BEVY_VERSION=0.20.0 bevy-manual-mcp build \
+  --records bevy_egui.ndjson --out data/corpora/bevy_egui/0.43.1
+```
+
+`corpora` in the config (`{ crate, version?, auto? }`) selects corpora; `auto`
+resolves the plugin version from the host lockfile through the same
+`Cargo.lock` detection used for Bevy. With no entries, every
+`<crate>/<version>` directory is auto-discovered. The tool always searches the
+**primary Bevy corpus** too (unless a plugin crate filter excludes it), labels
+every hit with its corpus id (`bevy@0.20.0`, `bevy_egui@0.43.1`) and reports
+`corpora_searched` plus `corpora_skipped` with reasons. A configured but
+uninstalled corpus is named, never silently dropped.
+
+Plugin corpora are opened per call (no cross-call cache yet); a fan-out over a
+few small corpora stays in the same millisecond range as one search.
+
+### Compatibility without a network fallback
+
+`vendor/ecosystem/compat.json` is the only source; the description no longer
+claims crates.io. `vendor/ecosystem/compat-meta.json` travels with it and records
+`harvested_at`, `source` and `version_count`; `scripts/harvest-compat.mts`
+writes both, and the tool returns `provenance` in every response (C-12).
+
+Requirement handling is cargo-shaped and **tri-state**:
+
+| requirement | rule |
+|---|---|
+| `^0.20.0` | `>=0.20.0, <0.21.0`; `^0.0.3` → `<0.0.4`; `^0` → `<1.0.0` |
+| `~0.20.0` | patch updates only |
+| `0.20.0` | exact |
+| `0.20.*`, `0.*`, `*` | wildcard ranges |
+| `>=…`, comma lists, `\|\|`, hyphen ranges, pre-release carets | **unknown**, never "incompatible" |
+
+Responses return `compatible: true | false | "unknown"`, `matching_versions`
+(candidate plugin versions, newest first), `newest_version`,
+`newest_requires_bevy` and `available_versions`. A warning names the **newest**
+release's requirement (the snapshot is newest-first; C-11). With no pinned Bevy
+version the verdict is `unknown`, never `true` (C-09). Real snapshot at 0.20.0:
+`bevy_egui` → 0.43.1/0.43.0, `bevy_rapier3d` → 0.37.0, `leafwing_input_manager`
+→ `unknown` because its unsupported pre-release carets cannot be evaluated; the
+honest answer is not "incompatible".
+
+### Plugin generation
+
+Two templates (`plugin-skeleton`, `plugin-with-systemset`) are self-contained.
+The SystemSet template derives `SystemSet` and no longer references the
+undefined `OtherSystem` or the non-existent `#[system_set]` attribute (C-13).
+Slots are `PLUGIN_NAME`, `RESOURCE_TYPE`, `SYSTEM_NAME`, `SYSTEM_SET` and
+`UPDATE`; values are validated as `syn::Ident`/`syn::Path`, so a malformed value
+is a clear error rather than an injected string, and unknown keys land in
+`ignored_params` (C-14a–c). The rendered code is parsed with
+`syn::parse_file` before returning. Symbol presence is checked against the
+active corpus when one is loaded and reported as `symbols_checked` /
+`missing_symbols`; `compile_verified` is always **false**, because no compiler
+runs (C-15).
+
+### Error explanations
+
+`bevy_explain_error` extracts `error[B####]`/`warning[B####]`, the system name
+(`in system foo`, quoted forms), and the first balanced `ResMut<…>`/`Res<…>`
+type, then resolves the code against `vendor/bevy-meta/<version>/error-codes/`.
+A code absent from the pinned version is reported as
+`does_not_exist_in_version: true`; it is never answered from another version.
+`full: false` prefers a `## Fix`/`## Solution` section and otherwise returns the
+first 2000 characters (matching the TypeScript behavior); `full: true` returns
+the whole guide. Uncoded panics remain a tier-3 honest refusal with the parsed
+resource/access names.
+
+### Contract alignment from step 4
+
+- `bevy_check_manifest` now emits `default_features_enabled` (C-02a). Unit tests
+  cover implicit defaults, `default-features = false`, aliases, workspace
+  inheritance with a non-Bevy dependency, and target tables.
+- `bevy_validate_systems` emits `unanalyzed` alongside `unsupported` (C-05), and
+  contract tests lock the tuple cases: read/write on `Transform` is R1, a read
+  member is not poisoned by another member's `&mut`, and `&mut Velocity` is R2 on
+  `Velocity` (C-03a/b).
+
+### Measurements
+
+Smoke test against the real 0.20.0 corpus and vendored snapshot:
+
+| call | result |
+|---|---|
+| `bevy_ecosystem_compat {crate: "bevy_egui"}` | `true`, candidates 0.43.1/0.43.0, provenance 72 versions / 3 crates |
+| `bevy_ecosystem_compat {}` | `bevy_egui` true, `bevy_rapier3d` true, `leafwing_input_manager` unknown |
+| `bevy_ecosystem_search {query: "Button"}` | 3 primary-corpus hits, `bevy@0.20.0` labelled |
+| `bevy_generate_plugin {template: "plugin-with-systemset"}` | all four symbols found, `compile_verified: false` |
+| `bevy_explain_error` on a B0002 message | `Assets<StandardMaterial>`, guide available |
+
+Tests: **107** (75 unit, 10 archive, 22 MCP), `clippy -D warnings` clean.
+
+Still open for step 6/7: the vendored feature graphs, error codes and compat
+snapshot are read from `vendor/` and are not yet embedded in or downloaded with
+the binary, so a clean `cargo install` (where no checkout exists) cannot run the
+metadata-backed tools until that data ships in the bundle or as `include_str!`
+fixtures. Plugin corpora also need a documented build/publish path.

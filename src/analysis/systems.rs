@@ -17,6 +17,8 @@ pub struct Analysis {
     pub systems: Vec<System>,
     pub findings: Vec<Finding>,
     pub unsupported: Vec<String>,
+    /// The rendered type names that made the analysis incomplete.
+    pub unanalyzed: Vec<String>,
     pub parse_error: Option<String>,
 }
 
@@ -151,6 +153,10 @@ fn analyze_signature(signature: &Signature, out: &mut Analysis) {
     for note in context.notes {
         out.unsupported.push(format!("`{name}`: {note}"));
     }
+    let mut unanalyzed = context.unanalyzed;
+    unanalyzed.sort();
+    unanalyzed.dedup();
+    out.unanalyzed.extend(unanalyzed);
 }
 
 #[derive(Default)]
@@ -158,6 +164,7 @@ struct FnContext {
     params: Vec<ParamInfo>,
     accesses: Vec<Access>,
     notes: Vec<String>,
+    unanalyzed: Vec<String>,
     next_group: usize,
 }
 
@@ -248,8 +255,9 @@ impl FnContext {
             self.note(label, "has no query data argument");
             return;
         };
-        let (atoms, notes) = filters::parse(&arguments[1..]);
+        let (atoms, notes, unsupported) = filters::parse(&arguments[1..]);
         self.notes.extend(notes);
+        self.unanalyzed.extend(unsupported);
         self.collect_query_data(data, &atoms, group, owner, label);
     }
 
@@ -283,10 +291,13 @@ impl FnContext {
                     owner,
                     param: label.to_string(),
                 }),
-                None => self.notes.push(format!(
-                    "`{label}` contains a query item (`{}`) that is not a component borrow",
-                    render_type(ty)
-                )),
+                None => {
+                    let rendered = render_type(ty);
+                    self.notes.push(format!(
+                        "`{label}` contains a query item (`{rendered}`) that is not a component borrow"
+                    ));
+                    self.unanalyzed.push(rendered);
+                }
             },
             Type::Path(_) => {
                 let Some(ident) = type_ident(ty) else {
@@ -295,12 +306,12 @@ impl FnContext {
                 let arguments = type_args(ty);
                 match ident.as_str() {
                     "Option" | "AnyOf" => match arguments.first() {
-                        Some(inner) => {
-                            self.collect_query_data(inner, filters, group, owner, label)
+                        Some(inner) => self.collect_query_data(inner, filters, group, owner, label),
+                        None => {
+                            self.notes
+                                .push(format!("`{label}` has a `{ident}` without an inner type"));
+                            self.unanalyzed.push(label.to_string());
                         }
-                        None => self.notes.push(format!(
-                            "`{label}` has a `{ident}` without an inner type"
-                        )),
                     },
                     "Ref" | "Mut" => match arguments.last() {
                         Some(inner) => self.accesses.push(Access {
@@ -312,22 +323,31 @@ impl FnContext {
                             owner,
                             param: label.to_string(),
                         }),
-                        None => self.notes.push(format!(
-                            "`{label}` has a `{ident}` without a component type"
-                        )),
+                        None => {
+                            self.notes.push(format!(
+                                "`{label}` has a `{ident}` without a component type"
+                            ));
+                            self.unanalyzed.push(label.to_string());
+                        }
                     },
                     // `Entity` and `Has<T>` are query data without a borrow.
                     "Entity" | "Has" => {}
-                    _ => self.notes.push(format!(
-                        "`{label}` uses query data `{}` that is not a borrow; its accesses are unknown",
-                        render_type(ty)
-                    )),
+                    _ => {
+                        let rendered = render_type(ty);
+                        self.notes.push(format!(
+                            "`{label}` uses query data `{rendered}` that is not a borrow; its accesses are unknown"
+                        ));
+                        self.unanalyzed.push(rendered);
+                    }
                 }
             }
-            _ => self.notes.push(format!(
-                "`{label}` contains a query item the analyzer does not understand (`{}`)",
-                render_type(ty)
-            )),
+            _ => {
+                let rendered = render_type(ty);
+                self.notes.push(format!(
+                    "`{label}` contains a query item the analyzer does not understand (`{rendered}`)"
+                ));
+                self.unanalyzed.push(rendered);
+            }
         }
     }
 
@@ -362,6 +382,7 @@ impl FnContext {
 
     fn note(&mut self, label: &str, reason: &str) {
         self.notes.push(format!("`{label}` {reason}"));
+        self.unanalyzed.push(label.to_string());
     }
 }
 
@@ -480,6 +501,26 @@ mod tests {
     }
 
     #[test]
+    fn tuple_member_mutability_is_not_leaked_onto_a_read_member() {
+        let analysis =
+            systems("fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Transform>) {}");
+        assert_eq!(analysis.findings.len(), 1, "{:?}", analysis.findings);
+        let finding = &analysis.findings[0];
+        assert_eq!(finding.rule, "R1");
+        assert_eq!(finding.resource_type, "Transform");
+        assert_eq!(finding.error_code, Some("B0001"));
+
+        let clean = systems("fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&Transform>) {}");
+        assert!(clean.findings.is_empty(), "{:?}", clean.findings);
+
+        let velocity =
+            systems("fn f(a: Query<(&Transform, &mut Velocity)>, b: Query<&mut Velocity>) {}");
+        assert_eq!(velocity.findings.len(), 1, "{:?}", velocity.findings);
+        assert_eq!(velocity.findings[0].rule, "R2");
+        assert_eq!(velocity.findings[0].resource_type, "Velocity");
+    }
+
+    #[test]
     fn param_sets_may_hold_conflicting_queries() {
         let analysis = systems(
             r#"
@@ -543,6 +584,7 @@ mod tests {
     fn unsupported_parameters_mark_the_analysis_incomplete() {
         let analysis = systems("fn custom(thing: MyCustomParam, q: Query<&mut A>) {}");
         assert!(!analysis.complete(), "{:?}", analysis.unsupported);
+        assert_eq!(analysis.unanalyzed, vec!["MyCustomParam"]);
         assert!(
             analysis
                 .unsupported

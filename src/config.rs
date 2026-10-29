@@ -32,7 +32,24 @@ pub struct Config {
     pub offline: bool,
     pub debug: bool,
     pub max_results: usize,
+    /// Plugin corpora configured under `data/corpora/`.
+    pub corpora: Vec<CorpusConfig>,
     pub config_path: Option<PathBuf>,
+}
+
+/// One plugin corpus declaration from the config file.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusConfig {
+    /// Plugin crate name, e.g. `bevy_egui`.
+    #[serde(rename = "crate")]
+    pub crate_name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Accepted for config compatibility; the version is read from the host
+    /// project's lockfile when omitted.
+    #[serde(default)]
+    pub auto: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -52,6 +69,7 @@ struct ConfigFile {
     offline: Option<bool>,
     debug: Option<bool>,
     max_results: Option<u32>,
+    corpora: Option<Vec<CorpusConfig>>,
 }
 
 #[derive(Debug, Default)]
@@ -194,6 +212,26 @@ impl Config {
             .filter(|v| (1..=20).contains(v))
             .unwrap_or(8);
 
+        // `auto: true` resolves the plugin version from the host project's
+        // lockfile, exactly like the TypeScript config did.
+        let corpora: Vec<CorpusConfig> = file
+            .corpora
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut corpus| {
+                let missing = corpus
+                    .version
+                    .as_deref()
+                    .is_none_or(|version| version.trim().is_empty());
+                if corpus.auto == Some(true) && missing {
+                    corpus.version =
+                        detect_crate_version(&project_root, &corpus.crate_name).version;
+                }
+                corpus
+            })
+            .collect();
+
         Self {
             project_root,
             bevy_version: detected.version,
@@ -209,6 +247,7 @@ impl Config {
             offline,
             debug,
             max_results,
+            corpora,
             config_path,
         }
     }

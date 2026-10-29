@@ -39,21 +39,23 @@ pub enum FilterAtom {
 
 /// Parse the non-data arguments of a `Query<...>`.
 ///
-/// Returns the atoms and notes for filter types the analyzer does not
-/// understand; an unknown filter means disjointness cannot be proven, so the
-/// caller reports the analysis as incomplete.
-pub fn parse(types: &[&Type]) -> (Vec<FilterAtom>, Vec<String>) {
+/// Returns the atoms, prose notes, and the rendered types of filters the
+/// analyzer does not understand; an unknown filter means disjointness cannot
+/// be proven, so the caller reports the analysis as incomplete.
+pub fn parse(types: &[&Type]) -> (Vec<FilterAtom>, Vec<String>, Vec<String>) {
     let mut atoms = Vec::new();
     let mut notes = Vec::new();
+    let mut unsupported = Vec::new();
     for ty in types {
         if !parse_type(ty, &mut atoms) {
+            let rendered = render_type(ty);
             notes.push(format!(
-                "filter `{}` is not a known Bevy query filter; disjointness cannot be proven",
-                render_type(ty)
+                "filter `{rendered}` is not a known Bevy query filter; disjointness cannot be proven"
             ));
+            unsupported.push(rendered);
         }
     }
-    (atoms, notes)
+    (atoms, notes, unsupported)
 }
 
 fn parse_type(ty: &Type, atoms: &mut Vec<FilterAtom>) -> bool {
@@ -168,8 +170,9 @@ mod tests {
     fn atoms(source: &str) -> Vec<FilterAtom> {
         let types = filter_types(source);
         let refs: Vec<&Type> = types.iter().collect();
-        let (atoms, notes) = parse(&refs);
+        let (atoms, notes, unsupported) = parse(&refs);
         assert!(notes.is_empty(), "notes: {notes:?}");
+        assert!(unsupported.is_empty(), "unsupported: {unsupported:?}");
         atoms
     }
 
@@ -225,8 +228,9 @@ mod tests {
     fn unknown_filters_are_reported() {
         let types = filter_types("(MyFilter<Player>)");
         let refs: Vec<&Type> = types.iter().collect();
-        let (atoms, notes) = parse(&refs);
+        let (atoms, notes, unsupported) = parse(&refs);
         assert!(atoms.is_empty());
         assert_eq!(notes.len(), 1, "notes: {notes:?}");
+        assert_eq!(unsupported, vec!["(MyFilter<Player>)"]);
     }
 }
