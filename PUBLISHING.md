@@ -79,7 +79,7 @@ cargo publish
 
 After the crate is live:
 
-- update `server.json` to `registryType: "cargo"`, `identifier:
+- `server.json` already advertises `registryType: "cargo"`, `identifier:
   "bevy-manual-mcp"`, version `0.1.0`;
 - publish the MCP registry entry;
 - verify a clean machine: `cargo install bevy-manual-mcp`, point it at a Cargo
@@ -91,7 +91,7 @@ installable release.
 
 ## CI/release automation
 
-The `release` workflow builds one bundle per dispatch (version + revision
+The `index-release` workflow builds one bundle per dispatch (version + revision
 inputs), uploads the asset and manifest, and optionally publishes the crate when
 explicitly requested. CI runs formatting, clippy and tests on Linux, macOS and
 Windows. Never publish from a dirty or untested tree.

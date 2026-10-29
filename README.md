@@ -1,13 +1,21 @@
 # bevy-manual-mcp
 
-Version-accurate Bevy documentation for MCP clients. It answers from a local
-index pinned to the Bevy version your project actually uses: rustdoc signatures,
-the Bevy Book, migration guides, release notes and runnable examples.
+This MCP was designed by a human and built using AI tools to increase development
+speed.
 
-Bevy breaks APIs at every minor release. This server makes the model look the
-answer up instead of recalling an API from a different version.
+Bevy is a fast-moving project that changes with every release. Its documentation
+is large and scattered, so finding an answer that actually matches *your* version
+often means digging through rustdoc signatures, the Bevy Book, migration guides,
+release notes and runnable examples - and still landing on something written for
+a different release. This server tries its best to remove that friction.
 
-- **Native.** Rust, stdio MCP, no Node or npm in the user's path.
+You ask your agent a question and it answers from knowledge pinned to the exact
+Bevy version your project is using.
+
+Key points:
+
+- **Native.** Rust, stdio MCP, no Node or npm in the user's path. (The initial
+  version of this MCP was written in JS and later in TS.)
 - **Small.** A 33 MB bundle per Bevy version (125 MB corpus + 15 MB tantivy
   index, zstd-compressed).
 - **Fast.** ~10 ms cold start, 22–30 ms concept queries, sub-millisecond exact
@@ -18,19 +26,13 @@ answer up instead of recalling an API from a different version.
 
 ## Install
 
-The `0.1.0` crate is not published yet. Until then install from the repository:
-
-```bash
-cargo install --git https://github.com/kinkirill/bevy_manual_mcp --branch main
-```
-
-After publication the command is simply:
-
 ```bash
 cargo install bevy-manual-mcp
 ```
 
 Requires a Rust toolchain. There is no prebuilt binary matrix and no npm shim.
+`0.0.1` is a lib-only name reservation; `0.1.0` is the first installable
+release.
 
 The first server start downloads the prebuilt index for the detected Bevy
 version (progress on stderr). Index releases are per Bevy **minor** (`v0.20`);

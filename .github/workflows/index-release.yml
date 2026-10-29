@@ -1,4 +1,4 @@
-name: release
+name: index-release
 
 # Build one index bundle per dispatch. Assets are published under the Bevy
 # minor tag (v0.20), separately from the crate version.
