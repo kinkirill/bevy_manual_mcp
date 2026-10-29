@@ -121,6 +121,7 @@ dependencies = [
  "anyhow",
  "clap",
  "memmap2",
+ "percent-encoding",
  "rkyv",
  "rmcp",
  "schemars",

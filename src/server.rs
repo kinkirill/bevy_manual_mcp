@@ -9,8 +9,14 @@ use std::time::Instant;
 use anyhow::{anyhow, bail};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
-use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
+use rmcp::model::{
+    CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo, ContentBlock, ErrorData,
+    Implementation, ListResourceTemplatesResult, ListResourcesResult, MetaObject,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+    Reference, Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerConfig,
+};
+use rmcp::service::RequestContext;
+use rmcp::{RoleServer, ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -78,6 +84,15 @@ impl BevyMcp {
             text,
             text_load_ms,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    fn resource_source(&self) -> crate::resources::Source<'_> {
+        crate::resources::Source {
+            corpus: self.corpus.as_deref(),
+            active_version: self.config.bevy_version.as_deref(),
+            data_dir: &self.config.data_dir,
+            versions: self.registry.indexed_versions(),
         }
     }
 
@@ -681,12 +696,118 @@ fn with_structured(text: String, structured: serde_json::Value) -> CallToolResul
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for BevyMcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        let mut capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .build();
+        capabilities.completions = Some(serde_json::Map::new());
+        ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("bevy-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Version-accurate Bevy API docs, guides, examples and migration notes. \
-                 Call bevy_index_status first to see which Bevy version is indexed.",
+                 Call bevy_index_status first to see which Bevy version is indexed. \
+                 The bevy:// resources expose individual API items, paginated listings \
+                 by kind/module/crate/owner/file, and the indexed-version table.",
             )
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(vec![
+            Resource::new(crate::resources::INDEX_URI, "bevy-index")
+                .with_title("Indexed Bevy versions")
+                .with_description(
+                    "Which Bevy versions this server can answer for, and how to construct a resource URI for any item, type, crate or kind.",
+                )
+                .with_mime_type("text/markdown"),
+        ]))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let templates = crate::resources::TEMPLATES
+            .iter()
+            .map(|template| {
+                ResourceTemplate::new(template.uri_template, template.name)
+                    .with_title(template.title)
+                    .with_description(template.description)
+                    .with_mime_type("text/markdown")
+            })
+            .collect();
+        Ok(ListResourceTemplatesResult::with_all_items(templates))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let source = self.resource_source();
+        match crate::resources::read(&source, &request.uri) {
+            Ok(output) => {
+                let content_uri = match &output.next_cursor {
+                    Some(cursor) if request.uri.contains('?') => {
+                        format!("{}&cursor={cursor}", request.uri)
+                    }
+                    Some(cursor) => format!("{}?cursor={cursor}", request.uri),
+                    None => request.uri.clone(),
+                };
+                let contents = vec![
+                    ResourceContents::text(output.text, content_uri)
+                        .with_mime_type("text/markdown"),
+                ];
+                let mut result = ReadResourceResult::new(contents);
+                result.ttl_ms = Some(if output.next_cursor.is_some() {
+                    60_000
+                } else {
+                    600_000
+                });
+                if let (Some(total), Some(page_size)) = (output.total, output.page_size) {
+                    let mut meta = serde_json::Map::new();
+                    meta.insert("total".into(), json!(total));
+                    meta.insert("pageSize".into(), json!(page_size));
+                    if let Some(cursor) = &output.next_cursor {
+                        meta.insert("nextCursor".into(), json!(cursor));
+                    }
+                    result.meta = Some(MetaObject(meta));
+                }
+                Ok(result.into())
+            }
+            Err(message) => Err(ErrorData::invalid_params(message, None)),
+        }
+    }
+
+    async fn complete(
+        &self,
+        request: CompleteRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, ErrorData> {
+        let Reference::Resource(reference) = request.r#ref else {
+            return Ok(CompleteResult::default());
+        };
+        let context = request
+            .context
+            .and_then(|context| context.arguments)
+            .unwrap_or_default();
+        let source = self.resource_source();
+        let (values, total) = crate::resources::complete(
+            &source,
+            &reference.uri,
+            &request.argument.name,
+            &request.argument.value,
+            &context,
+        );
+        let mut info =
+            CompletionInfo::new(values).map_err(|error| ErrorData::internal_error(error, None))?;
+        info.total = Some(total as u32);
+        info.has_more = Some(total > info.values.len());
+        Ok(CompleteResult::new(info))
     }
 }
 

@@ -625,3 +625,40 @@ Rebuilt 0.20.0 corpus:
 `bevy-examples:input/gamepad_input_events.rs`, `ecs/observers.rs` and friends.
 `cargo_registry_examples_are_auto_detected` builds against a fake `CARGO_HOME`
 and asserts the example is ingested and searchable.
+
+## 25. Step 3 closed: `bevy://` resources, templates, completions, pagination
+
+The identity-based surface is live over MCP (`resources/list`,
+`resources/templates/list`, `resources/read`, `completion/complete`). pi reports
+`offers resources`.
+
+URIs (percent-encoded so `::` and `/` survive):
+
+```
+bevy://index/versions
+bevy://api/<version>/<full::path>
+bevy://kind/<version>/<kind>
+bevy://module/<version>/<module>
+bevy://crate/<version>/<subcrate>
+bevy://owner/<version>/<Type>
+bevy://doc/<version>/<rustdoc file>
+```
+
+- `resources/list` exposes the index resource; the six URI templates are
+  returned by `resources/templates/list`.
+- Reads open the requested version's archive on demand, so another installed
+  version can be read without restarting. Unknown versions are refused with the
+  available list.
+- Listings page at 50 items (max 200). The cursor is bound to a hash of the
+  query, carried in the content URI (`?cursor=…`) and mirrored in `_meta`
+  (`total`, `pageSize`, `nextCursor`). Re-reading the returned URI continues the
+  same listing; a cursor from a different query is rejected.
+- Listings use **corpus order**, which is stable for a given archive. Sorting
+  `kind=method` (201,803 rows) on every read cost ~320 ms; corpus order makes it
+  **6 ms**. `owner=Camera` (314 rows) is ~13 ms; a single API item is <1 ms.
+- Completions cover `version`, `kind`, `crate`, `path`, `module`, `owner` and
+  `file`, capped at 100 values with `total`/`hasMore`. Filtering while scanning
+  (instead of building a full set first) took `path=bevy::ecs::Que` from 127 ms
+  to ~25 ms.
+- MCP test: list resources/templates, read the index, an API item, an owner
+  listing, page through 57 structs, and complete a version argument.

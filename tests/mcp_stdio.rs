@@ -313,7 +313,7 @@ fn cli_help_and_status_work_without_a_transport() {
 fn build_corpus(dir: &Path) {
     let out = dir.join("versions/9.9.9");
     std::fs::create_dir_all(&out).expect("version dir");
-    let records = [
+    let mut records = vec![
         json!({
             "source": "rustdoc",
             "kind": "struct",
@@ -391,11 +391,26 @@ fn build_corpus(dir: &Path) {
             "file": "demo/struct.Widget.html",
             "bevy_version": "9.9.9"
         }),
-    ]
-    .iter()
-    .map(|record| serde_json::to_string(record).expect("record json"))
-    .collect::<Vec<_>>()
-    .join("\n");
+    ];
+    for index in 0..55 {
+        records.push(serde_json::json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": format!("Grid{index:02}"),
+            "full_path": format!("demo::Grid{index:02}"),
+            "crate": "demo",
+            "module": "demo",
+            "signature": format!("pub struct Grid{index:02};"),
+            "docs": format!("Grid helper {index}."),
+            "file": "demo/grid.html",
+            "bevy_version": "9.9.9"
+        }));
+    }
+    let records = records
+        .iter()
+        .map(|record| serde_json::to_string(record).expect("record json"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let records_path = out.join("records.ndjson");
     std::fs::write(&records_path, records).expect("records");
 
@@ -631,4 +646,85 @@ fn cargo_registry_examples_are_auto_detected() {
     assert_eq!(response["result"]["isError"], false, "{response}");
     let text = tool_text(&response);
     assert!(text.contains("An event example from the engine"), "{text}");
+}
+
+#[test]
+fn resources_templates_and_completions_work() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let list = server.request("resources/list", json!({}));
+    let resources = list["result"]["resources"].as_array().expect("resources");
+    assert!(
+        resources
+            .iter()
+            .any(|resource| resource["uri"] == "bevy://index/versions"),
+        "{list}"
+    );
+
+    let templates = server.request("resources/templates/list", json!({}));
+    let templates = templates["result"]["resourceTemplates"]
+        .as_array()
+        .expect("templates");
+    assert_eq!(templates.len(), 6, "{templates:?}");
+
+    let index = server.request("resources/read", json!({ "uri": "bevy://index/versions" }));
+    let text = index["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("index text");
+    assert!(text.contains("9.9.9"), "{text}");
+
+    let api = server.request(
+        "resources/read",
+        json!({ "uri": "bevy://api/9.9.9/demo::Widget" }),
+    );
+    let text = api["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("api text");
+    assert!(text.contains("A widget"), "{text}");
+
+    let owner = server.request(
+        "resources/read",
+        json!({ "uri": "bevy://owner/9.9.9/Widget" }),
+    );
+    let text = owner["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("owner text");
+    assert!(text.contains("new"), "{text}");
+
+    // 57 structs -> first page of 50 carries a continuation URI.
+    let first = server.request(
+        "resources/read",
+        json!({ "uri": "bevy://kind/9.9.9/struct" }),
+    );
+    let content = &first["result"]["contents"][0];
+    let text = content["text"].as_str().expect("listing text");
+    assert!(text.contains("Paged"), "{text}");
+    let next_uri = content["uri"].as_str().expect("next uri");
+    assert!(next_uri.contains("cursor="), "{next_uri}");
+
+    let second = server.request("resources/read", json!({ "uri": next_uri }));
+    let text = second["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("second page");
+    assert!(text.contains("showing 7"), "{text}");
+    assert!(
+        second["result"]["_meta"].get("nextCursor").is_none(),
+        "second page should be the last: {}",
+        second["result"]["_meta"]
+    );
+
+    let completion = server.request(
+        "completion/complete",
+        json!({
+            "ref": { "type": "ref/resource", "uri": "bevy://kind/{version}/{kind}" },
+            "argument": { "name": "version", "value": "9" }
+        }),
+    );
+    let values = completion["result"]["completion"]["values"]
+        .as_array()
+        .expect("completion values");
+    assert!(values.iter().any(|value| value == "9.9.9"), "{completion}");
 }
