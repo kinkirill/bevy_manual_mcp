@@ -75,6 +75,7 @@ jobs:
 
       - name: Build the index bundle
         env:
+          BEVY_VERSION: ${{ env.VERSION }}
           BEVY_MCP_DATA_DIR: ${{ runner.temp }}/data
           BEVY_META_DIR: ${{ runner.temp }}/bevy-meta
           BEVY_WEBSITE_DIR: ${{ runner.temp }}/bevy-website

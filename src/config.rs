@@ -497,10 +497,6 @@ fn is_bevy_engine_crate(name: &str) -> bool {
         || (name.starts_with("bevy_") && (name.ends_with("_derive") || name.ends_with("_macros")))
 }
 
-fn is_bevy_star_crate(name: &str) -> bool {
-    name.replace('-', "_").starts_with("bevy_")
-}
-
 /// Cargo workspaces keep their lockfile at the workspace root, so walk up.
 fn detect_bevy_version(project_root: &Path) -> Detected {
     let mut directory = project_root.to_path_buf();
@@ -516,10 +512,7 @@ fn detect_bevy_version(project_root: &Path) -> Detected {
                     note: None,
                 };
             }
-            let mut candidates = lock_candidates(&text, is_bevy_engine_crate);
-            if candidates.is_empty() {
-                candidates = lock_candidates(&text, is_bevy_star_crate);
-            }
+            let candidates = lock_candidates(&text, is_bevy_engine_crate);
             if let Some(detected) =
                 detected_from_candidates(candidates, lock_path.display().to_string())
             {
@@ -548,10 +541,7 @@ fn detect_bevy_version(project_root: &Path) -> Detected {
                     note: None,
                 };
             }
-            let mut candidates = manifest_candidates(&text, is_bevy_engine_crate);
-            if candidates.is_empty() {
-                candidates = manifest_candidates(&text, is_bevy_star_crate);
-            }
+            let candidates = manifest_candidates(&text, is_bevy_engine_crate);
             if let Some(detected) = detected_from_candidates(
                 candidates,
                 format!("{} (requested range)", manifest.display()),
@@ -929,6 +919,20 @@ version = "0.20.0"
         assert!(note.contains("multiple versions"), "{note}");
         assert!(note.contains("bevy_ecs 0.20.1"), "{note}");
         assert!(note.contains("bevy_app 0.20.0"), "{note}");
+    }
+
+    #[test]
+    fn this_crate_is_not_treated_as_a_bevy_engine_crate() {
+        let dir = project_with(&[(
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "bevy-manual-mcp"
+version = "0.5.0"
+"#,
+        )]);
+        let detected = detect_bevy_version(dir.path());
+        assert_eq!(detected.version, None);
     }
 
     #[test]
