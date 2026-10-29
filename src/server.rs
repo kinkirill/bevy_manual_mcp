@@ -1982,6 +1982,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         config.log("Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
     } else if !config.offline
         && let Some(version) = config.bevy_version.clone()
+        && archive::resolve_version_dir(&config.data_dir, &version).is_none()
     {
         let data_dir = config.data_dir.clone();
         let fetch_version = version.clone();

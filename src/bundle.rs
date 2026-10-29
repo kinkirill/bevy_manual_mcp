@@ -206,7 +206,13 @@ pub fn release_tags(version: &str) -> Vec<String> {
 /// installed under the exact corpus version from its manifest, and the loaders
 /// resolve same-minor corpora on demand.
 pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathBuf>> {
-    if crate::archive::resolve_version_dir(data_dir, version).is_some() && !force {
+    // An explicit fetch upgrades to the requested exact corpus. Same-minor
+    // fallback is a loader concern, not an "already installed" shortcut.
+    let exact = data_dir
+        .join("versions")
+        .join(version_dir_name(version))
+        .join(ARCHIVE_FILE);
+    if exact.is_file() && !force {
         return Ok(None);
     }
 
