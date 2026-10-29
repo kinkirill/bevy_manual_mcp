@@ -6,6 +6,7 @@
 
 mod archive;
 mod config;
+mod ingest;
 mod registry;
 mod server;
 mod status;
@@ -148,9 +149,18 @@ fn main() -> anyhow::Result<()> {
                 doc_dir: doc_dir
                     .as_ref()
                     .map(|path| path.display().to_string())
+                    .or_else(|| config.doc_dir.as_ref().map(|p| p.display().to_string()))
                     .or_else(|| meta.as_ref().and_then(|m| m.doc_dir.clone())),
-                website_dir: meta.as_ref().and_then(|m| m.website_dir.clone()),
-                examples_dir: meta.as_ref().and_then(|m| m.examples_dir.clone()),
+                website_dir: config
+                    .website_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .or_else(|| meta.as_ref().and_then(|m| m.website_dir.clone())),
+                examples_dir: config
+                    .examples_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .or_else(|| meta.as_ref().and_then(|m| m.examples_dir.clone())),
                 project_root: meta
                     .as_ref()
                     .and_then(|m| m.project_root.clone())
@@ -163,7 +173,32 @@ fn main() -> anyhow::Result<()> {
                 records_path.display(),
                 out_dir.display()
             );
-            let report = archive::build_from_ndjson(&records_path, &out_dir, &options)?;
+
+            let website = ingest::markdown::ingest_website(
+                config.website_dir.as_deref(),
+                Some(version.as_str()),
+            );
+            let examples = ingest::examples::ingest_examples(
+                config.examples_dir.as_deref(),
+                config.website_dir.as_deref(),
+                &version,
+            );
+            let error_codes = ingest::meta::ingest_error_codes(
+                config.errors_dir.as_deref(),
+                config.meta_dir.as_deref(),
+                &version,
+            );
+            eprintln!(
+                "[bevy-mcp] supplemental sources: website={}, examples={}, error_codes={}",
+                website.len(),
+                examples.len(),
+                error_codes.len()
+            );
+            let mut inputs = archive::read_ndjson(&records_path)?;
+            inputs.extend(website);
+            inputs.extend(examples);
+            inputs.extend(error_codes);
+            let report = archive::build(inputs, &out_dir, &options)?;
             println!("# corpus built");
             println!();
             println!("- records: {}", report.records);

@@ -363,19 +363,20 @@ same machine, same operation (`App::add_systems`, 3 hits in both):
 |---|---:|---:|
 | time to answer from process start | **7,465 ms** | **7.6–11.1 ms** |
 | peak RSS | **1,195 MB** | **50 MB** |
-| corpus file on disk | 189 MB NDJSON + 120 MB FlexSearch dump | **112.9 MB** `corpus.rkyv` |
-| validated load (`bytecheck`, 113 MB) | n/a (JSON parse is the load) | **5–7 ms** |
+| corpus file on disk | 189 MB NDJSON + 120 MB FlexSearch dump | **117.0 MB** `corpus.rkyv` |
+| validated load (`bytecheck`, 117 MB) | n/a (JSON parse is the load) | **6–8 ms** |
 | exact symbol keys | 653,264 | **653,264 (exact match)** |
-| build time from NDJSON | n/a (parsed at every start) | 4.8 s, one-off |
+| build time from NDJSON + sources | n/a (parsed at every start) | 4.2 s, one-off |
 
 The TypeScript number is the documented 16.5 s cold-start baseline's warm-cache
 counterpart (7.5 s with the page cache populated); the Rust number was also
 measured after `posix_fadvise(DONTNEED)`, so it is not relying on the
-just-written file being hot. The archive was built from `records.ndjson`,
-which contains the 249,353 rustdoc records; the TypeScript index additionally
-merges 3,389 Book/guide records, 13 learning examples and 6 metadata records
-at load time (252,761 total). Those arrive with the ingest step (§11 step 6),
-not with the archive format.
+just-written file being hot. The archive contains the complete corpus: **252,761 records**, matching the
+TypeScript index exactly — 249,353 rustdoc + 3,389 website + 13 learn-examples
++ 6 error codes — with identical `by_source` and `by_kind` counts. Website
+markdown, Book/learning examples and vendored error codes are ingested by the
+Rust builder. Parsing rustdoc HTML for local rebuilds remains step 6; the
+published corpus is compiled from NDJSON, which is the canonical form.
 
 Consequences recorded:
 

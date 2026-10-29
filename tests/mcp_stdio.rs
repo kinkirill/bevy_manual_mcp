@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_bevy-mcp");
 const TIMEOUT: Duration = Duration::from_secs(20);
-const CLEAR_ENV: [&str; 8] = [
+const CLEAR_ENV: [&str; 12] = [
     "BEVY_VERSION",
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
@@ -19,6 +19,10 @@ const CLEAR_ENV: [&str; 8] = [
     "BEVY_MCP_OFFLINE",
     "BEVY_MCP_MAX_RESULTS",
     "BEVY_MCP_DEBUG",
+    "BEVY_WEBSITE_DIR",
+    "BEVY_EXAMPLES_DIR",
+    "BEVY_META_DIR",
+    "BEVY_ERRORS_DIR",
     "INIT_CWD",
 ];
 

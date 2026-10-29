@@ -23,6 +23,12 @@ pub struct Config {
     pub version_source: Option<String>,
     pub version_note: Option<String>,
     pub data_dir: PathBuf,
+    pub doc_dir: Option<PathBuf>,
+    pub website_dir: Option<PathBuf>,
+    pub examples_dir: Option<PathBuf>,
+    pub meta_dir: Option<PathBuf>,
+    pub errors_dir: Option<PathBuf>,
+    pub bevy_src_dir: Option<PathBuf>,
     pub offline: bool,
     pub debug: bool,
     pub max_results: usize,
@@ -37,6 +43,12 @@ struct ConfigFile {
     /// Older configs spelled it `version`.
     version: Option<String>,
     data_dir: Option<String>,
+    doc_dir: Option<String>,
+    website_dir: Option<String>,
+    examples_dir: Option<String>,
+    meta_dir: Option<String>,
+    errors_dir: Option<String>,
+    bevy_src_dir: Option<String>,
     offline: Option<bool>,
     debug: Option<bool>,
     max_results: Option<u32>,
@@ -80,7 +92,7 @@ impl Config {
                     .ok()
                     .map(|v| resolve_against(&v, &config_dir))
             })
-            .unwrap_or(initial_root);
+            .unwrap_or_else(|| initial_root.clone());
         let project_root = absolutize(&project_root);
 
         let explicit = match env::var("BEVY_VERSION") {
@@ -111,6 +123,52 @@ impl Config {
             })
             .unwrap_or_else(|| default_data_dir(&project_root, &config_dir));
 
+        let from_file = |path: &Option<String>| {
+            path.as_deref()
+                .map(|value| resolve_against(value, &config_dir))
+        };
+        let env_dir = |key: &str| {
+            env::var(key)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| resolve_against(&value, &config_dir))
+        };
+        let bevy_src_dir = first_existing_dir([
+            env_dir("BEVY_SRC_DIR"),
+            from_file(&file.bevy_src_dir),
+            detected
+                .version
+                .as_deref()
+                .map(|version| project_root.join(format!("bevy-src-v{version}"))),
+            Some(project_root.join("bevy")),
+        ]);
+        let website_dir = first_existing_dir([
+            env_dir("BEVY_WEBSITE_DIR"),
+            from_file(&file.website_dir),
+            Some(initial_root.join("vendor").join("bevy-website")),
+            Some(initial_root.join("bevy-website")),
+            home_dir().map(|home| home.join("bevy-website")),
+        ]);
+        let examples_dir = first_existing_dir([
+            env_dir("BEVY_EXAMPLES_DIR"),
+            from_file(&file.examples_dir),
+            bevy_src_dir.as_ref().map(|dir| dir.join("examples")),
+        ]);
+        let errors_dir = first_existing_dir([
+            env_dir("BEVY_ERRORS_DIR"),
+            from_file(&file.errors_dir),
+            bevy_src_dir.as_ref().map(|dir| dir.join("errors")),
+        ]);
+        let meta_dir = first_existing_dir([
+            env_dir("BEVY_META_DIR"),
+            from_file(&file.meta_dir),
+            Some(initial_root.join("vendor").join("bevy-meta")),
+        ]);
+        let doc_dir = find_doc_root(
+            &project_root,
+            env_dir("BEVY_DOC_DIR").or_else(|| from_file(&file.doc_dir)),
+        );
+
         let offline = env::var("BEVY_MCP_OFFLINE")
             .ok()
             .map(|v| v == "1")
@@ -134,6 +192,12 @@ impl Config {
             version_source: detected.source,
             version_note: detected.note,
             data_dir,
+            doc_dir,
+            website_dir,
+            examples_dir,
+            meta_dir,
+            errors_dir,
+            bevy_src_dir,
             offline,
             debug,
             max_results,
@@ -193,6 +257,27 @@ fn default_data_dir(project_root: &Path, config_dir: &Path) -> PathBuf {
         Some(home) => home.join(".cache").join("bevy-mcp").join("data"),
         None => project_root.join(".bevy-mcp").join("data"),
     }
+}
+
+fn first_existing_dir<const N: usize>(candidates: [Option<PathBuf>; N]) -> Option<PathBuf> {
+    candidates.into_iter().flatten().find(|path| path.is_dir())
+}
+
+fn find_doc_root(project_root: &Path, override_dir: Option<PathBuf>) -> Option<PathBuf> {
+    let mut candidates = vec![override_dir, Some(project_root.join("target").join("doc"))];
+    if let Ok(entries) = fs::read_dir(project_root.join("target")) {
+        for entry in entries.flatten() {
+            if entry.file_name() != "doc" && entry.path().is_dir() {
+                candidates.push(Some(entry.path().join("doc")));
+            }
+        }
+    }
+    candidates.into_iter().flatten().find(|path| {
+        path.is_dir()
+            && fs::read_dir(path)
+                .map(|mut entries| entries.next().is_some())
+                .unwrap_or(false)
+    })
 }
 
 fn home_dir() -> Option<PathBuf> {

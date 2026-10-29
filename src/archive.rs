@@ -270,86 +270,86 @@ pub struct BuildReport {
 }
 
 #[derive(SerdeDeserialize, Debug, Clone)]
-struct RawExample {
+pub struct RawExample {
     #[serde(default)]
-    lang: String,
+    pub lang: String,
     #[serde(default)]
-    code: String,
+    pub code: String,
     #[serde(default)]
-    compile_fail: bool,
+    pub compile_fail: bool,
     #[serde(default)]
-    ignored: bool,
+    pub ignored: bool,
     #[serde(default)]
-    scraped: bool,
+    pub scraped: bool,
     #[serde(default)]
-    source_file: Option<String>,
+    pub source_file: Option<String>,
 }
 
-#[derive(SerdeDeserialize, Debug, Clone)]
-struct RawRecord {
+#[derive(SerdeDeserialize, Debug, Clone, Default)]
+pub struct RecordInput {
     #[serde(default)]
-    id: Option<String>,
+    pub id: Option<String>,
     #[serde(default)]
-    source: String,
+    pub source: String,
     #[serde(default)]
-    kind: String,
+    pub kind: String,
     #[serde(default)]
-    name: String,
+    pub name: String,
     #[serde(default)]
-    full_path: String,
+    pub full_path: String,
     #[serde(default)]
-    docs: String,
+    pub docs: String,
     #[serde(default)]
-    signature: String,
+    pub signature: String,
     #[serde(default)]
-    module: String,
+    pub module: String,
     #[serde(default)]
-    file: String,
+    pub file: String,
     #[serde(default)]
-    owner: Option<String>,
+    pub owner: Option<String>,
     #[serde(default, rename = "crate")]
-    crate_name: Option<String>,
+    pub crate_name: Option<String>,
     #[serde(default)]
-    source_ref: Option<String>,
+    pub source_ref: Option<String>,
     #[serde(default)]
-    bevy_version: Option<String>,
+    pub bevy_version: Option<String>,
     #[serde(default)]
-    title: Option<String>,
+    pub title: Option<String>,
     #[serde(default)]
-    defaults: Option<String>,
+    pub defaults: Option<String>,
     #[serde(default)]
-    examples: Option<Vec<RawExample>>,
+    pub examples: Option<Vec<RawExample>>,
     #[serde(default)]
-    heading: Option<String>,
+    pub heading: Option<String>,
     #[serde(default)]
-    breadcrumb: Option<Vec<String>>,
+    pub breadcrumb: Option<Vec<String>>,
     #[serde(default)]
-    line_start: Option<u32>,
+    pub line_start: Option<u32>,
     #[serde(default)]
-    draft: bool,
+    pub draft: bool,
     #[serde(default)]
-    version: Option<String>,
+    pub version: Option<String>,
     #[serde(default)]
-    from_version: Option<String>,
+    pub from_version: Option<String>,
     #[serde(default)]
-    to_version: Option<String>,
+    pub to_version: Option<String>,
     #[serde(default)]
-    pr: Option<u32>,
+    pub pr: Option<u32>,
     #[serde(default)]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(default)]
-    code: Option<String>,
+    pub code: Option<String>,
     #[serde(default)]
-    file_abs: Option<String>,
+    pub file_abs: Option<String>,
     #[serde(default)]
-    line_count: Option<u32>,
+    pub line_count: Option<u32>,
     #[serde(default)]
-    categories: Option<Vec<String>>,
+    pub categories: Option<Vec<String>>,
     #[serde(default)]
-    required_features: Option<Vec<String>>,
+    pub required_features: Option<Vec<String>>,
 }
 
-impl RawRecord {
+impl RecordInput {
     fn hash_id(&self) -> String {
         if let Some(id) = &self.id
             && !id.is_empty()
@@ -402,14 +402,14 @@ fn raw_id(
         .collect()
 }
 
-fn is_legacy_tuple_field(record: &RawRecord) -> bool {
+fn is_legacy_tuple_field(record: &RecordInput) -> bool {
     record.source == "rustdoc"
         && record.kind == "field"
         && !record.name.is_empty()
         && record.name.chars().all(|c| c.is_ascii_digit())
 }
 
-fn merge_raw(existing: &mut RawRecord, incoming: RawRecord) -> Result<()> {
+fn merge_raw(existing: &mut RecordInput, incoming: RecordInput) -> Result<()> {
     if existing.identity() != incoming.identity() {
         bail!(
             "record id collision between different API identities: {}",
@@ -485,28 +485,36 @@ impl Interner {
     }
 }
 
-/// Compile NDJSON into `corpus.rkyv` plus a hash manifest.
-pub fn build_from_ndjson(
-    input: &Path,
-    out_dir: &Path,
-    options: &BuildOptions,
-) -> Result<BuildReport> {
-    let started = std::time::Instant::now();
+/// Read the canonical NDJSON record stream.
+pub fn read_ndjson(input: &Path) -> Result<Vec<RecordInput>> {
     let file = File::open(input)
         .with_context(|| format!("cannot open records file {}", input.display()))?;
     let reader = BufReader::new(file);
-
-    let mut raw: Vec<RawRecord> = Vec::new();
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    let mut duplicates_merged = 0usize;
-
+    let mut inputs: Vec<RecordInput> = Vec::new();
     for (line_number, line) in reader.lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let record: RawRecord = serde_json::from_str(&line)
+        let record: RecordInput = serde_json::from_str(&line)
             .with_context(|| format!("{}:{}", input.display(), line_number + 1))?;
+        inputs.push(record);
+    }
+    Ok(inputs)
+}
+
+/// Compile any set of records (rustdoc NDJSON plus ingested sources).
+pub fn build(
+    inputs: Vec<RecordInput>,
+    out_dir: &Path,
+    options: &BuildOptions,
+) -> Result<BuildReport> {
+    let started = std::time::Instant::now();
+    let mut raw: Vec<RecordInput> = Vec::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut duplicates_merged = 0usize;
+
+    for record in inputs {
         if is_legacy_tuple_field(&record) {
             continue;
         }
@@ -735,7 +743,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn build_symbol_maps(
-    records: &[RawRecord],
+    records: &[RecordInput],
 ) -> (HashMap<String, Vec<u32>>, HashMap<String, Vec<u32>>) {
     let mut symbols: HashMap<String, Vec<u32>> = HashMap::new();
     let mut tokens: HashMap<String, Vec<u32>> = HashMap::new();

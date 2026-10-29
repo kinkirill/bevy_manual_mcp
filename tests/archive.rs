@@ -8,17 +8,23 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_bevy-mcp");
-const CLEAR_ENV: [&str; 7] = [
+const CLEAR_ENV: [&str; 11] = [
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
     "BEVY_MCP_CONFIG",
     "BEVY_MCP_OFFLINE",
     "BEVY_MCP_MAX_RESULTS",
     "BEVY_MCP_DEBUG",
+    "BEVY_WEBSITE_DIR",
+    "BEVY_EXAMPLES_DIR",
+    "BEVY_META_DIR",
+    "BEVY_ERRORS_DIR",
     "INIT_CWD",
 ];
 
 fn command(data_dir: &Path) -> Command {
+    let empty = data_dir.join("no-sources");
+    let _ = fs::create_dir_all(&empty);
     let mut command = Command::new(BIN);
     for key in CLEAR_ENV {
         command.env_remove(key);
@@ -26,7 +32,12 @@ fn command(data_dir: &Path) -> Command {
     command
         .env("BEVY_VERSION", "9.9.9")
         .env("BEVY_MCP_DATA_DIR", data_dir)
-        .env("BEVY_MCP_OFFLINE", "1");
+        .env("BEVY_MCP_OFFLINE", "1")
+        // Keep the host checkout's vendor sources out of the fixture build.
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_EXAMPLES_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty);
     command
 }
 
@@ -246,5 +257,88 @@ fn truncated_archive_is_rejected_instead_of_read() {
     assert!(
         stderr.contains("failed validation") || stderr.contains("validation"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn build_ingests_website_examples_and_error_codes() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let data_dir = dir.path().join("data");
+    let out_dir = data_dir.join("versions/9.9.9");
+    fs::create_dir_all(&out_dir).expect("out dir");
+    fs::write(
+        out_dir.join("records.ndjson"),
+        serde_json::json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": "Widget",
+            "full_path": "demo::Widget",
+            "crate": "demo",
+            "module": "demo",
+            "signature": "pub struct Widget;",
+            "docs": "A widget.",
+            "file": "demo/struct.Widget.html"
+        })
+        .to_string(),
+    )
+    .expect("records");
+
+    let site = dir.path().join("site");
+    fs::create_dir_all(site.join("content/learn/book")).expect("book dir");
+    fs::write(
+        site.join("content/learn/book/intro.md"),
+        "+++\ntitle = \"Introduction\"\n+++\nThe Book introduction body.",
+    )
+    .expect("book page");
+    fs::create_dir_all(site.join("content/foundation")).expect("foundation dir");
+    fs::write(
+        site.join("content/foundation/team.md"),
+        "+++\ntitle = \"Team\"\n+++\nFoundation prose is weighted out.",
+    )
+    .expect("foundation page");
+    fs::create_dir_all(site.join("learning-code-examples/examples")).expect("examples dir");
+    fs::write(
+        site.join("learning-code-examples/examples/demo.rs"),
+        "//! A learning example.\nfn main() {}\n",
+    )
+    .expect("example");
+
+    let meta = dir.path().join("meta");
+    fs::create_dir_all(meta.join("9.9.9/error-codes")).expect("meta dir");
+    fs::write(meta.join("9.9.9/error-codes/B0001.md"), "B0001 guide").expect("error code");
+
+    let output = command(&data_dir)
+        .env("BEVY_WEBSITE_DIR", &site)
+        .env("BEVY_META_DIR", &meta)
+        .args(["build", "--records"])
+        .arg(out_dir.join("records.ndjson"))
+        .arg("--out")
+        .arg(&out_dir)
+        .output()
+        .expect("run build");
+    assert!(
+        output.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("website=1"), "{stderr}");
+    assert!(stderr.contains("examples=1"), "{stderr}");
+    assert!(stderr.contains("error_codes=1"), "{stderr}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("- records: 4"), "{stdout}");
+
+    let status = command(&data_dir)
+        .arg("status")
+        .output()
+        .expect("run status");
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("`website`: 1"), "{stdout}");
+    assert!(stdout.contains("`learn-examples`: 1"), "{stdout}");
+    assert!(stdout.contains("`bevy-meta`: 1"), "{stdout}");
+    assert!(
+        !stdout.contains("foundation"),
+        "foundation record leaked: {stdout}"
     );
 }
