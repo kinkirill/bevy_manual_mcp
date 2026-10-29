@@ -21,8 +21,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::analysis::{perf, report, systems};
 use crate::archive::{self, LoadedCorpus};
 use crate::config::Config;
+use crate::features;
 use crate::format;
 use crate::registry::Registry;
 use crate::search::{self, SearchFilters, SearchState};
@@ -224,6 +226,49 @@ impl BevyMcp {
     )]
     async fn bevy_indexed_versions(&self) -> CallToolResult {
         let (text, structured) = status::versions(&self.config, &self.registry);
+        with_structured(text, structured)
+    }
+
+    /// Check which Bevy features a project enables.
+    #[tool(
+        name = "bevy_check_manifest",
+        description = "Checks which Bevy features are enabled in the project's Cargo.toml and whether specific symbols or subcrates are available. Use this when writing code to verify that types, plugins, or systems you reference are actually available given the project's feature flags. Returns a clear yes/no for each check with the reason why it is available or not. Uses `cargo metadata --offline --locked` when the project resolves and falls back to parsing Cargo.toml otherwise."
+    )]
+    async fn bevy_check_manifest(
+        &self,
+        Parameters(params): Parameters<CheckManifestParams>,
+    ) -> CallToolResult {
+        match self.run_check_manifest(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Validate system signatures against Bevy's access rules.
+    #[tool(
+        name = "bevy_validate_systems",
+        description = "Lints one or more Rust `fn` items against Bevy's system access rules (R1-R5). Catches the class of bug that compiles cleanly but panics at runtime: B0001 (conflicting Query refs) and B0002 (Res/ResMut and &mut World conflicts). Parses with `syn`, so a `fn` inside a comment or string is ignored, and tuple queries such as Query<(&mut A, &B)> are checked per member. This is a syntax-level linter: it does not type-check, and B0001/B0002 are Bevy runtime panics, not compile errors. Reports analysis_complete: false when a parameter type or filter is not understood."
+    )]
+    async fn bevy_validate_systems(
+        &self,
+        Parameters(params): Parameters<ValidateSystemsParams>,
+    ) -> CallToolResult {
+        match self.run_validate_systems(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Performance advice and anti-pattern detection.
+    #[tool(
+        name = "bevy_perf_advisor",
+        description = "Provides performance guidance for Bevy systems. With a topic argument, returns the exact API symbols to use. With code, detects anti-patterns such as manual is_changed/is_added checks that prevent archetype optimisation. Today the advice comes from built-in topics (change-detection, archetypes, scheduling) and the report says so; it is not yet derived from version-specific metadata."
+    )]
+    async fn bevy_perf_advisor(
+        &self,
+        Parameters(params): Parameters<PerfAdvisorParams>,
+    ) -> CallToolResult {
+        let (text, structured) = self.run_perf_advisor(params);
         with_structured(text, structured)
     }
 }
@@ -608,6 +653,368 @@ impl BevyMcp {
             }),
         ))
     }
+
+    fn run_check_manifest(&self, params: CheckManifestParams) -> anyhow::Result<(String, Value)> {
+        let version = self.config.bevy_version.clone().ok_or_else(|| {
+            anyhow!(
+                "no Bevy version detected; set BEVY_VERSION or point BEVY_PROJECT_ROOT at a Cargo project"
+            )
+        })?;
+        let data = features::load(self.config.meta_dir.as_deref(), &version).ok_or_else(|| {
+            anyhow!(
+                "No feature graph available for Bevy {version}. Expected vendor/bevy-meta/{version}/features.json (set BEVY_META_DIR)."
+            )
+        })?;
+        let graph_version = data.bevy_version.clone().unwrap_or_else(|| version.clone());
+        let enabled = features::enabled(&self.config.project_root, &data);
+        let source = enabled.source;
+        let no_manifest = !enabled.manifest_found;
+
+        if let Some(query) = params
+            .check
+            .as_deref()
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+        {
+            let verdict = features::check(query, &data, &enabled.transitive);
+            let mut text = format!("## Check: `{query}`\n\n{}\n\n", verdict.text);
+            text.push_str(&format!(
+                "- Feature graph: Bevy {graph_version}\n- Feature source: {source}\n"
+            ));
+            if no_manifest {
+                text.push_str(
+                    "- No Cargo.toml found in the project root; no features are enabled.\n",
+                );
+            }
+            return Ok((
+                text,
+                json!({
+                    "query": query,
+                    "available": verdict.available,
+                    "reason": verdict.reason,
+                    "gating_feature": verdict.gating_feature,
+                    "bevy_version": graph_version,
+                    "source": source,
+                    "no_manifest": no_manifest,
+                }),
+            ));
+        }
+
+        let all: Vec<String> = data.features.keys().cloned().collect();
+        let disabled: Vec<String> = all
+            .iter()
+            .filter(|feature| !enabled.transitive.contains(feature))
+            .cloned()
+            .collect();
+
+        let mut text = format!("## Bevy {graph_version} — Feature Report\n\n");
+        if no_manifest {
+            text.push_str(
+                "> No Cargo.toml found in the project root. Showing known features for this version.\n\n",
+            );
+        } else {
+            text.push_str(&format!("Feature source: {source}.\n"));
+        }
+        text.push_str(&format!(
+            "**Explicit**: {}\n",
+            join_or_none(&enabled.explicit)
+        ));
+        text.push_str(&format!(
+            "**Transitive**: {}\n\n",
+            join_or_none(&enabled.transitive)
+        ));
+        text.push_str("| Feature | Explicit | Transitive | Status |\n");
+        text.push_str("|---------|----------|------------|--------|\n");
+        for feature in &all {
+            let explicit = enabled.explicit.contains(feature);
+            let transitive = enabled.transitive.contains(feature);
+            let status = if explicit {
+                "explicit"
+            } else if transitive {
+                "transitive"
+            } else {
+                "off"
+            };
+            text.push_str(&format!(
+                "| `{feature}` | {} | {} | {status} |\n",
+                if explicit { "✓" } else { "-" },
+                if transitive { "✓" } else { "-" }
+            ));
+        }
+        if let Some(gates) = &data.plugin_gates
+            && !gates.is_empty()
+        {
+            text.push_str("\n### Plugin Gates\n\n");
+            for gate in gates.iter().take(20) {
+                let is_enabled = enabled.transitive.contains(&gate.requires_feature);
+                text.push_str(&format!(
+                    "- `{}` requires `[{}]`: {}\n",
+                    gate.plugin,
+                    gate.requires_feature,
+                    if is_enabled {
+                        "✓ enabled"
+                    } else {
+                        "✗ disabled"
+                    }
+                ));
+            }
+            if gates.len() > 20 {
+                text.push_str(&format!("\n({} more gates not shown.)\n", gates.len() - 20));
+            }
+        }
+
+        Ok((
+            text,
+            json!({
+                "bevy_version": graph_version,
+                "source": source,
+                "no_manifest": no_manifest,
+                "default_features": enabled.default_features,
+                "explicit": enabled.explicit,
+                "transitive": enabled.transitive,
+                "disabled": disabled,
+            }),
+        ))
+    }
+
+    fn run_validate_systems(
+        &self,
+        params: ValidateSystemsParams,
+    ) -> anyhow::Result<(String, Value)> {
+        let analysis = systems::analyze(&params.code);
+        if let Some(error) = &analysis.parse_error {
+            bail!(
+                "Could not parse the provided Rust code: {error}\n\nPass one or more `fn` items, a whole file, or system signatures."
+            );
+        }
+        if analysis.systems.is_empty() {
+            bail!("No fn items found in the provided code.");
+        }
+
+        let text = report::format(&analysis, self.config.bevy_version.as_deref());
+        let findings: Vec<Value> = analysis
+            .findings
+            .iter()
+            .map(|finding| {
+                json!({
+                    "rule": finding.rule,
+                    "severity": finding.severity,
+                    "resource_type": finding.resource_type,
+                    "param_a": finding.param_a,
+                    "param_b": finding.param_b,
+                    "description": finding.description,
+                    "error_code": finding.error_code,
+                    "system": finding.system,
+                })
+            })
+            .collect();
+        let analysed: Vec<Value> = analysis
+            .systems
+            .iter()
+            .map(|system| {
+                json!({
+                    "name": system.name,
+                    "params": system.params,
+                    "accesses": system
+                        .accesses
+                        .iter()
+                        .map(|access| json!({
+                            "kind": access.kind,
+                            "target": access.target,
+                            "mutable": access.mutable,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        Ok((
+            text,
+            json!({
+                "bevy_version": self.config.bevy_version,
+                "systems_checked": analysis.systems.len(),
+                "findings_count": analysis.findings.len(),
+                "findings": findings,
+                "systems": analysed,
+                "analysis_complete": analysis.complete(),
+                "unsupported": analysis.unsupported,
+                "type_checked": false,
+            }),
+        ))
+    }
+
+    fn run_perf_advisor(&self, params: PerfAdvisorParams) -> (String, Value) {
+        let version = self.config.bevy_version.clone();
+        let vendored = version
+            .as_deref()
+            .map(|version| perf::load_vendored(self.config.meta_dir.as_deref(), version))
+            .unwrap_or_default();
+
+        let mut topics = vendored.clone();
+        for topic in perf::builtin_topics() {
+            if !topics.iter().any(|known| known.topic == topic.topic) {
+                topics.push(topic);
+            }
+        }
+        let topic_source = |topic: &perf::PerfTopic| {
+            if vendored.iter().any(|known| known.topic == topic.topic) {
+                "vendored"
+            } else {
+                "builtin"
+            }
+        };
+        let limit = params.limit.unwrap_or(8).clamp(1, 20);
+        let overall_source = if vendored.is_empty() {
+            "builtin"
+        } else if vendored.len() == topics.len() {
+            "vendored"
+        } else {
+            "mixed"
+        };
+        let anti_patterns = params
+            .code
+            .as_deref()
+            .map(|code| perf::detect(params.topic.as_deref(), code))
+            .unwrap_or_default();
+        let anti_patterns_json: Vec<Value> = anti_patterns
+            .iter()
+            .map(|finding| {
+                json!({
+                    "pattern": finding.pattern,
+                    "suggestion": finding.suggestion,
+                })
+            })
+            .collect();
+        let available: Vec<Value> = topics
+            .iter()
+            .take(limit)
+            .map(|topic| {
+                json!({
+                    "topic": topic.topic,
+                    "source": topic_source(topic),
+                    "rationale": topic.rationale,
+                })
+            })
+            .collect();
+
+        if let Some(name) = params.topic.as_deref() {
+            let Some(matched) = topics.iter().find(|topic| topic.topic == name) else {
+                let names: Vec<&str> = topics.iter().map(|topic| topic.topic.as_str()).collect();
+                let text = format!(
+                    "## Bevy Performance Advisor\n\n⚠️ Topic `{name}` not found.\n\n**Available topics**: {}\n",
+                    names.join(", ")
+                );
+                return (
+                    text,
+                    json!({
+                        "topic": name,
+                        "bevy_version": version,
+                        "found": false,
+                        "source": overall_source,
+                        "available_topics": names,
+                        "anti_patterns": anti_patterns_json,
+                    }),
+                );
+            };
+            let source = topic_source(matched);
+            let mut text = format!(
+                "## Bevy Performance Advisor\n\n### Topic: {}\n\n",
+                matched.topic
+            );
+            if let Some(rationale) = &matched.rationale {
+                text.push_str(&format!("**Rationale**: {rationale}\n\n"));
+            }
+            if !matched.symptoms.is_empty() {
+                text.push_str("**Symptoms**:\n");
+                for symptom in &matched.symptoms {
+                    text.push_str(&format!("- {symptom}\n"));
+                }
+                text.push('\n');
+            }
+            if !matched.recommend.is_empty() {
+                text.push_str("**Use these symbols**:\n");
+                for symbol in &matched.recommend {
+                    text.push_str(&format!("- `{symbol}`\n"));
+                }
+                text.push('\n');
+            }
+            if !matched.avoid.is_empty() {
+                text.push_str("**Avoid these patterns**:\n");
+                for pattern in &matched.avoid {
+                    text.push_str(&format!("- {pattern}\n"));
+                }
+                text.push('\n');
+            }
+            if params.code.is_some() {
+                if anti_patterns_json.is_empty() {
+                    text.push_str("No anti-patterns detected in the provided code.\n\n");
+                } else {
+                    text.push_str("### Anti-Patterns Detected\n\n");
+                    for finding in &anti_patterns {
+                        text.push_str(&format!("- **Found**: `{}`\n", finding.pattern));
+                        text.push_str(&format!("  - **Suggestion**: {}\n", finding.suggestion));
+                    }
+                    text.push('\n');
+                }
+            }
+            let note = if source == "builtin" {
+                " Built-in guidance is not pinned to a Bevy release; no version-specific perf metadata was loaded."
+            } else {
+                ""
+            };
+            text.push_str(&format!("> Source: {source}.{note}\n"));
+            return (
+                text,
+                json!({
+                    "topic": matched.topic,
+                    "bevy_version": version,
+                    "found": true,
+                    "source": source,
+                    "rationale": matched.rationale,
+                    "symptoms": matched.symptoms,
+                    "recommend": matched.recommend,
+                    "avoid": matched.avoid,
+                    "anti_patterns": anti_patterns_json,
+                }),
+            );
+        }
+
+        let mut text = String::from("## Bevy Performance Advisor\n\n**Available topics**:\n");
+        for topic in topics.iter().take(limit) {
+            let summary = topic
+                .rationale
+                .as_deref()
+                .map(|rationale| {
+                    let short: String = rationale.chars().take(100).collect();
+                    format!(" — {short}")
+                })
+                .unwrap_or_default();
+            text.push_str(&format!("- `{}`{summary}\n", topic.topic));
+        }
+        let note = if overall_source == "builtin" {
+            " Built-in guidance is not pinned to a Bevy release; no version-specific perf metadata was loaded."
+        } else {
+            ""
+        };
+        text.push_str(&format!("\n> Source: {overall_source}.{note}\n"));
+        (
+            text,
+            json!({
+                "bevy_version": version,
+                "found": true,
+                "source": overall_source,
+                "topics": available,
+                "anti_patterns": anti_patterns_json,
+            }),
+        )
+    }
+}
+
+fn join_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "(none)".to_string()
+    } else {
+        values.join(", ")
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -679,6 +1086,32 @@ struct CheckVersionParams {
     /// Accepted for compatibility; this build always queries crates.io.
     #[serde(default)]
     refresh: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CheckManifestParams {
+    /// Check a specific symbol, subcrate, or feature: "bevy_ui", "ui", "bevy::ui::Node", "DefaultPlugins". Omit to get the full manifest report.
+    #[serde(default)]
+    check: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ValidateSystemsParams {
+    /// One or more fn items to validate (e.g. "fn move_it(q: Query<&Transform>, mut r: ResMut<Assets<Mesh>>) {}"). A whole file or method signatures are accepted too.
+    code: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct PerfAdvisorParams {
+    /// Topic: change-detection, archetypes, scheduling.
+    #[serde(default)]
+    topic: Option<String>,
+    /// Optional system code to analyse for anti-patterns.
+    #[serde(default)]
+    code: Option<String>,
+    /// Max topics to list (default 8).
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -778,8 +1211,10 @@ impl ServerHandler for BevyMcp {
             .with_instructions(
                 "Version-accurate Bevy API docs, guides, examples and migration notes. \
                  Call bevy_index_status first to see which Bevy version is indexed. \
-                 The bevy:// resources expose individual API items, paginated listings \
-                 by kind/module/crate/owner/file, and the indexed-version table.",
+                 Use bevy_check_manifest before suggesting feature-gated APIs, and \
+                 bevy_validate_systems for a syntax-level B0001/B0002 lint (it does not \
+                 type-check). The bevy:// resources expose individual API items, paginated \
+                 listings by kind/module/crate/owner/file, and the indexed-version table.",
             )
     }
 

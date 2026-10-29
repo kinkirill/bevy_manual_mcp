@@ -705,3 +705,94 @@ Operational note: after rebuilding the binary, restart/reconnect the MCP server
 (`/mcp` reconnect or restart pi); a running server keeps its old executable
 mapped. The pi config no longer pins the local proxy, so a stopped proxy cannot
 break the version check.
+
+## 27. Step 4: manifest, system validation, perf advice
+
+Step 4 closes the three analysis tools. The server now reports **11 tools**;
+all three parse types instead of text, and all three say what they cannot do.
+
+### `bevy_check_manifest`
+
+`cargo metadata --offline --locked` is authoritative when the project resolves;
+otherwise the built-in `Cargo.toml` parser runs. The parked feature module had
+a real bug that only surfaced once it was wired: it returned on the **first**
+Bevy entry, so a workspace dependency named `bevy` shadowed a target-table
+alias and dropped that table's features. Fixed by merging every `bevy` entry
+across `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]` and
+`[target.*.…]`, including aliases and `workspace = true` inheritance. Features
+union; one `default-features = false` turns defaults off.
+
+The report keeps the TypeScript shape (full feature table, plugin gates,
+single `check` mode) and adds honest provenance: `source` says `cargo metadata`,
+`Cargo.toml` or `none`, and `no_manifest` means the file is missing, not merely
+that no Bevy dependency was found. A known-but-disabled feature now says
+"disabled" instead of the old, wrong "not in the feature graph".
+
+### `bevy_validate_systems`
+
+`syn` 2 replaces the bracket-stack parser. Input is parsed as a file first;
+snippets are retried as inherent methods and then as trait methods, so a bare
+signature (`fn f(…) ;`) is accepted and a method body works. `fn` inside a
+comment or string literal is not an item, which retires the old C-04 phantom
+system bug. Nested modules and both inherent and trait `impl`s are walked.
+
+Accesses are extracted from types, per member:
+
+- `Query<(&mut Transform, &Velocity)>` writes `Transform`, reads `Velocity`;
+- `Option<&T>`, `AnyOf<…>`, `Ref<T>` (read) and `Mut<T>` (write) are unwrapped;
+- `Single`/`Populated` use the same data/filter split as `Query`;
+- filter-only types (`With`, `Without`, `Added`, `Changed`, `Or`, tuples) never
+  become accesses — `Query<&A, With<B>>` touches `A`, not `B`;
+- `ParamSet` partitions its members into a group; members may conflict with
+  each other without a finding, but still conflict with outside parameters;
+- `Res`/`ResMut`, `NonSend`/`NonSendMut`, `Local`, events/messages, `Commands`,
+  `Deferred`, `In`, `&World` and `&mut World` are classified.
+
+Rules R1–R5 keep the TypeScript semantics and error codes (R1/R2 → B0001,
+R3/R4/R5 → B0002), with one deliberate fix: tuple members are compared
+independently, so `Query<(&mut A, &B)>` against `Query<&A>` is found, which the
+regex version missed. `With`/`Without` disjointness still suppresses a finding,
+including through `Or<…>` branches.
+
+Honesty gate: the analysis is a **syntax-level linter**. Any parameter, query
+item or filter it cannot classify is listed under `unsupported` and flips
+`analysis_complete` to `false`; unparsable input is a tool error. The result
+never claims type checking, and the report says B0001/B0002 are runtime panics,
+not compile errors. Intra-query duplicate borrows are not checked.
+
+Measured on the 0.20.0 feature graph and a realistic snippet:
+
+| system | result |
+|---|---|
+| `Query<(&mut Transform, &Speed), With<Player>>` + `Query<&Transform, Without<Player>>` | clean |
+| `Query<&mut Transform>` + `Query<&Transform>` | R1 / B0001 |
+| `ResMut<Time>` + `Res<Time>` | R3 / B0002 |
+| `Query<(&mut Health, &Armor)>` + `Query<&mut Health>` | R2 / B0001 |
+| `fn ghost(…)` inside `//` and `"…"` | not a system |
+
+### `bevy_perf_advisor`
+
+No `perf.json` is vendored, so the three built-in topics ported from
+`perf_advisor.ts` answer today: `change-detection`, `archetypes`, `scheduling`.
+Vendored data is preferred when present. `source` is reported per topic
+(`builtin`, `vendored` or `mixed`) and the text says built-in guidance is not
+pinned to a Bevy release. The `is_changed`/`is_added` anti-pattern detectors run
+for `change-detection` (and for code-only calls, which default to it).
+
+### Tests
+
+82 tests: 55 unit, 10 archive, 17 MCP. New coverage:
+
+- manifest fallback over aliases, target tables and workspace inheritance;
+  plugin gates; missing manifest; `no_manifest` versus "manifest without Bevy";
+- tuple mutability, filters-not-accesses, disjoint filters, ParamSet grouping,
+  R1–R5, phantom `fn` in a comment and string, signature-only snippets,
+  custom system params marking the analysis incomplete, unsupported syntax;
+- MCP fixtures that spawn the binary with a fake `vendor/bevy-meta/9.9.9`:
+  a `Cargo.toml` project without `src/` (so `cargo metadata` fails and the
+  parser fallback is exercised), and a project with a local path dependency
+  named `bevy` (so `cargo metadata --offline --locked` resolves and the
+  authoritative path is exercised), plus validate/perf round trips.
+
+`quote` and `syn` (`full`, `parsing`, `printing`) join the dependency set;
+`clippy -D warnings` is clean.

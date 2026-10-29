@@ -220,6 +220,13 @@ fn handshake_reports_server_identity_and_tools() {
         .collect();
     assert!(names.contains(&"bevy_index_status"), "tools: {names:?}");
     assert!(names.contains(&"bevy_indexed_versions"), "tools: {names:?}");
+    for name in [
+        "bevy_validate_systems",
+        "bevy_check_manifest",
+        "bevy_perf_advisor",
+    ] {
+        assert!(names.contains(&name), "missing {name}: {names:?}");
+    }
 }
 
 #[test]
@@ -727,4 +734,314 @@ fn resources_templates_and_completions_work() {
         .as_array()
         .expect("completion values");
     assert!(values.iter().any(|value| value == "9.9.9"), "{completion}");
+}
+
+fn write_feature_graph(meta: &Path) {
+    let dir = meta.join("9.9.9");
+    std::fs::create_dir_all(&dir).expect("meta dir");
+    std::fs::write(
+        dir.join("features.json"),
+        serde_json::to_string_pretty(&json!({
+            "bevy_version": "9.9.9",
+            "features": {
+                "bevy_ui": ["bevy_ui"],
+                "bevy_render": ["bevy_render"],
+                "default": ["bevy_render"]
+            },
+            "closure": {
+                "bevy_ui": ["bevy_ui"],
+                "bevy_render": ["bevy_render"],
+                "default": ["bevy_render"]
+            },
+            "default_features": ["bevy_render"],
+            "plugin_gates": [
+                { "plugin": "UiPlugin", "requires_feature": "bevy_ui" }
+            ]
+        }))
+        .expect("features json"),
+    )
+    .expect("write features");
+}
+
+/// A Cargo.toml without `src/` cannot resolve with `cargo metadata`, which is
+/// exactly the fallback path the tool must handle.
+fn write_project(root: &Path) -> std::path::PathBuf {
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).expect("project dir");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        r#"
+[package]
+name = "fixture-game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "9.9.9", default-features = false, features = ["bevy_ui"] }
+"#,
+    )
+    .expect("write manifest");
+    project
+}
+
+/// A path dependency named `bevy` gives `cargo metadata` something it can
+/// resolve offline, so the authoritative path is exercised, not the fallback.
+fn write_resolvable_project(root: &Path) -> std::path::PathBuf {
+    let fake = root.join("fake-bevy");
+    std::fs::create_dir_all(fake.join("src")).expect("fake bevy src");
+    std::fs::write(
+        fake.join("Cargo.toml"),
+        r#"
+[package]
+name = "bevy"
+version = "9.9.9"
+edition = "2021"
+
+[features]
+default = ["bevy_render"]
+bevy_render = []
+bevy_ui = []
+"#,
+    )
+    .expect("write fake bevy manifest");
+    std::fs::write(fake.join("src/lib.rs"), "").expect("write fake bevy lib");
+
+    let project = root.join("resolvable-project");
+    std::fs::create_dir_all(project.join("src")).expect("project src");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        r#"
+[package]
+name = "fixture-game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+b = { package = "bevy", path = "../fake-bevy", default-features = false, features = ["bevy_ui"] }
+"#,
+    )
+    .expect("write resolvable manifest");
+    std::fs::write(project.join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
+
+    let status = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(&project)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run cargo generate-lockfile");
+    assert!(status.success(), "cargo generate-lockfile failed");
+    project
+}
+
+#[test]
+fn check_manifest_falls_back_to_the_manifest_and_reports_gates() {
+    let dir = fixture();
+    let project = write_project(dir.path());
+    let meta = dir.path().join("meta");
+    write_feature_graph(&meta);
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_META_DIR", meta.to_str().expect("meta path")),
+            ("BEVY_PROJECT_ROOT", project.to_str().expect("project path")),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_check_manifest", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("Feature Report"), "{text}");
+    assert!(text.contains("bevy_ui"), "{text}");
+    assert!(text.contains("UiPlugin"), "{text}");
+
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["bevy_version"], "9.9.9");
+    assert_eq!(structured["source"], "Cargo.toml");
+    assert_eq!(structured["no_manifest"], false);
+    assert_eq!(structured["default_features"], false);
+    assert_eq!(structured["explicit"], json!(["bevy_ui"]));
+    let transitive = structured["transitive"].as_array().expect("transitive");
+    assert!(transitive.contains(&json!("bevy_ui")), "{transitive:?}");
+    assert!(
+        !transitive.contains(&json!("bevy_render")),
+        "{transitive:?}"
+    );
+    let disabled = structured["disabled"].as_array().expect("disabled");
+    assert!(disabled.contains(&json!("bevy_render")), "{disabled:?}");
+
+    let response = server.call_tool(
+        "bevy_check_manifest",
+        json!({ "check": "bevy::render::Mesh" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["available"], false);
+    assert_eq!(structured["gating_feature"], "bevy_render");
+
+    let response = server.call_tool("bevy_check_manifest", json!({ "check": "UiPlugin" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(response["result"]["structuredContent"]["available"], true);
+}
+
+#[test]
+fn check_manifest_prefers_cargo_metadata_when_the_project_resolves() {
+    let dir = fixture();
+    let project = write_resolvable_project(dir.path());
+    let meta = dir.path().join("meta");
+    write_feature_graph(&meta);
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_META_DIR", meta.to_str().expect("meta path")),
+            ("BEVY_PROJECT_ROOT", project.to_str().expect("project path")),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_check_manifest", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["source"], "cargo metadata");
+    assert_eq!(structured["no_manifest"], false);
+    assert_eq!(structured["explicit"], json!(["bevy_ui"]));
+    assert_eq!(structured["default_features"], false);
+    let transitive = structured["transitive"].as_array().expect("transitive");
+    assert!(transitive.contains(&json!("bevy_ui")), "{transitive:?}");
+    assert!(
+        !transitive.contains(&json!("bevy_render")),
+        "{transitive:?}"
+    );
+    assert!(!transitive.contains(&json!("default")), "{transitive:?}");
+
+    let response = server.call_tool("bevy_check_manifest", json!({ "check": "UiPlugin" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(response["result"]["structuredContent"]["available"], true);
+    assert_eq!(
+        response["result"]["structuredContent"]["source"],
+        "cargo metadata"
+    );
+}
+
+#[test]
+fn check_manifest_reports_a_missing_manifest() {
+    let dir = fixture();
+    let meta = dir.path().join("meta");
+    write_feature_graph(&meta);
+    let empty = dir.path().join("empty-project");
+    std::fs::create_dir_all(&empty).expect("empty project");
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_META_DIR", meta.to_str().expect("meta path")),
+            ("BEVY_PROJECT_ROOT", empty.to_str().expect("empty path")),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_check_manifest", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["no_manifest"], true);
+    assert_eq!(structured["source"], "none");
+    assert_eq!(structured["explicit"], json!([]));
+    assert_eq!(
+        structured["disabled"].as_array().expect("disabled").len(),
+        3
+    );
+}
+
+#[test]
+fn validate_systems_checks_tuple_accesses_and_ignores_phantoms() {
+    let dir = fixture();
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let code = r#"
+        fn bad(left: Query<&mut Transform>, right: Query<&Transform>) {}
+
+        fn good(
+            left: Query<(&mut Transform, &Velocity), With<Local>>,
+            right: Query<&Transform, Without<Local>>,
+        ) {}
+
+        // fn ghost(q: Query<&A>, r: Query<&mut A>) {}
+        const NOTE: &str = "fn phantom(q: Query<&mut B>) {}";
+    "#;
+    let response = server.call_tool("bevy_validate_systems", json!({ "code": code }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("Transform"), "{text}");
+    assert!(text.contains("does not type-check"), "{text}");
+
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["systems_checked"], 2);
+    assert_eq!(structured["findings_count"], 1);
+    assert_eq!(structured["analysis_complete"], true);
+    assert_eq!(structured["type_checked"], false);
+    let findings = structured["findings"].as_array().expect("findings");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["rule"], "R1");
+    assert_eq!(findings[0]["error_code"], "B0001");
+    assert_eq!(findings[0]["system"], "bad");
+}
+
+#[test]
+fn validate_systems_rejects_unparsable_code() {
+    let dir = fixture();
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_validate_systems",
+        json!({ "code": "fn broken(q: Query<&mut A> {" }),
+    );
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        tool_text(&response).contains("Could not parse"),
+        "{}",
+        tool_text(&response)
+    );
+}
+
+#[test]
+fn perf_advisor_reports_builtin_topics_and_anti_patterns() {
+    let dir = fixture();
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_perf_advisor",
+        json!({
+            "topic": "change-detection",
+            "code": "if q.get(entity).is_changed() { }"
+        }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("Changed<T>"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["source"], "builtin");
+    assert_eq!(structured["found"], true);
+    let anti_patterns = structured["anti_patterns"]
+        .as_array()
+        .expect("anti patterns");
+    assert!(
+        anti_patterns
+            .iter()
+            .any(|finding| finding["pattern"] == "is_changed()"),
+        "{anti_patterns:?}"
+    );
+
+    let response = server.call_tool("bevy_perf_advisor", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["source"], "builtin");
+    let topics = structured["topics"].as_array().expect("topics");
+    let names: Vec<&str> = topics
+        .iter()
+        .filter_map(|topic| topic["topic"].as_str())
+        .collect();
+    assert_eq!(names, vec!["change-detection", "archetypes", "scheduling"]);
 }

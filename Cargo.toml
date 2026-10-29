@@ -29,6 +29,7 @@ anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
 memmap2 = "0.9"
 percent-encoding = "2"
+quote = "1"
 rkyv = "=0.8.18"
 schemars = "1"
 tantivy = "=0.27.0"
@@ -37,6 +38,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
 sha2 = "0.11"
+syn = { version = "2", features = ["full", "parsing", "printing"] }
 tar = "0.4"
 ureq = "3"
 zstd = "0.14"

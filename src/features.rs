@@ -1,11 +1,8 @@
 //! Bevy feature graph, enabled-feature detection and symbol gating checks.
 //!
-//! WIP: complete and unit-tested, but not wired into the server yet.
-//! See `docs/step-4-handoff.md`.
-//!
-//! `cargo metadata` is authoritative when the project resolves; a Cargo.toml
-//! parser is the fallback (aliases, workspace inheritance, target tables and
-//! `default-features = false`).
+//! Backs `bevy_check_manifest`. `cargo metadata` is authoritative when the
+//! project resolves; a Cargo.toml parser is the fallback (aliases, workspace
+//! inheritance, target tables and `default-features = false`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -38,6 +35,9 @@ pub struct Enabled {
     pub explicit: Vec<String>,
     pub transitive: Vec<String>,
     pub default_features: bool,
+    /// Whether a `Cargo.toml` exists in the project root. A manifest without a
+    /// Bevy dependency is still a manifest; `no_manifest` means missing.
+    pub manifest_found: bool,
     pub source: &'static str,
 }
 
@@ -48,6 +48,7 @@ pub fn load(meta_dir: Option<&Path>, version: &str) -> Option<FeaturesData> {
 }
 
 pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
+    let manifest_found = project_root.join("Cargo.toml").is_file();
     let manual = parse_manifest(project_root);
     if let Some((features, default_features, source)) = cargo_metadata_features(project_root) {
         let explicit = manual
@@ -58,6 +59,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             explicit,
             transitive: features,
             default_features,
+            manifest_found: true,
             source,
         };
     }
@@ -69,6 +71,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
                 explicit,
                 transitive,
                 default_features,
+                manifest_found,
                 source: "Cargo.toml",
             }
         }
@@ -76,7 +79,12 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             explicit: Vec::new(),
             transitive: Vec::new(),
             default_features: true,
-            source: "none",
+            manifest_found,
+            source: if manifest_found {
+                "Cargo.toml (no bevy dependency)"
+            } else {
+                "none"
+            },
         },
     }
 }
@@ -84,13 +92,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
 /// Resolved features for the `bevy` package, via `cargo metadata`.
 fn cargo_metadata_features(root: &Path) -> Option<(Vec<String>, bool, &'static str)> {
     let output = Command::new("cargo")
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--offline",
-            "--locked",
-        ])
+        .args(["metadata", "--format-version", "1", "--offline", "--locked"])
         .current_dir(root)
         .output()
         .ok()?;
@@ -129,6 +131,10 @@ fn parse_manifest(root: &Path) -> Option<(Vec<String>, bool)> {
         .get("workspace")
         .and_then(|workspace| workspace.get("dependencies"));
 
+    let mut explicit: Vec<String> = Vec::new();
+    let mut default_features = true;
+    let mut found = false;
+
     let mut tables: Vec<&toml::Value> = Vec::new();
     for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
         if let Some(table) = parsed.get(key) {
@@ -155,10 +161,22 @@ fn parse_manifest(root: &Path) -> Option<(Vec<String>, bool)> {
             if !is_bevy {
                 continue;
             }
-            return dependency_features(entry, workspace_deps, name);
+            // Normal, dev, build and target tables can all name the same
+            // package (under different aliases); features merge, while a
+            // single `default-features = false` turns defaults off.
+            if let Some((features, defaults)) = dependency_features(entry, workspace_deps, name) {
+                explicit.extend(features);
+                default_features &= defaults;
+                found = true;
+            }
         }
     }
-    None
+    if !found {
+        return None;
+    }
+    explicit.sort();
+    explicit.dedup();
+    Some((explicit, default_features))
 }
 
 fn dependency_features(
@@ -254,7 +272,7 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
             reason: if is_enabled {
                 format!("\"{query}\" is enabled")
             } else {
-                format!("\"{query}\" is not in the feature graph")
+                format!("\"{query}\" is disabled")
             },
             gating_feature: None,
             text: format!(
@@ -263,7 +281,7 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
                 if is_enabled {
                     "available"
                 } else {
-                    "not found in feature graph"
+                    "disabled by feature flags"
                 }
             ),
         };
@@ -274,7 +292,10 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
         let is_enabled = enabled(&prefixed);
         return Verdict {
             available: is_enabled,
-            reason: format!("\"{prefixed}\" is {}", if is_enabled { "enabled" } else { "disabled" }),
+            reason: format!(
+                "\"{prefixed}\" is {}",
+                if is_enabled { "enabled" } else { "disabled" }
+            ),
             gating_feature: Some(prefixed.clone()),
             text: format!(
                 "{} `{query}` (gated by `[{prefixed}]`) — {}",
@@ -300,10 +321,7 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
                 if is_enabled {
                     "is available".to_string()
                 } else {
-                    format!(
-                        "requires `[{}]`",
-                        gating.as_deref().unwrap_or("unknown")
-                    )
+                    format!("requires `[{}]`", gating.as_deref().unwrap_or("unknown"))
                 }
             ),
         };
@@ -363,7 +381,9 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
         available: false,
         reason: format!("\"{query}\" is not a known feature or module in Bevy"),
         gating_feature: None,
-        text: format!("✗ `{query}` — unknown query (not a recognized feature, subcrate, or plugin)"),
+        text: format!(
+            "✗ `{query}` — unknown query (not a recognized feature, subcrate, or plugin)"
+        ),
     }
 }
 
@@ -393,9 +413,7 @@ fn gating_feature_for(subcrate: &str, data: &FeaturesData) -> Option<String> {
             }
         }
     }
-    data.features
-        .contains_key(&expected)
-        .then_some(expected)
+    data.features.contains_key(&expected).then_some(expected)
 }
 
 #[cfg(test)]
@@ -440,6 +458,7 @@ b = { package = "bevy", version = "9.9.9", default-features = false, features = 
         .expect("manifest");
         let enabled = enabled(dir.path(), &data());
         assert_eq!(enabled.source, "Cargo.toml");
+        assert!(enabled.manifest_found);
         assert!(!enabled.default_features);
         assert!(enabled.explicit.contains(&"bevy_ui".to_string()));
         assert!(enabled.transitive.contains(&"bevy_ui".to_string()));
@@ -474,11 +493,38 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
     }
 
     #[test]
+    fn a_missing_manifest_is_reported_as_such() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let enabled = enabled(dir.path(), &data());
+        assert!(!enabled.manifest_found);
+        assert_eq!(enabled.source, "none");
+        assert!(enabled.transitive.is_empty());
+    }
+
+    #[test]
+    fn a_manifest_without_bevy_is_not_a_missing_manifest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+"#,
+        )
+        .expect("manifest");
+        let enabled = enabled(dir.path(), &data());
+        assert!(enabled.manifest_found);
+        assert_eq!(enabled.source, "Cargo.toml (no bevy dependency)");
+        assert!(enabled.transitive.is_empty());
+    }
+
+    #[test]
     fn checks_features_subcrates_and_plugins() {
         let data = data();
         let on = vec!["bevy_ui".to_string(), "bevy_render".to_string()];
         assert!(check("ui", &data, &on).available);
-        assert!(!check("bevy::render::Mesh", &data, &vec!["bevy_ui".to_string()]).available);
+        assert!(!check("bevy::render::Mesh", &data, &["bevy_ui".to_string()]).available);
         assert!(check("bevy::ui::Node", &data, &on).available);
         assert!(check("UiPlugin", &data, &on).available);
         assert!(!check("nonexistent", &data, &on).available);

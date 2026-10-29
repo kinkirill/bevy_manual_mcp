@@ -4,9 +4,11 @@
 //! launch a server. Help lives behind `--help`/`help`; subcommands cover the
 //! maintainer and debugging surface.
 
+mod analysis;
 mod archive;
 mod bundle;
 mod config;
+mod features;
 mod format;
 mod ingest;
 mod pagination;
