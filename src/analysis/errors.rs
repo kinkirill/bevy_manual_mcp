@@ -44,7 +44,11 @@ pub fn extract(message: &str) -> Extracted {
     extracted
 }
 
-/// `error[B0001]:` or `warning[B0004]:` -> (panic|warning, code).
+/// `error[B0001]:` / `warning[B0004]:`, or a standalone `B0001` token.
+///
+/// Bevy emits the bracketed form, but agents and users often paste just the
+/// code (or `Error: B0002`). Standalone codes are accepted too; severity is
+/// only inferred when the surrounding text says error/warning/panic.
 fn find_code(message: &str) -> (&'static str, Option<String>) {
     for (needle, severity) in [("error[", "panic"), ("warning[", "warning")] {
         let mut from = 0;
@@ -70,6 +74,42 @@ fn find_code(message: &str) -> (&'static str, Option<String>) {
             }
             from = after;
         }
+    }
+
+    for (index, _) in message.char_indices() {
+        let rest = &message[index..];
+        let mut chars = rest.chars();
+        let is_code =
+            chars.next() == Some('B') && chars.clone().take(4).all(|ch| ch.is_ascii_digit());
+        if !is_code {
+            continue;
+        }
+        let before = message[..index].chars().last();
+        let after = message[index + 5..].chars().next();
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+            continue;
+        }
+        if after.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+            continue;
+        }
+        let code: String = message[index..index + 5].to_string();
+        let prefix: String = message[..index]
+            .chars()
+            .rev()
+            .take(32)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+            .to_lowercase();
+        let severity = if prefix.contains("warning") {
+            "warning"
+        } else if prefix.contains("error") || prefix.contains("panic") {
+            "panic"
+        } else {
+            "unknown"
+        };
+        return (severity, Some(code));
     }
     ("panic", None)
 }
@@ -229,6 +269,22 @@ mod tests {
         let quoted = extract("warning[B0004]: system 'render_ui', is slow");
         assert_eq!(quoted.severity, Some("warning"));
         assert_eq!(quoted.system_name.as_deref(), Some("render_ui"));
+    }
+
+    #[test]
+    fn standalone_codes_are_accepted_with_best_effort_severity() {
+        let bare = extract("B0001");
+        assert_eq!(bare.code.as_deref(), Some("B0001"));
+        assert_eq!(bare.severity, Some("unknown"));
+        let error = extract("Error: B0002");
+        assert_eq!(error.code.as_deref(), Some("B0002"));
+        assert_eq!(error.severity, Some("panic"));
+        let warning = extract("warning: B0004");
+        assert_eq!(warning.severity, Some("warning"));
+        let bracketed = extract("[B0003]");
+        assert_eq!(bracketed.code.as_deref(), Some("B0003"));
+        assert!(extract("xB0001").code.is_none());
+        assert!(extract("B00010").code.is_none());
     }
 
     #[test]
