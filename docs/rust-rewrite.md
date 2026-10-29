@@ -587,3 +587,32 @@ compiled corpus and says so.
 
 Still open in step 3: MCP resources/resource templates, completions and list
 pagination (the `bevy://` surface).
+
+## 24. Engine examples from the Cargo registry
+
+Field test: `bevy_examples "events system communication"` reported only 13
+examples. The corpus itself was fine — the engine's `examples/` were never
+found. The local `bevy-mcp.config.json` pins `bevySrcDir` at the docs.rs mirror
+(`~/.cache/bevy-mcp/bevy-0.20.0`), which contains HTML, not `examples/`.
+
+But the published `bevy` crate **does** ship `examples/` (435 files for 0.20.0),
+and cargo already has it at
+`$CARGO_HOME/registry/src/<index>/bevy-<version>/`. Config resolution now falls
+back to that crate root for `bevy_src_dir`, and to `<crate>/examples` for
+`examples_dir`, after the explicit env/config paths. Any existing (wrong)
+`bevySrcDir` no longer blocks it: the examples candidate is independent.
+
+Rebuilt 0.20.0 corpus:
+
+| | before | after |
+|---|---:|---:|
+| records | 252,761 | **253,196** (+435 engine examples) |
+| code examples | 13 | **448** |
+| `corpus.rkyv` | 118.1 MB | **125.0 MB** |
+| text index | 15.0 MB | **15.2 MB** |
+| build | 6.8 s | 6.9 s |
+
+`bevy_examples "events system communication"` now returns
+`bevy-examples:input/gamepad_input_events.rs`, `ecs/observers.rs` and friends.
+`cargo_registry_examples_are_auto_detected` builds against a fake `CARGO_HOME`
+and asserts the example is ingested and searchable.

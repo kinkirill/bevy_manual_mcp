@@ -583,3 +583,52 @@ fn check_version_reads_the_crates_response() {
     assert_eq!(structured["newest_stable"], "9.10.0");
     assert_eq!(structured["preview"], "9.11.0-rc.1");
 }
+
+#[test]
+fn cargo_registry_examples_are_auto_detected() {
+    let dir = fixture();
+    // build_corpus writes records.ndjson and an initial archive.
+    build_corpus(dir.path());
+
+    let cargo_home = dir.path().join("cargo-home");
+    let examples = cargo_home.join("registry/src/index/bevy-9.9.9/examples/ecs");
+    std::fs::create_dir_all(&examples).expect("fake registry");
+    std::fs::write(
+        examples.join("events.rs"),
+        "//! An event example from the engine.\nfn main() {}\n",
+    )
+    .expect("example");
+
+    let out = dir.path().join("versions/9.9.9");
+    let empty = dir.path().join("no-sources");
+    std::fs::create_dir_all(&empty).expect("empty");
+    let output = base_command(dir.path())
+        .env_remove("BEVY_EXAMPLES_DIR")
+        .env("CARGO_HOME", &cargo_home)
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty)
+        .args(["build", "--records"])
+        .arg(out.join("records.ndjson"))
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .expect("run build");
+    assert!(
+        output.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("examples=1"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+    let response = server.call_tool("bevy_examples", json!({ "task": "event" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("An event example from the engine"), "{text}");
+}

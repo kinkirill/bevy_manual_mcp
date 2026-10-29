@@ -141,6 +141,9 @@ impl Config {
                 .as_deref()
                 .map(|version| project_root.join(format!("bevy-src-v{version}"))),
             Some(project_root.join("bevy")),
+            // The published `bevy` crate ships the engine examples; cargo's
+            // registry is the checkout most users already have.
+            detected.version.as_deref().and_then(cargo_registry_crate),
         ]);
         let website_dir = first_existing_dir([
             env_dir("BEVY_WEBSITE_DIR"),
@@ -153,6 +156,11 @@ impl Config {
             env_dir("BEVY_EXAMPLES_DIR"),
             from_file(&file.examples_dir),
             bevy_src_dir.as_ref().map(|dir| dir.join("examples")),
+            detected
+                .version
+                .as_deref()
+                .and_then(cargo_registry_crate)
+                .map(|dir| dir.join("examples")),
         ]);
         let errors_dir = first_existing_dir([
             env_dir("BEVY_ERRORS_DIR"),
@@ -278,6 +286,22 @@ fn find_doc_root(project_root: &Path, override_dir: Option<PathBuf>) -> Option<P
                 .map(|mut entries| entries.next().is_some())
                 .unwrap_or(false)
     })
+}
+
+/// `$CARGO_HOME/registry/src/<index>/bevy-<version>`, when cargo has fetched it.
+fn cargo_registry_crate(version: &str) -> Option<PathBuf> {
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".cargo")))?;
+    let sources = cargo_home.join("registry").join("src");
+    let entries = fs::read_dir(&sources).ok()?;
+    for index in entries.flatten() {
+        let candidate = index.path().join(format!("bevy-{version}"));
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn home_dir() -> Option<PathBuf> {
