@@ -169,8 +169,11 @@ impl Server {
         response
     }
 
-    fn call_tool(&mut self, name: &str) -> Value {
-        self.request("tools/call", json!({ "name": name, "arguments": {} }))
+    fn call_tool(&mut self, name: &str, arguments: Value) -> Value {
+        self.request(
+            "tools/call",
+            json!({ "name": name, "arguments": arguments }),
+        )
     }
 }
 
@@ -218,7 +221,7 @@ fn index_status_reports_registry_metadata() {
     let mut server = Server::spawn(dir.path());
     server.initialize();
 
-    let response = server.call_tool("bevy_index_status");
+    let response = server.call_tool("bevy_index_status", json!({}));
     assert_eq!(response["result"]["isError"], false);
     let text = tool_text(&response);
     assert!(text.contains("9.9.9"), "status: {text}");
@@ -239,7 +242,7 @@ fn indexed_versions_marks_the_active_version() {
     let mut server = Server::spawn(dir.path());
     server.initialize();
 
-    let response = server.call_tool("bevy_indexed_versions");
+    let response = server.call_tool("bevy_indexed_versions", json!({}));
     assert_eq!(response["result"]["isError"], false);
     let text = tool_text(&response);
     assert!(text.contains("| 9.9.9 | **yes** |"), "versions: {text}");
@@ -297,5 +300,88 @@ fn cli_help_and_status_work_without_a_transport() {
         String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")),
         "version output: {}",
         String::from_utf8_lossy(&version.stdout)
+    );
+}
+
+fn build_corpus(dir: &Path) {
+    let out = dir.join("versions/9.9.9");
+    std::fs::create_dir_all(&out).expect("version dir");
+    let records = [
+        json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": "Widget",
+            "full_path": "demo::Widget",
+            "crate": "demo",
+            "module": "demo",
+            "signature": "pub struct Widget;",
+            "docs": "A widget you can build.",
+            "file": "demo/struct.Widget.html",
+            "bevy_version": "9.9.9"
+        }),
+        json!({
+            "source": "rustdoc",
+            "kind": "method",
+            "name": "new",
+            "full_path": "demo::Widget::new",
+            "owner": "Widget",
+            "crate": "demo",
+            "module": "demo",
+            "signature": "pub fn new() -> Widget",
+            "docs": "Creates a widget with the default configuration.",
+            "file": "demo/struct.Widget.html",
+            "bevy_version": "9.9.9"
+        }),
+    ]
+    .iter()
+    .map(|record| serde_json::to_string(record).expect("record json"))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let records_path = out.join("records.ndjson");
+    std::fs::write(&records_path, records).expect("records");
+
+    let empty = dir.join("no-sources");
+    std::fs::create_dir_all(&empty).expect("empty dir");
+    let output = base_command(dir)
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_EXAMPLES_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty)
+        .args(["build", "--records"])
+        .arg(&records_path)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .expect("run build");
+    assert!(
+        output.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn search_and_api_tools_answer_over_stdio() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool("bevy_search", json!({ "query": "widget" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("demo::Widget"), "{text}");
+    let results = response["result"]["structuredContent"]["results"]
+        .as_array()
+        .expect("results");
+    assert!(!results.is_empty());
+
+    let response = server.call_tool("bevy_api", json!({ "symbol": "Widget::new" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("pub fn new"), "{text}");
+    assert!(
+        text.contains("Creates a widget"),
+        "documentation missing: {text}"
     );
 }

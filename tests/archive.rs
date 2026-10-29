@@ -342,3 +342,38 @@ fn build_ingests_website_examples_and_error_codes() {
         "foundation record leaked: {stdout}"
     );
 }
+
+#[test]
+fn search_reads_the_text_index() {
+    let (_dir, data_dir) = build_fixture();
+
+    let output = command(&data_dir)
+        .args(["search", "widget", "--json", "--limit", "5"])
+        .output()
+        .expect("run search");
+    assert!(
+        output.status.success(),
+        "search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("search json");
+    let rows = payload["results"].as_array().expect("results");
+    assert!(!rows.is_empty(), "{payload}");
+    assert!(
+        rows.iter().any(|row| row["full_path"] == "demo::Widget"),
+        "{rows:?}"
+    );
+    assert!(rows[0]["score"].is_number(), "{rows:?}");
+
+    let output = command(&data_dir)
+        .args(["search", "creates a widget", "--json"])
+        .output()
+        .expect("run search");
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("search json");
+    let rows = payload["results"].as_array().expect("results");
+    assert!(
+        rows.iter()
+            .any(|row| row["full_path"] == "demo::Widget::new"),
+        "{rows:?}"
+    );
+}

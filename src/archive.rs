@@ -67,6 +67,8 @@ pub struct Arena {
 
 #[derive(Archive, Serialize, Deserialize, Debug)]
 pub struct Record {
+    /// Dense position in `records` (the archive's internal primary key).
+    pub dense_id: u32,
     /// The TypeScript-compatible 16-hex record id (used by `bevy://` URIs).
     pub hash: StrId,
     pub source: StrId,
@@ -134,6 +136,21 @@ pub struct Meta {
     pub text_indexed: u64,
 }
 
+impl Corpus {
+    /// Build-time string access, mirroring [`ArchivedCorpus::string`].
+    pub fn string(&self, id: StrId) -> &str {
+        let index = id as usize;
+        let Some(start) = self.arena.offsets.get(index) else {
+            return "";
+        };
+        let Some(end) = self.arena.offsets.get(index + 1) else {
+            return "";
+        };
+        let (start, end) = (*start as usize, *end as usize);
+        std::str::from_utf8(&self.arena.bytes[start..end]).unwrap_or("")
+    }
+}
+
 impl ArchivedCorpus {
     pub fn string(&self, id: impl MaybeNativeId) -> &str {
         let index = id.native() as usize;
@@ -160,6 +177,13 @@ impl ArchivedCorpus {
             .binary_search_by(|symbol| self.string(symbol.key).cmp(key))
             .ok()
             .map(|index| &self.symbols[index])
+    }
+
+    pub fn find_name_token(&self, key: &str) -> Option<&ArchivedSymbol> {
+        self.name_tokens
+            .binary_search_by(|token| self.string(token.key).cmp(key))
+            .ok()
+            .map(|index| &self.name_tokens[index])
     }
 
     /// Exact symbol lookup, best match first (mirrors the TypeScript server).
@@ -265,6 +289,9 @@ pub struct BuildReport {
     pub duplicates_merged: usize,
     pub archive_bytes: u64,
     pub archive_path: PathBuf,
+    pub text_documents: usize,
+    pub text_bytes: u64,
+    pub text_build_ms: u128,
     pub load_test_ms: u128,
     pub build_ms: u128,
 }
@@ -539,7 +566,9 @@ pub fn build(
     for record in &raw {
         *by_kind.entry(record.kind.clone()).or_default() += 1;
         *by_source.entry(record.source.clone()).or_default() += 1;
+        let dense_id = records.len() as u32;
         records.push(Record {
+            dense_id,
             hash: interner.intern(&record.hash_id()),
             source: interner.intern(&record.source),
             kind: interner.intern(&record.kind),
@@ -667,6 +696,10 @@ pub fn build(
         meta,
     };
 
+    let text_started = std::time::Instant::now();
+    let text = crate::text::build_index(&corpus, &out_dir.join(crate::text::TEXT_DIR))?;
+    let text_build_ms = text_started.elapsed().as_millis();
+
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&corpus)
         .map_err(|error| anyhow!("cannot serialize corpus: {error}"))?;
 
@@ -689,6 +722,11 @@ pub fn build(
         "records": corpus.records.len(),
         "symbols": symbol_count,
         "name_tokens": token_count,
+        "text": {
+            "dir": crate::text::TEXT_DIR,
+            "documents": text.documents,
+            "bytes": text.bytes,
+        },
     });
     write_atomic(
         &out_dir.join(MANIFEST_FILE),
@@ -711,6 +749,9 @@ pub fn build(
         duplicates_merged,
         archive_bytes: bytes.len() as u64,
         archive_path,
+        text_documents: text.documents,
+        text_bytes: text.bytes,
+        text_build_ms,
         load_test_ms,
         build_ms,
     })

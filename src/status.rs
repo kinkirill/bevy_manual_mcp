@@ -17,6 +17,8 @@ pub fn status(
     registry: &Registry,
     corpus: Option<&LoadedCorpus>,
     load_ms: u128,
+    text_documents: Option<u64>,
+    text_load_ms: u128,
 ) -> (String, Value) {
     let version = config.bevy_version.as_deref();
     let entry = version.and_then(|v| registry.entry(v));
@@ -77,6 +79,11 @@ pub fn status(
             root.format_version.to_native(),
             corpus.size() as f64 / 1_000_000.0
         ));
+        if let Some(documents) = text_documents {
+            lines.push(format!(
+                "- **Text index:** {documents} documents, loaded in {text_load_ms} ms"
+            ));
+        }
     }
 
     if archived.is_none() {
@@ -189,6 +196,8 @@ pub fn status(
                 "size_bytes": corpus.size(),
                 "load_ms": load_ms,
                 "name_tokens": root.name_tokens.len(),
+                "text_documents": text_documents,
+                "text_load_ms": text_load_ms,
             }),
             _ => Value::Null,
         },

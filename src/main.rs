@@ -6,10 +6,13 @@
 
 mod archive;
 mod config;
+mod format;
 mod ingest;
 mod registry;
+mod search;
 mod server;
 mod status;
+mod text;
 mod versions;
 
 use std::io::IsTerminal;
@@ -101,7 +104,38 @@ fn main() -> anyhow::Result<()> {
         Command::Status => {
             let registry = registry::Registry::load(&config.data_dir);
             let (corpus, load_ms) = load_corpus(&config);
-            let (text, _) = status::status(&config, &registry, corpus.as_ref(), load_ms);
+            let (text_documents, text_load_ms) = match corpus.as_ref() {
+                Some(_) => match config.bevy_version.as_deref() {
+                    Some(version) => {
+                        let dir = config
+                            .data_dir
+                            .join("versions")
+                            .join(registry::version_dir_name(version))
+                            .join(text::TEXT_DIR);
+                        if dir.is_dir() {
+                            let started = std::time::Instant::now();
+                            match text::TextIndex::open(&dir) {
+                                Ok(index) => {
+                                    (Some(index.doc_count()), started.elapsed().as_millis())
+                                }
+                                Err(_) => (None, 0),
+                            }
+                        } else {
+                            (None, 0)
+                        }
+                    }
+                    None => (None, 0),
+                },
+                None => (None, 0),
+            };
+            let (text, _) = status::status(
+                &config,
+                &registry,
+                corpus.as_ref(),
+                load_ms,
+                text_documents,
+                text_load_ms,
+            );
             println!("{text}");
             Ok(())
         }
@@ -206,6 +240,12 @@ fn main() -> anyhow::Result<()> {
             println!("- symbol keys: {}", report.symbols);
             println!("- name tokens: {}", report.name_tokens);
             println!(
+                "- text index: {} documents ({:.1} MB) in {} ms",
+                report.text_documents,
+                report.text_bytes as f64 / 1_000_000.0,
+                report.text_build_ms
+            );
+            println!(
                 "- archive: {} ({:.1} MB)",
                 report.archive_path.display(),
                 report.archive_bytes as f64 / 1_000_000.0
@@ -214,9 +254,56 @@ fn main() -> anyhow::Result<()> {
             println!("- validated load: {} ms", report.load_test_ms);
             Ok(())
         }
-        Command::Search { query, json, limit } => bail!(
-            "`search {query:?}` is not implemented yet (arrives in step 2); json={json} limit={limit}"
-        ),
+        Command::Search { query, json, limit } => {
+            let version = config
+                .bevy_version
+                .clone()
+                .ok_or_else(|| anyhow!("no Bevy version detected; set BEVY_VERSION"))?;
+            let (corpus, _) = load_corpus(&config);
+            let Some(corpus) = corpus else {
+                bail!(
+                    "no corpus archive for Bevy {version}; run `bevy-mcp build --records <records.ndjson>` first"
+                );
+            };
+            let text_dir = config
+                .data_dir
+                .join("versions")
+                .join(registry::version_dir_name(&version))
+                .join(text::TEXT_DIR);
+            if !text_dir.is_dir() {
+                bail!(
+                    "no text index at {}; run `bevy-mcp build --records <records.ndjson>` first",
+                    text_dir.display()
+                );
+            }
+            let text_index = text::TextIndex::open(&text_dir)?;
+            let state = search::SearchState {
+                corpus: &corpus,
+                text: &text_index,
+            };
+            let hits = search::search(
+                &state,
+                &query,
+                limit.clamp(1, 20),
+                &search::SearchFilters::default(),
+            );
+            if json {
+                let rows: Vec<Value> = hits
+                    .iter()
+                    .map(|hit| format::hit_json(&state, hit))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "query": query,
+                        "results": rows,
+                    }))?
+                );
+            } else {
+                println!("{}", format::search_markdown(&state, &hits, &query, None));
+            }
+            Ok(())
+        }
         Command::Lookup { symbol, json } => {
             let version = config
                 .bevy_version

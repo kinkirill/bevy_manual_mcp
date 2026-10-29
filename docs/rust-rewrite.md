@@ -390,3 +390,36 @@ Consequences recorded:
   already written and tested; only the container and transport are missing.
 - `bevy-mcp lookup <symbol>` now goes through the mmap, so the CLI debugging
   surface from §5 is live rather than stubbed.
+
+## 19. Step 2 results — search
+
+The text side is live: tantivy 0.27 stores ids only, with a camelCase-aware
+tokenizer, BM25 over `name`/`signature`/`docs`, and the hybrid merge
+(exact symbols → name tokens → text) on top of the rkyv corpus.
+
+| measurement | TypeScript | Rust |
+|---|---:|---:|
+| corpus records | 252,761 | 252,761 |
+| text index on disk | 120 MB (FlexSearch dump) | **15.0 MB** (tantivy) |
+| text documents | 246,881 | 246,881 |
+| concept search, warm | 117–257 ms | **22–30 ms** |
+| concept search, page cache evicted | n/a | **76–87 ms** |
+| exact symbol lookup, warm | <1 ms | 7–10 ms (process start included) |
+| peak RSS with search loaded | 1,195 MB | **94 MB** |
+
+Ranking against the 15-query snapshot: **13/15 top-1 matches**. The two
+differences are reviewed, not regressions:
+
+- `How to spawn a sphere`: both pick a `Sphere`; the TypeScript index picks
+  `bevy::shape::prelude::Sphere`, the Rust index `bevy::prelude::Sphere`
+  (different re-export of the same API).
+- `commands spawn`: the TypeScript index picks `RelatedSpawnerCommands`; the
+  Rust index picks `Commands`, which is the more direct answer for that query.
+
+The tantivy spike gate was met: index open is part of the 22–30 ms process
+time, queries well under 30 ms, and the index is 15 MB against a 250 MB
+ceiling. `bevy_search` and `bevy_api` are exposed over MCP and covered by a
+stdio end-to-end test; the `search` CLI verb is live.
+
+Still open from step 2: `.tar.zst` bundle packing and the `fetch-index`
+download (the bundle contents are now final, so this is container work).
