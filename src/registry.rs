@@ -65,6 +65,8 @@ pub struct Meta {
     pub project_root: Option<String>,
     #[serde(default)]
     pub version_source: Option<String>,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

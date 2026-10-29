@@ -352,3 +352,40 @@ Walking skeleton first; every step lands with its tests and a green CI, not
 - the "low lexical yield" threshold and `related_terms` token budget;
 - per-step checklists inside each port step;
 - CI workflow files.
+
+## 18. Step 1 results — measured
+
+The archive pipeline is real enough to answer the question this port was
+started for. Measured on the Bevy 0.20.0 corpus on Linux x64, release build,
+same machine, same operation (`App::add_systems`, 3 hits in both):
+
+| measurement | TypeScript (measured) | Rust + rkyv (measured) |
+|---|---:|---:|
+| time to answer from process start | **7,465 ms** | **7.6–11.1 ms** |
+| peak RSS | **1,195 MB** | **50 MB** |
+| corpus file on disk | 189 MB NDJSON + 120 MB FlexSearch dump | **112.9 MB** `corpus.rkyv` |
+| validated load (`bytecheck`, 113 MB) | n/a (JSON parse is the load) | **5–7 ms** |
+| exact symbol keys | 653,264 | **653,264 (exact match)** |
+| build time from NDJSON | n/a (parsed at every start) | 4.8 s, one-off |
+
+The TypeScript number is the documented 16.5 s cold-start baseline's warm-cache
+counterpart (7.5 s with the page cache populated); the Rust number was also
+measured after `posix_fadvise(DONTNEED)`, so it is not relying on the
+just-written file being hot. The archive was built from `records.ndjson`,
+which contains the 249,353 rustdoc records; the TypeScript index additionally
+merges 3,389 Book/guide records, 13 learning examples and 6 metadata records
+at load time (252,761 total). Those arrive with the ingest step (§11 step 6),
+not with the archive format.
+
+Consequences recorded:
+
+- The `rkyv` schema (records + interned arena + symbol table + name-token
+  index) is settled as implemented; `format_version` is `1`.
+- `bevy-mcp build --records <ndjson> --out <dir>` is the builder entry point
+  until source ingest lands; it writes `corpus.rkyv` plus
+  `corpus.manifest.json` (size, SHA-256, counts) atomically.
+- Bundle `.tar.zst` packing and `fetch-index` download are deferred to step 2,
+  when the bundle has its final contents (tantivy). The manifest contract is
+  already written and tested; only the container and transport are missing.
+- `bevy-mcp lookup <symbol>` now goes through the mmap, so the CLI debugging
+  surface from §5 is live rather than stubbed.

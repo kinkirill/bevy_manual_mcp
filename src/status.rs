@@ -7,33 +7,55 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use crate::archive::LoadedCorpus;
 use crate::config::Config;
 use crate::registry::Registry;
 use crate::versions::bump_between;
 
-pub fn status(config: &Config, registry: &Registry) -> (String, Value) {
+pub fn status(
+    config: &Config,
+    registry: &Registry,
+    corpus: Option<&LoadedCorpus>,
+    load_ms: u128,
+) -> (String, Value) {
     let version = config.bevy_version.as_deref();
     let entry = version.and_then(|v| registry.entry(v));
     let meta = version.and_then(|v| registry.meta(v));
+    let archived = corpus.map(LoadedCorpus::root);
 
-    let records = entry
-        .and_then(|e| e.records)
+    let records = archived
+        .map(|root| root.records.len() as u64)
+        .or_else(|| entry.and_then(|e| e.records))
         .or_else(|| meta.as_ref().and_then(|m| m.api_records))
         .unwrap_or(0);
-    let symbols = entry
-        .and_then(|e| e.symbols)
+    let symbols = archived
+        .map(|root| root.symbols.len() as u64)
+        .or_else(|| entry.and_then(|e| e.symbols))
         .or_else(|| meta.as_ref().and_then(|m| m.symbols))
         .unwrap_or(0);
-    let by_kind: BTreeMap<&str, u64> = entry
-        .map(|e| e.by_kind.iter().map(|(k, v)| (k.as_str(), *v)).collect())
-        .unwrap_or_default();
-    let by_source: BTreeMap<&str, u64> = entry
-        .map(|e| e.by_source.iter().map(|(k, v)| (k.as_str(), *v)).collect())
-        .unwrap_or_default();
-    let has_api_index = meta
-        .as_ref()
-        .and_then(|m| m.api_records)
-        .map(|n| n > 0)
+    let by_kind: BTreeMap<String, u64> = match archived {
+        Some(root) => root
+            .by_kind
+            .iter()
+            .map(|row| (row.name.as_str().to_string(), row.count.to_native()))
+            .collect(),
+        None => entry
+            .map(|e| e.by_kind.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default(),
+    };
+    let by_source: BTreeMap<String, u64> = match archived {
+        Some(root) => root
+            .by_source
+            .iter()
+            .map(|row| (row.name.as_str().to_string(), row.count.to_native()))
+            .collect(),
+        None => entry
+            .map(|e| e.by_source.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default(),
+    };
+    let has_api_index = archived
+        .map(|root| root.meta.api_records.to_native() > 0)
+        .or_else(|| meta.as_ref().and_then(|m| m.api_records).map(|n| n > 0))
         .unwrap_or(false);
 
     let mut lines = vec![
@@ -48,7 +70,16 @@ pub fn status(config: &Config, registry: &Registry) -> (String, Value) {
         format!("- **Records:** {records} ({symbols} exact symbols)"),
     ];
 
-    if meta.is_none() {
+    if let (Some(corpus), Some(root)) = (corpus, archived) {
+        lines.push(format!(
+            "- **Corpus:** {} v{} — {:.1} MB, loaded in {load_ms} ms",
+            crate::archive::ARCHIVE_FILE,
+            root.format_version.to_native(),
+            corpus.size() as f64 / 1_000_000.0
+        ));
+    }
+
+    if archived.is_none() {
         lines.push(String::new());
         lines.push(format!(
             "No compiled corpus is installed for Bevy {}. Run `bevy-mcp fetch-index {}` to install one.",
@@ -67,16 +98,46 @@ pub fn status(config: &Config, registry: &Registry) -> (String, Value) {
         lines.push(String::new());
         lines.push("## By kind".to_string());
         lines.push(String::new());
-        let mut kinds: Vec<(&str, u64)> = by_kind.into_iter().collect();
+        let mut kinds: Vec<(&str, u64)> = by_kind.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         kinds.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         for (kind, count) in kinds {
             lines.push(format!("- `{kind}`: {count}"));
         }
     }
 
+    if !by_source.is_empty() {
+        lines.push(String::new());
+        lines.push("## Sources".to_string());
+        lines.push(String::new());
+        for (source, count) in &by_source {
+            lines.push(format!("- `{source}`: {count}"));
+        }
+    }
+
     lines.push(String::new());
     lines.push("## Paths".to_string());
     lines.push(String::new());
+
+    // Prefer the compiled corpus's recorded paths; fall back to meta.json.
+    let dir = |archived_id: Option<&str>, meta_id: Option<&str>| {
+        archived_id
+            .filter(|value| !value.is_empty())
+            .or(meta_id.filter(|value| !value.is_empty()))
+            .map(str::to_string)
+    };
+    let doc_dir = dir(
+        archived.map(|root| root.string(root.meta.doc_dir)),
+        meta.as_ref().and_then(|m| m.doc_dir.as_deref()),
+    );
+    let website_dir = dir(
+        archived.map(|root| root.string(root.meta.website_dir)),
+        meta.as_ref().and_then(|m| m.website_dir.as_deref()),
+    );
+    let examples_dir = dir(
+        archived.map(|root| root.string(root.meta.examples_dir)),
+        meta.as_ref().and_then(|m| m.examples_dir.as_deref()),
+    );
+
     let path_or = |value: Option<&str>, fallback: &str| match value {
         Some(path) if !path.is_empty() => path.to_string(),
         _ => fallback.to_string(),
@@ -84,21 +145,18 @@ pub fn status(config: &Config, registry: &Registry) -> (String, Value) {
     lines.push(format!(
         "- cargo doc: {}",
         path_or(
-            meta.as_ref().and_then(|m| m.doc_dir.as_deref()),
+            doc_dir.as_deref(),
             "**not found** - run `cargo doc` in your Bevy project"
         )
     ));
     lines.push(format!(
         "- bevy-website: {}",
-        path_or(
-            meta.as_ref().and_then(|m| m.website_dir.as_deref()),
-            "**not found**"
-        )
+        path_or(website_dir.as_deref(), "**not found**")
     ));
     lines.push(format!(
         "- engine examples: {}",
         path_or(
-            meta.as_ref().and_then(|m| m.examples_dir.as_deref()),
+            examples_dir.as_deref(),
             "**not found** - clone the bevy repo for `examples/`"
         )
     ));
@@ -110,21 +168,30 @@ pub fn status(config: &Config, registry: &Registry) -> (String, Value) {
         "version_mismatch": false,
         "version_source": config.version_source,
         "project_root": config.project_root.display().to_string(),
-        "doc_dir": meta.as_ref().and_then(|m| m.doc_dir.clone()),
-        "website_dir": meta.as_ref().and_then(|m| m.website_dir.clone()),
-        "examples_dir": meta.as_ref().and_then(|m| m.examples_dir.clone()),
+        "doc_dir": doc_dir,
+        "website_dir": website_dir,
+        "examples_dir": examples_dir,
         "meta_dir": Value::Null,
         "errors_dir": Value::Null,
         "stats": {
             "total": records,
             "by_source": by_source,
-            "by_kind": entry.map(|e| e.by_kind.clone()).unwrap_or_default(),
+            "by_kind": by_kind,
         },
         "symbols": symbols,
         "built_at": entry
             .and_then(|e| e.built_at.clone())
             .or_else(|| meta.as_ref().and_then(|m| m.built_at.clone())),
         "has_api_index": has_api_index,
+        "corpus": match (corpus, archived) {
+            (Some(corpus), Some(root)) => json!({
+                "format_version": root.format_version.to_native(),
+                "size_bytes": corpus.size(),
+                "load_ms": load_ms,
+                "name_tokens": root.name_tokens.len(),
+            }),
+            _ => Value::Null,
+        },
     });
 
     (lines.join("\n"), structured)

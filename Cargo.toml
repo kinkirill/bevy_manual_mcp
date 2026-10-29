@@ -11,9 +11,13 @@ readme = "README.md"
 [dependencies]
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
+memmap2 = "0.9"
+rkyv = "=0.8.18"
 rmcp = { version = "=3.8.0", default-features = false, features = ["macros", "server", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.11"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
 toml = "0.9"
 

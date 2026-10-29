@@ -7,6 +7,9 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
+use std::sync::Arc;
+
+use crate::archive::{self, LoadedCorpus};
 use crate::config::Config;
 use crate::registry::Registry;
 use crate::status;
@@ -15,15 +18,30 @@ use crate::status;
 pub struct BevyMcp {
     config: Config,
     registry: Registry,
+    corpus: Option<Arc<LoadedCorpus>>,
+    corpus_load_ms: u128,
     tool_router: ToolRouter<Self>,
 }
 
 impl BevyMcp {
     pub fn new(config: Config) -> Self {
         let registry = Registry::load(&config.data_dir);
+        let (corpus, corpus_load_ms) = match config.bevy_version.as_deref() {
+            Some(version) => match archive::load_optional(&config.data_dir, version) {
+                Ok(Some((corpus, load_ms))) => (Some(Arc::new(corpus)), load_ms),
+                Ok(None) => (None, 0),
+                Err(error) => {
+                    config.log(format!("ignoring corpus archive: {error}"));
+                    (None, 0)
+                }
+            },
+            None => (None, 0),
+        };
         Self {
             config,
             registry,
+            corpus,
+            corpus_load_ms,
             tool_router: Self::tool_router(),
         }
     }
@@ -38,7 +56,12 @@ impl BevyMcp {
         description = "Reports which Bevy version is indexed, how many records exist, and which source directories were found. Call this first if search results look wrong, empty, or from the wrong version - it is the fastest way to find out whether the API index is missing entirely."
     )]
     async fn bevy_index_status(&self) -> CallToolResult {
-        let (text, structured) = status::status(&self.config, &self.registry);
+        let (text, structured) = status::status(
+            &self.config,
+            &self.registry,
+            self.corpus.as_deref(),
+            self.corpus_load_ms,
+        );
         with_structured(text, structured)
     }
 
