@@ -40,7 +40,7 @@ sha2 = "0.11"
 tar = "0.4"
 ureq = "3"
 zstd = "0.14"
-tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "time"] }
 toml = "0.9"
 
 [dev-dependencies]

@@ -211,7 +211,7 @@ impl BevyMcp {
         &self,
         Parameters(params): Parameters<CheckVersionParams>,
     ) -> CallToolResult {
-        match self.run_check_version(params) {
+        match self.run_check_version(params).await {
             Ok((text, structured)) => with_structured(text, structured),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
@@ -544,7 +544,10 @@ impl BevyMcp {
         ))
     }
 
-    fn run_check_version(&self, params: CheckVersionParams) -> anyhow::Result<(String, Value)> {
+    async fn run_check_version(
+        &self,
+        params: CheckVersionParams,
+    ) -> anyhow::Result<(String, Value)> {
         // No cache yet: `refresh` is accepted but has no work to do.
         let _ = params.refresh;
         if self.config.offline {
@@ -554,7 +557,27 @@ impl BevyMcp {
             .ok()
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "https://crates.io/api/v1/crates/bevy".to_string());
-        let body = crate::bundle::read_url(&url)?;
+        // A hard outer cap guarantees a response even if name resolution or a
+        // proxy misbehaves beyond ureq's own timeouts.
+        let background_url = url.clone();
+        let body = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            tokio::task::spawn_blocking(move || {
+                crate::bundle::read_url_timeout(&background_url, 6)
+            }),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "crates.io request timed out after 8s. Set BEVY_MCP_OFFLINE=1 to suppress this check."
+            )
+        })?
+        .map_err(|error| anyhow!("crates.io request task failed: {error}"))?
+        .map_err(|error| {
+            anyhow!(
+                "Could not reach crates.io at {url}: {error}. Set BEVY_MCP_OFFLINE=1 to suppress this check."
+            )
+        })?;
         let data: Value = serde_json::from_slice(&body)
             .map_err(|error| anyhow!("invalid crates.io response from {url}: {error}"))?;
         let newest = data["crate"]["max_stable_version"]

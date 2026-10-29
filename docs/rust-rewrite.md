@@ -662,3 +662,37 @@ bevy://doc/<version>/<rustdoc file>
   to ~25 ms.
 - MCP test: list resources/templates, read the index, an API item, an owner
   listing, page through 57 structs, and complete a version argument.
+
+## 26. `bevy_check_version` stall: timeouts, not the network alone
+
+Field report: calling `bevy_check_version` hung until the client's 60 s timeout.
+
+Two independent causes:
+
+1. The tool performed a blocking network request with no timeout. On a blocked
+   host (here `crates.io:443` is unreachable without the local proxy) the call
+   could exceed the MCP client's budget.
+2. The agent's MCP server process was older than the rebuilt binary (`14:42`
+   and `15:03` processes vs a `15:08` binary), so the fix was not running.
+
+Fixes:
+
+- `bundle::read_url` now builds a ureq agent with a 5 s connect timeout and a
+  configurable global timeout (60 s default, 600 s for bundle assets, 6 s for
+  the version check), sets an identifying `User-Agent`, and still honours
+  `HTTPS_PROXY`/`ALL_PROXY` via ureq's environment proxy detection.
+- `bevy_check_version` runs the request on `spawn_blocking` behind an 8 s
+  `tokio::time::timeout`, so a misbehaving resolver/proxy cannot hold the MCP
+  response open.
+- Failure text says what happened and points at `BEVY_MCP_OFFLINE=1`.
+
+Measured with the current binary:
+
+| condition | result |
+|---|---|
+| no proxy | error after **5.97 s**: "Network is unreachable … Set BEVY_MCP_OFFLINE=1" |
+| via `HTTPS_PROXY=http://127.0.0.1:2080` | success after **0.94 s**: newest stable **0.20.1**, indexed 0.20.0 (patch, no API changes) |
+
+Operational note: after rebuilding the binary, restart/reconnect the MCP server
+(`/mcp` reconnect or restart pi); a running server keeps its old executable
+mapped. The pi config now passes the local proxy env to `bevy-rust`.

@@ -7,6 +7,7 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -183,7 +184,7 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
 
     let asset_url = join(&base, &release, &manifest.asset);
     eprintln!("[bevy-mcp] downloading {}", manifest.asset);
-    let bytes = read_url(&asset_url)?;
+    let bytes = read_url_timeout(&asset_url, 600)?;
     if let Some(size) = manifest.size
         && bytes.len() as u64 != size
     {
@@ -234,9 +235,29 @@ fn join(base: &str, release: &str, name: &str) -> String {
     )
 }
 
+/// Read a URL with hard timeouts. Without this a blocked host can hang an MCP
+/// tool call indefinitely.
 pub fn read_url(url: &str) -> Result<Vec<u8>> {
+    read_url_timeout(url, 60)
+}
+
+pub fn read_url_timeout(url: &str, global_seconds: u64) -> Result<Vec<u8>> {
     if url.starts_with("http://") || url.starts_with("https://") {
-        let mut response = ureq::get(url)
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(global_seconds)))
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+        let mut response = agent
+            .get(url)
+            .header(
+                "User-Agent",
+                concat!(
+                    "bevy-manual-mcp/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (https://github.com/kinkirill/bevy_manual_mcp)"
+                ),
+            )
             .call()
             .map_err(|error| anyhow!("GET {url} failed: {error}"))?;
         response
