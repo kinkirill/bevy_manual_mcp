@@ -14,6 +14,8 @@ Bevy version your project is using.
 
 Key points:
 
+- MCP Registry name: `mcp-name: io.github.kinkirill/bevy-manual-mcp`
+
 - **Native.** Rust, stdio MCP, no Node or npm in the user's path. (The initial
   version of this MCP was written in JS and later in TS.)
 - **Small.** A 33 MB bundle per Bevy version (125 MB corpus + 15 MB tantivy
