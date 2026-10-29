@@ -584,11 +584,24 @@ export class VersionRegistry {
  * Plugin corpora live at `data/corpora/<crate>-<version>/` with their own
  * registry.json. Each corpus has its own index cache and metadata.
  */
+/** Per-corpus load outcome, surfaced to `bevy_ecosystem_search` and startup logs. */
+export interface CorpusLoadStatus {
+  id: string;
+  crate: string;
+  version: string | null;
+  source: string;
+  loaded: boolean;
+  records: number;
+  reason?: string;
+}
+
 export class CorpusRegistry {
   readonly root: string;
   readonly bevyRegistry: VersionRegistry;
   /** Plugin corpora keyed by "crate@version". */
   readonly pluginIndices = new Map<string, BevyIndex>();
+  /** Outcome of each configured corpus, keyed by corpus ID. */
+  readonly statuses = new Map<string, CorpusLoadStatus>();
   readonly config: IndexConfig;
 
   constructor(config: IndexConfig) {
@@ -624,21 +637,38 @@ export class CorpusRegistry {
     throw new Error(`Unknown corpus: ${corpusId}`);
   }
 
-  /** Register a plugin corpus source. */
-  registerPlugin(crateName: string, docDir: string, version: string): void {
+  /** Register a plugin corpus source. Builds the search index from a persisted
+   *  records file when present, otherwise from the crate's rustdoc HTML. */
+  async registerPlugin(
+    crateName: string,
+    docDir: string | null,
+    version: string,
+    options: { indexDir?: string | null; source?: string } = {},
+  ): Promise<void> {
     const corpusId = `${crateName}@${version}`;
     if (this.pluginIndices.has(corpusId)) throw new Error(`Corpus already registered: ${corpusId}`);
 
-    const pluginRoot = path.join(this.root, sanitizeCrateVersion(crateName, version));
+    const source = options.source ?? "rustdoc";
+    const pluginRoot = options.indexDir || path.join(this.root, sanitizeCrateVersion(crateName, version));
     fs.mkdirSync(pluginRoot, { recursive: true });
+    const recordsPath = path.join(pluginRoot, "records.ndjson");
 
-    // Build the index from the plugin rustdoc.
-    const records = streamRustdoc(docDir, version);
     const idx = new BevyIndex();
-    for (const record of records) {
-      if (recordWeightOf(record) > 0) idx.addRecords([record]);
+    if (fs.existsSync(recordsPath)) {
+      for await (const record of readNdjson(recordsPath)) {
+        if (recordWeightOf(record) > 0) idx.addRecords([record]);
+      }
+    } else if (docDir) {
+      for (const record of streamRustdoc(docDir, version)) {
+        if (recordWeightOf(record) > 0) idx.addRecords([record]);
+      }
+    } else {
+      throw new Error(`no docDir or persisted records for ${corpusId}`);
     }
+    if (!idx.records.length) throw new Error(`no indexable records found for ${corpusId}`);
+
     idx.buildSymbolTable();
+    await idx.buildTextIndex();
 
     // Set metadata with crate info.
     idx.meta = {
@@ -646,14 +676,57 @@ export class CorpusRegistry {
       cache_version: CACHE_VERSION,
       crate: crateName,
       crate_version: version,
+      version_source: source,
       fingerprint: "plugin",
       built_at: new Date().toISOString(),
       build_ms: 0,
       symbols: idx.symbols.size,
     };
+    idx.stats = idx.stats_();
+
+    // Persist so the next start skips re-parsing rustdoc, but never fail the
+    // load over a read-only index directory.
+    if (!fs.existsSync(recordsPath)) {
+      try { await writeNdjson(recordsPath, idx.records); }
+      catch (error) { log(`corpus ${corpusId}: could not persist records: ${errorMessage(error)}`); }
+    }
 
     this.pluginIndices.set(corpusId, idx);
+    this.statuses.set(corpusId, {
+      id: corpusId, crate: crateName, version, source, loaded: true, records: idx.records.length,
+    });
     log(`registered plugin corpus: ${corpusId} (${idx.records.length} records)`);
+  }
+
+  /**
+   * Load every corpus in `config.corpora`, isolating failures so one broken
+   * corpus does not prevent the others (or the server) from starting. Never
+   * throws: an unusable corpus is recorded as `loaded: false` with a reason.
+   */
+  async loadConfigured(): Promise<CorpusLoadStatus[]> {
+    const statuses: CorpusLoadStatus[] = [];
+    for (const corpus of this.config.corpora ?? []) {
+      const version = corpus.version && corpus.version !== "?" ? corpus.version : null;
+      const id = `${corpus.crate}@${version ?? "?"}`;
+      const source = corpus.source ?? "rustdoc";
+      if (version === null) {
+        const status: CorpusLoadStatus = { id, crate: corpus.crate, version: null, source, loaded: false, records: 0, reason: "no version resolved (set `version` or `auto: true`)" };
+        this.statuses.set(id, status);
+        statuses.push(status);
+        log(`corpus ${id}: ${status.reason}`);
+        continue;
+      }
+      try {
+        await this.registerPlugin(corpus.crate, corpus.docDir ?? null, version, { indexDir: corpus.indexDir, source });
+        statuses.push(this.statuses.get(id)!);
+      } catch (error) {
+        const status: CorpusLoadStatus = { id, crate: corpus.crate, version, source, loaded: false, records: 0, reason: errorMessage(error) };
+        this.statuses.set(id, status);
+        statuses.push(status);
+        log(`corpus ${id}: ${status.reason}`);
+      }
+    }
+    return statuses;
   }
 }
 

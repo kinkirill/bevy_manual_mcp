@@ -162,16 +162,24 @@ client commands continue to work; the runtime needs Node.js 22 or newer.
 ```bash
 npm test
 npm run typecheck
+npm run bench          # informational startup/search timings, never a gate
 BEVY_VERSION=0.20.0 BEVY_DOC_DIR=... node test/resources-test.mjs
 ```
 
 `npm test` builds the TypeScript and runs every suite: unit/ingest/search,
 qualified symbol lookup, duplicate-record merging, natural-language relevance,
 per-tool behaviour (`test/tools-test.mts`, one suite per MCP tool), ecosystem
-compatibility, vendored-metadata harvest, resource conformance, and the
-protocol-level MCP end-to-end test. The per-tool suite runs in-process against a
+compatibility, vendored-metadata harvest, resource conformance, the
+protocol-level MCP end-to-end test, and the Phase 0 contract regressions
+(`test/contract-regressions.mts`). The per-tool suite runs in-process against a
 deterministic fixture index plus the committed `vendor/bevy-meta`, so its
 assertions do not depend on a locally built rustdoc tree.
+
+The contract suite is the executable half of
+[`docs/tool-contracts.md`](docs/tool-contracts.md): passing tests lock in current
+behaviour, while a `todo` test records a confirmed discrepancy and the expected
+fix. A `todo` test is reported as `todo` and does not fail the build until the
+corresponding phase PR removes the marker.
 
 `npm run test:package -- --git` also verifies an installed tarball and a Git
 dependency prepared from TypeScript, using CLI and MCP checks outside the

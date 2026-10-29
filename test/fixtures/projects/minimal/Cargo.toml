@@ -1,0 +1,11 @@
+# Phase 0 fixture: a minimal Bevy project.
+#
+# `bevy` is declared with only a version, so Cargo enables the crate's default
+# features implicitly. `bevy_check_manifest` must report those defaults as on.
+[package]
+name = "minimal-bevy-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = "0.20.0"

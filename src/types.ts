@@ -71,6 +71,12 @@ export interface CorpusConfig {
   version?: string;
   /** Resolve from the project's Cargo.lock/Cargo.toml when present. */
   auto?: boolean;
+  /** Rustdoc HTML directory for this crate (a docs.rs mirror or `cargo doc` output). */
+  docDir?: string;
+  /** Directory holding a persisted corpus (`records.ndjson`), used when present. */
+  indexDir?: string;
+  /** Provenance label surfaced in results, e.g. "docs.rs" or "local rustdoc". */
+  source?: string;
 }
 
 export interface IndexConfig {
