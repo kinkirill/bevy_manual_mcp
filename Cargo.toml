@@ -1,6 +1,6 @@
 [package]
 name = "bevy-manual-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Version-accurate Bevy API docs, guides, examples and migration notes as an MCP server"

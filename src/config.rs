@@ -257,19 +257,34 @@ impl Config {
     }
 
     /// Metadata shipped inside a version bundle (or the checkout's vendor dir).
+    ///
+    /// Resolves the installed corpus first (including a same-minor corpus), then
+    /// falls back to vendored metadata, exact version before same minor.
     pub fn version_metadata_dir(&self, version: &str) -> Option<PathBuf> {
-        let installed = self
-            .data_dir
-            .join("versions")
-            .join(crate::registry::version_dir_name(version))
-            .join("metadata");
-        if installed.is_dir() {
-            return Some(installed);
+        if let Some((resolved, dir)) = crate::archive::resolve_version_dir(&self.data_dir, version)
+        {
+            let installed = dir.join("metadata");
+            if installed.is_dir() {
+                return Some(installed);
+            }
+            if let Some(vendor) = self.meta_dir.as_ref() {
+                let exact = vendor.join(&resolved);
+                if exact.is_dir() {
+                    return Some(exact);
+                }
+            }
         }
-        self.meta_dir
-            .as_ref()
-            .map(|meta| meta.join(version))
-            .filter(|path| path.is_dir())
+        let vendor = self.meta_dir.as_ref()?;
+        let exact = vendor.join(version);
+        if exact.is_dir() {
+            return Some(exact);
+        }
+        fs::read_dir(vendor).ok()?.flatten().find_map(|entry| {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (path.is_dir() && crate::versions::same_minor(name, version)).then_some(path)
+        })
     }
 
     pub fn feature_graph_path(&self, version: &str) -> Option<PathBuf> {

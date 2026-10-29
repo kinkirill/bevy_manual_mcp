@@ -7,8 +7,9 @@ Two artifacts are published independently:
 1. the **crate** `bevy-manual-mcp` (binary `bevy-manual-mcp`) on crates.io;
 2. **index bundles** for each Bevy version on GitHub Releases.
 
-The crate version does not track a Bevy version. `0.1.0` is the first real
-release and is published only after the checklist below passes. No previews.
+The crate version does not track a Bevy version. `0.1.0` was the first real
+release; `0.1.1` fixes same-minor metadata resolution for Bevy patch versions
+(`0.1.0` is yanked). No previews.
 
 ## Prerequisites
 
@@ -84,9 +85,8 @@ After the crate is live:
 - verify a clean machine: `cargo install bevy-manual-mcp`, point it at a Cargo
   project, let first-run auto-fetch install the bundle, run one query.
 
-`0.0.1` exists only as a lib-only name reservation; `cargo install
-bevy-manual-mcp` fails with "no binaries" for that version. `0.1.0` is the first
-installable release.
+`0.0.1` exists only as a lib-only name reservation and has no binaries;
+`0.1.0` is yanked. Use the current `0.1.x` release.
 
 ## CI/release automation
 
