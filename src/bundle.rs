@@ -187,11 +187,26 @@ pub fn install(staging: &Path, data_dir: &Path, version: &str) -> Result<PathBuf
     Ok(target)
 }
 
+/// Release tags to try for a requested Bevy version: exact first, then the
+/// Bevy minor (index releases are published per minor).
+pub fn release_tags(version: &str) -> Vec<String> {
+    let mut tags = vec![format!("v{version}")];
+    if let Some(minor) = crate::versions::minor_label(version) {
+        let tag = format!("v{minor}");
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
 /// Download and install the published bundle for `version`.
+///
+/// Exact releases win; otherwise the same Bevy minor is used. The bundle is
+/// installed under the exact corpus version from its manifest, and the loaders
+/// resolve same-minor corpora on demand.
 pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathBuf>> {
-    let target = data_dir.join("versions").join(version_dir_name(version));
-    let installed = target.join(ARCHIVE_FILE).is_file() && target.join(TEXT_DIR).is_dir();
-    if installed && !force {
+    if crate::archive::resolve_version_dir(data_dir, version).is_some() && !force {
         return Ok(None);
     }
 
@@ -199,33 +214,58 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_RELEASES_BASE.to_string());
-    let release = format!("v{version}");
 
-    let manifest_url = join(&base, &release, RELEASE_MANIFEST);
-    eprintln!("[bevy-manual-mcp] fetching {manifest_url}");
-    let manifest_bytes = read_url(&manifest_url)?;
-    let manifest: ReleaseManifest = serde_json::from_slice(&manifest_bytes)
-        .with_context(|| format!("invalid release manifest at {manifest_url}"))?;
+    let mut errors = Vec::new();
+    let mut selected = None;
+    for release in release_tags(version) {
+        let manifest_url = join(&base, &release, RELEASE_MANIFEST);
+        eprintln!("[bevy-manual-mcp] fetching {manifest_url}");
+        let bytes = match read_url(&manifest_url) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                errors.push(format!("{release}: {error}"));
+                continue;
+            }
+        };
+        let manifest: ReleaseManifest = match serde_json::from_slice(&bytes) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                errors.push(format!("{release}: invalid manifest ({error})"));
+                continue;
+            }
+        };
+        if manifest.manifest_version != RUST_MANIFEST_VERSION {
+            errors.push(format!(
+                "{release}: manifest version {} (this binary needs {RUST_MANIFEST_VERSION})",
+                manifest.manifest_version
+            ));
+            continue;
+        }
+        if !crate::versions::same_minor(&manifest.bevy_version, version) {
+            errors.push(format!(
+                "{release}: contains Bevy {}, not {version}",
+                manifest.bevy_version
+            ));
+            continue;
+        }
+        if let Some(format_version) = manifest.format_version
+            && format_version != FORMAT_VERSION
+        {
+            errors.push(format!(
+                "{release}: corpus format {format_version} (this binary needs {FORMAT_VERSION})"
+            ));
+            continue;
+        }
+        selected = Some((release, manifest));
+        break;
+    }
 
-    if manifest.manifest_version != RUST_MANIFEST_VERSION {
+    let Some((release, manifest)) = selected else {
         bail!(
-            "release {release} advertises manifest version {}; this bevy-manual-mcp needs {RUST_MANIFEST_VERSION} (a Rust-format bundle). Publish one with `bevy-manual-mcp build --pack` first.",
-            manifest.manifest_version
+            "could not fetch a compatible index for Bevy {version}. Tried {}.",
+            errors.join("; ")
         );
-    }
-    if manifest.bevy_version != version {
-        bail!(
-            "release {release} contains Bevy {}, not {version}",
-            manifest.bevy_version
-        );
-    }
-    if let Some(format_version) = manifest.format_version
-        && format_version != FORMAT_VERSION
-    {
-        bail!(
-            "release {release} uses corpus format {format_version}; this binary needs {FORMAT_VERSION}"
-        );
-    }
+    };
 
     let asset_url = join(&base, &release, &manifest.asset);
     eprintln!("[bevy-manual-mcp] downloading {}", manifest.asset);
@@ -251,10 +291,16 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
     }
 
     fs::create_dir_all(data_dir)?;
+    let target_version = manifest.bevy_version.clone();
+    if target_version != version {
+        eprintln!(
+            "[bevy-manual-mcp] {release} answers for the {target_version} corpus (your project is on {version})"
+        );
+    }
     let staging = data_dir.join(format!(
         ".bevy-index-stage-{}-{}",
         std::process::id(),
-        version_dir_name(version)
+        version_dir_name(&target_version)
     ));
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
@@ -264,7 +310,7 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
 
     let result = (|| -> Result<PathBuf> {
         unpack(&archive, &staging)?;
-        install(&staging, data_dir, version)
+        install(&staging, data_dir, &target_version)
     })();
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_dir_all(&staging);
@@ -330,6 +376,13 @@ pub fn read_url_timeout(url: &str, global_seconds: u64) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn release_tags_try_exact_then_minor() {
+        assert_eq!(release_tags("0.20.1"), vec!["v0.20.1", "v0.20"]);
+        assert_eq!(release_tags("0.20.0"), vec!["v0.20.0", "v0.20"]);
+        assert_eq!(release_tags("0.20"), vec!["v0.20"]);
+    }
+
     use super::*;
 
     #[test]

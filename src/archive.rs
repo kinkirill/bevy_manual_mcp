@@ -998,15 +998,64 @@ pub fn archive_path_for(data_dir: &Path, version: &str) -> PathBuf {
         .join(ARCHIVE_FILE)
 }
 
+/// Find an installed corpus for `version`, falling back to the same Bevy
+/// minor. Returns the resolved version, its directory, and the archive path.
+pub fn resolve_version_dir(data_dir: &Path, version: &str) -> Option<(String, PathBuf)> {
+    let exact_dir = data_dir
+        .join("versions")
+        .join(crate::registry::version_dir_name(version));
+    if exact_dir.join(ARCHIVE_FILE).is_file() {
+        return Some((version.to_string(), exact_dir));
+    }
+    let root = data_dir.join("versions");
+    let mut candidates: Vec<(String, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(&root).ok()?.flatten() {
+        let dir = entry.path();
+        if !dir.join(ARCHIVE_FILE).is_file() {
+            continue;
+        }
+        let resolved = fs::read_to_string(dir.join("meta.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|value| value["bevy_version"].as_str().map(str::to_string))
+            .or_else(|| {
+                dir.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_string)
+            });
+        let Some(resolved) = resolved else {
+            continue;
+        };
+        if crate::versions::same_minor(&resolved, version) {
+            candidates.push((resolved, dir));
+        }
+    }
+    candidates.sort_by(|a, b| crate::versions::cmp_version(&b.0, &a.0));
+    candidates.into_iter().next()
+}
+
 /// Open the corpus for a version when one has been built or downloaded.
 pub fn load_optional(data_dir: &Path, version: &str) -> Result<Option<(LoadedCorpus, u128)>> {
-    let path = archive_path_for(data_dir, version);
+    load_optional_resolved(data_dir, version)
+        .map(|resolved| resolved.map(|(corpus, _resolved_version, _dir, ms)| (corpus, ms)))
+}
+
+/// Like `load_optional`, but also returns the resolved corpus version and its
+/// directory (needed to open the matching text index).
+pub fn load_optional_resolved(
+    data_dir: &Path,
+    version: &str,
+) -> Result<Option<(LoadedCorpus, String, PathBuf, u128)>> {
+    let Some((resolved, dir)) = resolve_version_dir(data_dir, version) else {
+        return Ok(None);
+    };
+    let path = dir.join(ARCHIVE_FILE);
     if !path.is_file() {
         return Ok(None);
     }
     let started = std::time::Instant::now();
     let corpus = LoadedCorpus::open(&path)?;
-    Ok(Some((corpus, started.elapsed().as_millis())))
+    Ok(Some((corpus, resolved, dir, started.elapsed().as_millis())))
 }
 
 #[cfg(test)]

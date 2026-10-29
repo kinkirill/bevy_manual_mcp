@@ -1054,6 +1054,12 @@ integration test: `cargo install --path .`, first-start auto-fetch from a local
 release, then search + feature check + error guide + compatibility from the
 bundle metadata, with an empty `vendor/`.
 
+Index releases are **minor-scoped** (`v0.20`), built from the newest patch and
+refreshed with `--revision` when a patch lands. `fetch-index` tries the exact
+tag first, then the minor tag; installed corpora resolve exact first and then by
+same Bevy minor. The manifest still records the exact corpus version, so answers
+remain provenance-labelled. This closes the C-17 "same-minor reuse" gap.
+
 Remaining before publishing 0.1.0: run the TypeScript oracle from the
 `pre-cutover-oracle` tag against the Rust binary (mcp-e2e, resources, corpus and
 ranking snapshots), execute the clean-install gate, merge `cutover` to `main`,

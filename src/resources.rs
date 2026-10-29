@@ -7,7 +7,7 @@ use std::path::Path;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
-use crate::archive::{ArchivedCorpus, ArchivedRecord, LoadedCorpus, archive_path_for, base_name};
+use crate::archive::{ArchivedCorpus, ArchivedRecord, LoadedCorpus, base_name};
 use crate::pagination::paginate;
 use crate::versions::bump_between;
 
@@ -237,11 +237,10 @@ impl Source<'_> {
         {
             return Some(Loaded::Borrowed(corpus));
         }
-        let path = archive_path_for(self.data_dir, version);
-        if !path.is_file() {
-            return None;
-        }
-        LoadedCorpus::open(&path).ok().map(Loaded::Owned)
+        let (_, dir) = crate::archive::resolve_version_dir(self.data_dir, version)?;
+        LoadedCorpus::open(&dir.join(crate::archive::ARCHIVE_FILE))
+            .ok()
+            .map(Loaded::Owned)
     }
 
     fn missing(&self, version: &str) -> String {

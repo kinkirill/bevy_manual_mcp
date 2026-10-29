@@ -12,10 +12,12 @@ bevy-manual-mcp fetch-index            # detected version
 bevy-manual-mcp fetch-index 0.20.0 --force
 ```
 
-`fetch-index` reads `index-manifest.json` from the release for that Bevy
-version, verifies size and SHA-256, unpacks into a staging directory, validates
-`corpus.rkyv` with `bytecheck`, and only then moves it into
-`data/versions/<version>/`. A partial file never becomes loadable.
+`fetch-index` tries the exact release tag (`v0.20.1`), then the Bevy minor
+(`v0.20`). The manifest records the exact corpus it contains; a patch resolves
+to its minor's newest corpus when no exact bundle exists. It verifies size and
+SHA-256, unpacks into a staging directory, validates `corpus.rkyv` with
+`bytecheck`, and only then moves it into `data/versions/<exact-version>/`. A
+partial file never becomes loadable.
 
 Where the bundle comes from:
 

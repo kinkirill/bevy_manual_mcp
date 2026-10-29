@@ -40,6 +40,25 @@ pub struct Bump {
     pub label: String,
 }
 
+/// `0.20.1` -> `0.20`, used for minor-scoped index releases.
+pub fn minor_label(version: &str) -> Option<String> {
+    let mut parts = version.split('.');
+    let major = parts.next()?;
+    let minor = parts.next()?;
+    if major.is_empty() || minor.is_empty() {
+        return None;
+    }
+    Some(format!("{major}.{minor}"))
+}
+
+/// Whether two versions share the same major.minor (Bevy's compatibility line).
+pub fn same_minor(a: &str, b: &str) -> bool {
+    match (minor_label(a), minor_label(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
 pub fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
     let a = VersionParts::parse(a);
     let b = VersionParts::parse(b);

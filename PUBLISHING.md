@@ -61,12 +61,14 @@ The example path assumes examples were resolved by the helper; in CI use a
 sparse `bevy` checkout and point `BEVY_EXAMPLES_DIR` at `<checkout>/examples`.
 
 Upload `bevy-<version>-fmt1.tar.zst` and `index-manifest.json` to the GitHub
-Release tagged `v<bevy-version>`. `fetch-index` reads the manifest, verifies
-SHA-256 and size, and only then installs.
+Release tagged by Bevy **minor**, `v<major.minor>` (e.g. `v0.20`). The manifest
+records the exact corpus version (`0.20.0`). `fetch-index` tries the exact tag
+first, then the minor tag, verifies SHA-256 and size, and only then installs.
 
 The six supported corpora are `0.15.3`, `0.16.1`, `0.17.3`, `0.18.1`, `0.19.1`
-and `0.20.0`. One release per version; bump `--revision` when the same Bevy
-version is rebuilt.
+and `0.20.0`, in releases `v0.15` … `v0.20`. When a Bevy patch lands, rebuild
+the same minor release with the new patch and bump `--revision`; users on any
+patch of that minor resolve to the newest corpus unless an exact release exists.
 
 ## Publish the crate
 

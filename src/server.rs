@@ -4,6 +4,7 @@
 //! `versions/<v>/meta.json`: `bevy_index_status` and `bevy_indexed_versions`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -48,9 +49,18 @@ pub struct BevyMcp {
 impl BevyMcp {
     pub fn new(config: Config) -> Self {
         let registry = Registry::load(&config.data_dir);
+        let mut corpus_dir: Option<PathBuf> = None;
         let (corpus, corpus_load_ms) = match config.bevy_version.as_deref() {
-            Some(version) => match archive::load_optional(&config.data_dir, version) {
-                Ok(Some((corpus, load_ms))) => (Some(Arc::new(corpus)), load_ms),
+            Some(version) => match archive::load_optional_resolved(&config.data_dir, version) {
+                Ok(Some((corpus, resolved_version, dir, load_ms))) => {
+                    if resolved_version != version {
+                        config.log(format!(
+                            "using the Bevy {resolved_version} corpus for {version} (same minor)"
+                        ));
+                    }
+                    corpus_dir = Some(dir);
+                    (Some(Arc::new(corpus)), load_ms)
+                }
                 Ok(None) => (None, 0),
                 Err(error) => {
                     config.log(format!("ignoring corpus archive: {error}"));
@@ -59,13 +69,9 @@ impl BevyMcp {
             },
             None => (None, 0),
         };
-        let (text, text_load_ms) = match (&config.bevy_version, &corpus) {
-            (Some(version), Some(_)) => {
-                let dir = config
-                    .data_dir
-                    .join("versions")
-                    .join(crate::registry::version_dir_name(version))
-                    .join(text::TEXT_DIR);
+        let (text, text_load_ms) = match (&corpus, &corpus_dir) {
+            (Some(_), Some(dir)) => {
+                let dir = dir.join(text::TEXT_DIR);
                 if !dir.is_dir() {
                     (None, 0)
                 } else {

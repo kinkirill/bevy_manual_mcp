@@ -164,12 +164,9 @@ fn main() -> anyhow::Result<()> {
             let (text_documents, text_load_ms) = match corpus.as_ref() {
                 Some(_) => match config.bevy_version.as_deref() {
                     Some(version) => {
-                        let dir = config
-                            .data_dir
-                            .join("versions")
-                            .join(registry::version_dir_name(version))
-                            .join(text::TEXT_DIR);
-                        if dir.is_dir() {
+                        let dir = archive::resolve_version_dir(&config.data_dir, version)
+                            .map(|(_, dir)| dir.join(text::TEXT_DIR));
+                        if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
                             let started = std::time::Instant::now();
                             match text::TextIndex::open(&dir) {
                                 Ok(index) => {
@@ -373,11 +370,14 @@ fn main() -> anyhow::Result<()> {
                     "no corpus archive for Bevy {version}; run `bevy-manual-mcp build --records <records.ndjson>` first"
                 );
             };
-            let text_dir = config
-                .data_dir
-                .join("versions")
-                .join(registry::version_dir_name(&version))
-                .join(text::TEXT_DIR);
+            let text_dir = archive::resolve_version_dir(&config.data_dir, &version)
+                .map(|(_, dir)| dir.join(text::TEXT_DIR))
+                .filter(|dir| dir.is_dir())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no text index for Bevy {version}; run `bevy-manual-mcp build --records <records.ndjson>` first"
+                    )
+                })?;
             if !text_dir.is_dir() {
                 bail!(
                     "no text index at {}; run `bevy-manual-mcp build --records <records.ndjson>` first",
@@ -425,13 +425,13 @@ fn main() -> anyhow::Result<()> {
                 .bevy_version
                 .clone()
                 .ok_or_else(|| anyhow!("no Bevy version detected; set BEVY_VERSION"))?;
-            let path = archive::archive_path_for(&config.data_dir, &version);
-            if !path.is_file() {
+            let Some((_, corpus_dir)) = archive::resolve_version_dir(&config.data_dir, &version)
+            else {
                 bail!(
-                    "no corpus archive for Bevy {version} at {}; run `bevy-manual-mcp build --records <records.ndjson>`",
-                    path.display()
+                    "no corpus archive for Bevy {version}; run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index {version}`"
                 );
-            }
+            };
+            let path = corpus_dir.join(archive::ARCHIVE_FILE);
             let started = std::time::Instant::now();
             let corpus = LoadedCorpus::open(&path)?;
             let load_ms = started.elapsed().as_millis();
