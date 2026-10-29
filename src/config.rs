@@ -214,7 +214,7 @@ impl Config {
     }
 
     pub fn log(&self, message: impl AsRef<str>) {
-        eprintln!("[bevy-mcp] {}", message.as_ref());
+        eprintln!("[bevy-manual-mcp] {}", message.as_ref());
     }
 }
 
@@ -246,7 +246,7 @@ fn load_config_file(project_root: &Path) -> (Option<PathBuf>, ConfigFile) {
         {
             Ok(file) => return (Some(candidate), file),
             Err(error) => eprintln!(
-                "[bevy-mcp] config: ignoring {} ({error})",
+                "[bevy-manual-mcp] config: ignoring {} ({error})",
                 candidate.display()
             ),
         }

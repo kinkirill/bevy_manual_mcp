@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-const BIN: &str = env!("CARGO_BIN_EXE_bevy-mcp");
+const BIN: &str = env!("CARGO_BIN_EXE_bevy-manual-mcp");
 const CLEAR_ENV: [&str; 12] = [
     "BEVY_PROJECT_ROOT",
     "BEVY_MCP_DATA_DIR",
@@ -235,7 +235,10 @@ fn status_reports_the_loaded_corpus() {
         .expect("run status");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("# bevy-mcp index status"), "{stdout}");
+    assert!(
+        stdout.contains("# bevy-manual-mcp index status"),
+        "{stdout}"
+    );
     assert!(stdout.contains("- **Records:** 4"), "{stdout}");
     assert!(stdout.contains("- **Corpus:** corpus.rkyv v1"), "{stdout}");
     assert!(stdout.contains("loaded in"), "{stdout}");

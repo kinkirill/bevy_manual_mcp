@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-const BIN: &str = env!("CARGO_BIN_EXE_bevy-mcp");
+const BIN: &str = env!("CARGO_BIN_EXE_bevy-manual-mcp");
 const TIMEOUT: Duration = Duration::from_secs(20);
 const CLEAR_ENV: [&str; 12] = [
     "BEVY_VERSION",
@@ -107,7 +107,7 @@ impl Server {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = command.spawn().expect("spawn bevy-mcp");
+        let mut child = command.spawn().expect("spawn bevy-manual-mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let (sender, lines) = channel();
@@ -169,7 +169,7 @@ impl Server {
             json!({
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": { "name": "bevy-mcp-rust-tests", "version": "0.0.0" }
+                "clientInfo": { "name": "bevy-manual-mcp-rust-tests", "version": "0.0.0" }
             }),
         );
         self.notify("notifications/initialized");
@@ -204,7 +204,7 @@ fn handshake_reports_server_identity_and_tools() {
     let response = server.initialize();
     let result = &response["result"];
 
-    assert_eq!(result["serverInfo"]["name"], "bevy-mcp");
+    assert_eq!(result["serverInfo"]["name"], "bevy-manual-mcp");
     assert_eq!(result["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(
         result["capabilities"]["tools"].is_object(),
@@ -302,7 +302,10 @@ fn cli_help_and_status_work_without_a_transport() {
         .expect("run status");
     assert!(status.status.success());
     let stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(stdout.contains("# bevy-mcp index status"), "{stdout}");
+    assert!(
+        stdout.contains("# bevy-manual-mcp index status"),
+        "{stdout}"
+    );
     assert!(stdout.contains("9.9.9"), "{stdout}");
 
     let version = Command::new(BIN)

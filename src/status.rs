@@ -61,7 +61,7 @@ pub fn status(
         .unwrap_or(false);
 
     let mut lines = vec![
-        "# bevy-mcp index status".to_string(),
+        "# bevy-manual-mcp index status".to_string(),
         String::new(),
         format!("- **Bevy version:** {}", version.unwrap_or("UNKNOWN")),
         format!(
@@ -89,7 +89,7 @@ pub fn status(
     if archived.is_none() {
         lines.push(String::new());
         lines.push(format!(
-            "No compiled corpus is installed for Bevy {}. Run `bevy-mcp fetch-index {}` to install one.",
+            "No compiled corpus is installed for Bevy {}. Run `bevy-manual-mcp fetch-index {}` to install one.",
             version.unwrap_or("<version>"),
             version.unwrap_or("<version>")
         ));
@@ -295,7 +295,8 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
         lines.push("_Only one version is indexed. To add another:_".to_string());
         lines.push(String::new());
         lines.push(
-            "- `bevy-mcp fetch-index <version>` and set `BEVY_VERSION=<version>`.".to_string(),
+            "- `bevy-manual-mcp fetch-index <version>` and set `BEVY_VERSION=<version>`."
+                .to_string(),
         );
         lines.push("- or run `cargo doc` in a project pinned to that version.".to_string());
     }

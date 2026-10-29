@@ -157,14 +157,14 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
     let release = format!("v{version}");
 
     let manifest_url = join(&base, &release, RELEASE_MANIFEST);
-    eprintln!("[bevy-mcp] fetching {manifest_url}");
+    eprintln!("[bevy-manual-mcp] fetching {manifest_url}");
     let manifest_bytes = read_url(&manifest_url)?;
     let manifest: ReleaseManifest = serde_json::from_slice(&manifest_bytes)
         .with_context(|| format!("invalid release manifest at {manifest_url}"))?;
 
     if manifest.manifest_version != RUST_MANIFEST_VERSION {
         bail!(
-            "release {release} advertises manifest version {}; this bevy-mcp needs {RUST_MANIFEST_VERSION} (a Rust-format bundle). Publish one with `bevy-mcp build --pack` first.",
+            "release {release} advertises manifest version {}; this bevy-manual-mcp needs {RUST_MANIFEST_VERSION} (a Rust-format bundle). Publish one with `bevy-manual-mcp build --pack` first.",
             manifest.manifest_version
         );
     }
@@ -183,7 +183,7 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
     }
 
     let asset_url = join(&base, &release, &manifest.asset);
-    eprintln!("[bevy-mcp] downloading {}", manifest.asset);
+    eprintln!("[bevy-manual-mcp] downloading {}", manifest.asset);
     let bytes = read_url_timeout(&asset_url, 600)?;
     if let Some(size) = manifest.size
         && bytes.len() as u64 != size

@@ -1,4 +1,4 @@
-//! `bevy-mcp` — a native MCP server for version-accurate Bevy documentation.
+//! `bevy-manual-mcp` — a native MCP server for version-accurate Bevy documentation.
 //!
 //! The bare command serves MCP over stdio because that is how MCP clients
 //! launch a server. Help lives behind `--help`/`help`; subcommands cover the
@@ -32,7 +32,7 @@ use crate::config::Config;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "bevy-mcp",
+    name = "bevy-manual-mcp",
     version,
     about = "Version-accurate Bevy API docs, guides, examples and migration notes as an MCP server",
     long_about = None
@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
         Command::Serve => {
             if std::io::stdin().is_terminal() {
                 eprintln!(
-                    "bevy-mcp {}: serving MCP over stdio — Ctrl-C to exit; see --help",
+                    "bevy-manual-mcp {}: serving MCP over stdio — Ctrl-C to exit; see --help",
                     env!("CARGO_PKG_VERSION")
                 );
             }
@@ -242,7 +242,7 @@ fn main() -> anyhow::Result<()> {
                 source_fingerprint: meta.as_ref().and_then(|m| m.fingerprint.clone()),
             };
             eprintln!(
-                "[bevy-mcp] compiling {} for Bevy {version} into {}",
+                "[bevy-manual-mcp] compiling {} for Bevy {version} into {}",
                 records_path.display(),
                 out_dir.display()
             );
@@ -262,7 +262,7 @@ fn main() -> anyhow::Result<()> {
                 &version,
             );
             eprintln!(
-                "[bevy-mcp] supplemental sources: website={}, examples={}, error_codes={}",
+                "[bevy-manual-mcp] supplemental sources: website={}, examples={}, error_codes={}",
                 website.len(),
                 examples.len(),
                 error_codes.len()
@@ -309,7 +309,7 @@ fn main() -> anyhow::Result<()> {
             let (corpus, _) = load_corpus(&config);
             let Some(corpus) = corpus else {
                 bail!(
-                    "no corpus archive for Bevy {version}; run `bevy-mcp build --records <records.ndjson>` first"
+                    "no corpus archive for Bevy {version}; run `bevy-manual-mcp build --records <records.ndjson>` first"
                 );
             };
             let text_dir = config
@@ -319,7 +319,7 @@ fn main() -> anyhow::Result<()> {
                 .join(text::TEXT_DIR);
             if !text_dir.is_dir() {
                 bail!(
-                    "no text index at {}; run `bevy-mcp build --records <records.ndjson>` first",
+                    "no text index at {}; run `bevy-manual-mcp build --records <records.ndjson>` first",
                     text_dir.display()
                 );
             }
@@ -367,7 +367,7 @@ fn main() -> anyhow::Result<()> {
             let path = archive::archive_path_for(&config.data_dir, &version);
             if !path.is_file() {
                 bail!(
-                    "no corpus archive for Bevy {version} at {}; run `bevy-mcp build --records <records.ndjson>`",
+                    "no corpus archive for Bevy {version} at {}; run `bevy-manual-mcp build --records <records.ndjson>`",
                     path.display()
                 );
             }
@@ -376,7 +376,7 @@ fn main() -> anyhow::Result<()> {
             let load_ms = started.elapsed().as_millis();
             if config.debug {
                 eprintln!(
-                    "[bevy-mcp] corpus loaded in {load_ms} ms ({} bytes, validation included)",
+                    "[bevy-manual-mcp] corpus loaded in {load_ms} ms ({} bytes, validation included)",
                     corpus.size()
                 );
             }
@@ -416,7 +416,7 @@ fn main() -> anyhow::Result<()> {
             }
             if config.debug {
                 eprintln!(
-                    "[bevy-mcp] lookup {symbol:?} returned {} hit(s)",
+                    "[bevy-manual-mcp] lookup {symbol:?} returned {} hit(s)",
                     hits.len()
                 );
             }

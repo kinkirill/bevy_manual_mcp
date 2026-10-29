@@ -278,7 +278,7 @@ impl BevyMcp {
         self.check_version(params.version.as_deref())?;
         let state = self.search_state().ok_or_else(|| {
             anyhow!(
-                "no corpus with a text index is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` first.",
+                "no corpus with a text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
             )
         })?;
@@ -322,7 +322,7 @@ impl BevyMcp {
         self.check_version(params.version.as_deref())?;
         let state = self.search_state().ok_or_else(|| {
             anyhow!(
-                "no corpus is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` first.",
+                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
             )
         })?;
@@ -368,7 +368,7 @@ impl BevyMcp {
     fn run_examples(&self, params: ExamplesParams) -> anyhow::Result<(String, Value)> {
         let state = self.search_state().ok_or_else(|| {
             anyhow!(
-                "no corpus is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` or `bevy-mcp fetch-index` first.",
+                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
             )
         })?;
@@ -421,7 +421,7 @@ impl BevyMcp {
     fn run_migration(&self, params: MigrationParams) -> anyhow::Result<(String, Value)> {
         let state = self.search_state().ok_or_else(|| {
             anyhow!(
-                "no corpus is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` or `bevy-mcp fetch-index` first.",
+                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
             )
         })?;
@@ -1207,7 +1207,10 @@ impl ServerHandler for BevyMcp {
             .build();
         capabilities.completions = Some(serde_json::Map::new());
         ServerConfig::new(capabilities)
-            .with_server_info(Implementation::new("bevy-mcp", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new(
+                "bevy-manual-mcp",
+                env!("CARGO_PKG_VERSION"),
+            ))
             .with_instructions(
                 "Version-accurate Bevy API docs, guides, examples and migration notes. \
                  Call bevy_index_status first to see which Bevy version is indexed. \

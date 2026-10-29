@@ -37,8 +37,8 @@ adds toolchain friction on top.
 Primary axes, in the order they were chosen:
 
 1. **Cold start and memory.** Native process, zero parse at startup.
-2. **Install path.** `cargo install bevy-mcp`; no Node, no npm, anywhere in the
-   user's path.
+2. **Install path.** `cargo install bevy-manual-mcp`; no Node, no npm, anywhere
+   in the user's path.
 3. **The analyzer parses properly.** `syn` replaces the hand-rolled
    bracket-stack signature parser.
 4. **Memory footprint across six corpora.** mmap lazily; files are not
@@ -70,10 +70,10 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
 ## 4. Distribution and identity
 
 - **One published package:** `bevy-manual-mcp` on crates.io, with
-  `[[bin]] name = "bevy-mcp"` so the installed command stays `bevy-mcp`.
-  Both `bevy-mcp` and `bevy-manual-mcp` were free when checked. crates.io
-  treats names differing only by case or `-`/`_` as taken, so this also locks
-  out `bevy_manual_mcp`.
+  `[[bin]] name = "bevy-manual-mcp"` so the installed command matches the
+  package. The short `bevy-mcp` name is already the npm server's command, so
+  reusing it would be ambiguous. crates.io treats names differing only by case
+  or `-`/`_` as taken, so this also locks out `bevy_manual_mcp`.
 - **Install:** `cargo install bevy-manual-mcp`. Source-only; the user is
   expected to have a Rust toolchain. CI still verifies the crate builds on
   Linux, macOS and Windows.
@@ -92,9 +92,9 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
   indexes it can serve.
 - **Index bundles** stay on GitHub Releases. Nothing new to host.
 - **MCP registry:** `server.json` moves to `registryType: "cargo"`,
-  `identifier: "bevy-mcp"`, stdio transport, same environment variables. The
-  registry schema permits `cargo` and does not require `packages`, so the entry
-  stays honest. Publish the entry only once the crate is actually installable.
+  `identifier: "bevy-manual-mcp"`, stdio transport, same environment variables.
+  The registry schema permits `cargo` and does not require `packages`, so the
+  entry stays honest. Publish the entry only once the crate is actually installable.
 - **Index acquisition:** first run auto-downloads the bundle for the detected
   Bevy version (progress on stderr, clear failure message); `BEVY_MCP_OFFLINE=1`
   opts out. The index cannot be embedded in the crate: crates.io enforces a
@@ -103,26 +103,26 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
 
 ## 5. CLI contract
 
-The bare command is the MCP server. MCP clients launch `bevy-mcp` with no
-arguments, and every existing config depends on that.
+The bare command is the MCP server. MCP clients launch `bevy-manual-mcp` with
+no arguments; that bare-command contract is what MCP client configs pin.
 
 ```
-bevy-mcp                 # serve on stdio (bare = serve)
-bevy-mcp serve           # explicit form
-bevy-mcp --help | help   # manual
-bevy-mcp --version       # crate version + servable index versions
-bevy-mcp status          # detected Bevy version, config, bundle state
-bevy-mcp fetch-index [ver]
-bevy-mcp build [--doc-dir …] [--out …]
-bevy-mcp search "query" [--json] [--limit N] [--kind …]
-bevy-mcp lookup Symbol [--json]
-bevy-mcp explain "query" [--json]   # score breakdown
-bevy-mcp versions                   # installed/available corpora
+bevy-manual-mcp                 # serve on stdio (bare = serve)
+bevy-manual-mcp serve           # explicit form
+bevy-manual-mcp --help | help   # manual
+bevy-manual-mcp --version       # crate version + servable index versions
+bevy-manual-mcp status          # detected Bevy version, config, bundle state
+bevy-manual-mcp fetch-index [ver]
+bevy-manual-mcp build [--doc-dir …] [--out …]
+bevy-manual-mcp search "query" [--json] [--limit N] [--kind …]
+bevy-manual-mcp lookup Symbol [--json]
+bevy-manual-mcp explain "query" [--json]   # score breakdown
+bevy-manual-mcp versions                   # installed/available corpora
 ```
 
-When stdin is a terminal, bare `bevy-mcp` prints a one-line notice to **stderr**
-("serving MCP over stdio — Ctrl-C to exit; see --help") and then serves. Stdout
-stays clean for the protocol, so nothing breaks.
+When stdin is a terminal, bare `bevy-manual-mcp` prints a one-line notice to
+**stderr** ("serving MCP over stdio — Ctrl-C to exit; see --help") and then
+serves. Stdout stays clean for the protocol, so nothing breaks.
 
 `search`, `lookup`, `explain` and `versions` are permanent features (useful to
 humans and to maintainers), not test scaffolding. The parity gate still goes
@@ -136,7 +136,7 @@ crates.io names to own and publish in lockstep. Modules are the internal seam;
 subcommands are the entry points.
 
 ```
-Cargo.toml                 package bevy-mcp, version 0.1.0 at parity
+Cargo.toml                 package bevy-manual-mcp, version 0.1.0 at parity
 src/main.rs                clap dispatch: serve | build | fetch-index | search | …
 src/config.rs              config file, env precedence, data dirs
 src/version_detect.rs      Cargo.lock parse (fast path), Cargo.toml fallback
@@ -243,7 +243,10 @@ are not interchangeable.
 
 - Config file (`bevy-mcp.config.json`), environment variables
   (`BEVY_PROJECT_ROOT`, `BEVY_VERSION`, `BEVY_DOC_DIR`, `BEVY_MCP_DATA_DIR`,
-  `BEVY_MCP_OFFLINE`) and precedence stay unchanged.
+  `BEVY_MCP_OFFLINE`) and precedence stay unchanged. Only the executable is
+  renamed: the config filename, the `~/.cache/bevy-mcp` data directory and the
+  `BEVY_MCP_*` variables keep their short spelling so existing setups keep
+  working.
 - **Version detection stays file-based** (Cargo.lock first, Cargo.toml
   fallback): it answers one question in microseconds and must not cost a
   subprocess on every start.
@@ -352,6 +355,7 @@ Walking skeleton first; every step lands with its tests and a green CI, not
 | 18 | analyzer | `syn` parsing only; no type/compile claims | syn as a validator; compile subprocess in v1 |
 | 19 | Node | CI/dev until cutover, then gone | Node-free during the port |
 | 20 | test strategy | Rust tests + black-box MCP gate + TS oracle | two-state harness; port tests first |
+| 21 | executable name | `bevy-manual-mcp`, matching the package | plain `bevy-mcp` (collides with the npm server's command) |
 
 ## 17. Deliberately still open (implementation, not architecture)
 
@@ -391,14 +395,14 @@ Consequences recorded:
 
 - The `rkyv` schema (records + interned arena + symbol table + name-token
   index) is settled as implemented; `format_version` is `1`.
-- `bevy-mcp build --records <ndjson> --out <dir>` is the builder entry point
-  until source ingest lands; it writes `corpus.rkyv` plus
+- `bevy-manual-mcp build --records <ndjson> --out <dir>` is the builder entry
+  point until source ingest lands; it writes `corpus.rkyv` plus
   `corpus.manifest.json` (size, SHA-256, counts) atomically.
 - Bundle `.tar.zst` packing and `fetch-index` download are deferred to step 2,
   when the bundle has its final contents (tantivy). The manifest contract is
   already written and tested; only the container and transport are missing.
-- `bevy-mcp lookup <symbol>` now goes through the mmap, so the CLI debugging
-  surface from §5 is live rather than stubbed.
+- `bevy-manual-mcp lookup <symbol>` now goes through the mmap, so the CLI
+  debugging surface from §5 is live rather than stubbed.
 
 ## 19. Step 2 results — search
 
@@ -548,7 +552,7 @@ Release manifest (`index-manifest.json`, attached next to the asset):
 `manifest_version: 2` is the Rust bundle; 1 is the old TypeScript bundle and is
 rejected with an explanatory error instead of being half-installed.
 
-`bevy-mcp fetch-index <version>`:
+`bevy-manual-mcp fetch-index <version>`:
 
 1. reads `<base>/v<version>/index-manifest.json` (base defaults to this
    repository's GitHub Releases, overridable with `BEVY_MCP_INDEX_BASE_URL` for
@@ -562,8 +566,8 @@ rejected with an explanatory error instead of being half-installed.
 
 `BEVY_MCP_OFFLINE=1` refuses the download. `--force` reinstalls.
 
-`bevy-mcp build --pack <file>` produces the release asset from a local build.
-End-to-end test (`bundle_pack_and_fetch_round_trip`) builds a fixture, packs it,
+`bevy-manual-mcp build --pack <file>` produces the release asset from a local
+build. End-to-end test (`bundle_pack_and_fetch_round_trip`) builds a fixture, packs it,
 serves it from a directory, fetches it into a fresh data dir, and answers a
 lookup through the installed corpus; `fetch_rejects_a_typescript_manifest` locks
 in the version mismatch error.
