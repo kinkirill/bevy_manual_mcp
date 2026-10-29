@@ -1,7 +1,7 @@
 name: release
 
 # Build one index bundle per dispatch. Assets are published under the Bevy
-# version tag (v0.20.0), separately from the crate version.
+# minor tag (v0.20), separately from the crate version.
 on:
   workflow_dispatch:
     inputs:
@@ -28,10 +28,6 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       REVISION: ${{ inputs.revision }}
-      BEVY_MCP_DATA_DIR: ${{ runner.temp }}/data
-      BEVY_META_DIR: ${{ runner.temp }}/bevy-meta
-      BEVY_WEBSITE_DIR: ${{ runner.temp }}/bevy-website
-      BEVY_EXAMPLES_DIR: ${{ runner.temp }}/bevy-src/examples
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,13 +50,15 @@ jobs:
           git -C "$RUNNER_TEMP/bevy-src" sparse-checkout set examples
 
       - name: Harvest metadata
+        env:
+          BEVY_META_DIR: ${{ runner.temp }}/bevy-meta
         run: |
           target/release/bevy-manual-mcp harvest-meta "$VERSION" \
             --out "$BEVY_META_DIR/$VERSION" --force
           target/release/bevy-manual-mcp harvest-compat \
             --out "$RUNNER_TEMP/ecosystem"
           target/release/bevy-manual-mcp fetch-website \
-            --out "$BEVY_WEBSITE_DIR"
+            --out "$RUNNER_TEMP/bevy-website"
 
       - name: Resolve the minor release tag
         run: |
@@ -68,6 +66,11 @@ jobs:
           echo "RELEASE_TAG=v$MINOR" >> "$GITHUB_ENV"
 
       - name: Build the index bundle
+        env:
+          BEVY_MCP_DATA_DIR: ${{ runner.temp }}/data
+          BEVY_META_DIR: ${{ runner.temp }}/bevy-meta
+          BEVY_WEBSITE_DIR: ${{ runner.temp }}/bevy-website
+          BEVY_EXAMPLES_DIR: ${{ runner.temp }}/bevy-src/examples
         run: |
           mkdir -p dist
           target/release/bevy-manual-mcp build \
