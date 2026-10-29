@@ -69,18 +69,26 @@ Concept-query latency is explicitly *secondary* to ranking quality. Targets:
 
 ## 4. Distribution and identity
 
-- **One published package:** `bevy-mcp` on crates.io. It is currently free
-  (sparse-index 404 for both `bevy-mcp` and `bevy_mcp`). crates.io treats names
-  differing only by case or `-`/`_` as taken, so publishing this name also locks
-  out `bevy_mcp`. Lowercase, hyphenated: command `bevy-mcp`, library name
-  `bevy_mcp` (derived by Cargo) if a lib target ever exists.
-- **Install:** `cargo install bevy-mcp`. Source-only; the user is expected to
-  have a Rust toolchain. CI still verifies the crate builds on Linux, macOS and
-  Windows.
-- **First publish only at parity**, as **0.1.0**. No preview releases and no
-  placeholder/`0.0.1` reservation: a half-baked artifact is exactly what we are
-  refusing to ship. A crate version no longer tracks a Bevy version; the binary
-  reports its own version and the indexes it can serve.
+- **One published package:** `bevy-manual-mcp` on crates.io, with
+  `[[bin]] name = "bevy-mcp"` so the installed command stays `bevy-mcp`.
+  Both `bevy-mcp` and `bevy-manual-mcp` were free when checked. crates.io
+  treats names differing only by case or `-`/`_` as taken, so this also locks
+  out `bevy_manual_mcp`.
+- **Install:** `cargo install bevy-manual-mcp`. Source-only; the user is
+  expected to have a Rust toolchain. CI still verifies the crate builds on
+  Linux, macOS and Windows.
+- **Packaging:** `include` names only `src/**/*.rs`, `Cargo.toml`,
+  `Cargo.lock`, `README.md`, `LICENSE` and this document. Without it Cargo would
+  ship the TypeScript tree and the vendored website (1,012 files); with it the
+  package is 22 files / 85 KB compressed.
+- **A lib-only 0.0.1 reservation is published** from `reserve/` to claim the
+  name. It has no binary and its README says the server is not published yet;
+  `cargo install` fails with "no binaries", which is the honest state.
+  crates.io names are first-come and permanent (yank, never delete), so the
+  placeholder is visible forever — the trade accepted for the reservation.
+- **The first real publish is 0.1.0 at parity.** No previews. A crate version no
+  longer tracks a Bevy version; the binary reports its own version and the
+  indexes it can serve.
 - **Index bundles** stay on GitHub Releases. Nothing new to host.
 - **MCP registry:** `server.json` moves to `registryType: "cargo"`,
   `identifier: "bevy-mcp"`, stdio transport, same environment variables. The

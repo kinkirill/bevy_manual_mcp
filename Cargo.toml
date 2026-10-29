@@ -1,12 +1,28 @@
 [package]
-name = "bevy-mcp"
+name = "bevy-manual-mcp"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Version-accurate Bevy API docs, guides, examples and migration notes as an MCP server"
 license = "MIT"
 repository = "https://github.com/kinkirill/bevy_manual_mcp"
+homepage = "https://github.com/kinkirill/bevy_manual_mcp"
 readme = "README.md"
+keywords = ["bevy", "mcp", "documentation", "search", "gamedev"]
+categories = ["development-tools", "game-development"]
+# Ship the server, not the TypeScript tree or vendor corpora.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/docs/rust-rewrite.md",
+    "src/**/*.rs",
+]
+
+[[bin]]
+name = "bevy-mcp"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
