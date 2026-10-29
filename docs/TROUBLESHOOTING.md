@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Back to the [README](README.md) · [Getting the API docs](GETTING-API-DOCS.md).
+Back to the [README](../README.md) · [Getting the API docs](GETTING-API-DOCS.md).
 
 ## The server says no Bevy version was detected
 

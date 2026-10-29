@@ -16,7 +16,7 @@ include = [
     "/Cargo.lock",
     "/README.md",
     "/LICENSE",
-    "/docs/rust-rewrite.md",
+    "/docs/**/*.md",
     "src/**/*.rs",
 ]
 

@@ -1,6 +1,6 @@
 # How it works
 
-Back to the [README](README.md) · [Getting the API docs](GETTING-API-DOCS.md).
+Back to the [README](../README.md) · [Getting the API docs](GETTING-API-DOCS.md).
 
 The server is a native Rust process with one job: answer from a corpus pinned to
 the Bevy version in the user's `Cargo.lock`, without parsing JSON at startup.
@@ -91,5 +91,5 @@ src/ingest/          rustdoc HTML, website markdown, examples, metadata
 src/harvest/         docs.rs, website, feature graph, compat harvesters
 ```
 
-The design record, decisions and measurements are in
-[docs/rust-rewrite.md](docs/rust-rewrite.md).
+For tests, index rebuilds and release steps, see
+[DEVELOPING.md](DEVELOPING.md).

@@ -364,8 +364,11 @@ pub fn read_url_timeout(url: &str, global_seconds: u64) -> Result<Vec<u8>> {
             )
             .call()
             .map_err(|error| anyhow!("GET {url} failed: {error}"))?;
+        // ureq defaults to a 10 MB body limit; index assets are ~35 MB.
         response
             .body_mut()
+            .with_config()
+            .limit(512 * 1024 * 1024)
             .read_to_vec()
             .map_err(|error| anyhow!("cannot read {url}: {error}"))
     } else {

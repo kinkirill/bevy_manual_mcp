@@ -1,6 +1,6 @@
 # Publishing
 
-Back to the [README](README.md).
+Back to the [README](../README.md).
 
 Two artifacts are published independently:
 
@@ -8,8 +8,7 @@ Two artifacts are published independently:
 2. **index bundles** for each Bevy version on GitHub Releases.
 
 The crate version does not track a Bevy version. `0.1.0` is the first real
-release and is published only once the parity gate in
-`docs/rust-rewrite.md` passes. No previews.
+release and is published only after the checklist below passes. No previews.
 
 ## Prerequisites
 
@@ -29,7 +28,7 @@ cargo package --no-verify
 ```
 
 `cargo package` must stay small. The `include` list ships only the Rust sources,
-`Cargo.toml`, `Cargo.lock`, `README.md`, `LICENSE` and the design document.
+`Cargo.toml`, `Cargo.lock`, `README.md`, `LICENSE` and `docs/`.
 Vendored corpora and website prose stay out of the crate; they live in bundles
 or inside the binary's ingest path.
 

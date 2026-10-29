@@ -1,6 +1,6 @@
 # Third-party notices
 
-This project's own source code is licensed under the MIT License (see `LICENSE`).
+This project's own source code is licensed under the MIT License (see `../LICENSE`).
 It additionally redistributes or derives data from the following third-party
 projects. Their notices are reproduced below.
 
