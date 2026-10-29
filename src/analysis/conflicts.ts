@@ -1,5 +1,5 @@
 /** Conflict rules R1–R5 for Bevy system parameter validation. */
-import type { ParamKind } from "./rust-fn.js";
+import type { ParamKind, QueryAccess } from "./rust-fn.js";
 import { checkFilterDisjointness } from "./filters.js";
 
 export interface Finding {
@@ -18,46 +18,43 @@ export interface ValidationResult {
   systemsClean: number;
 }
 
-/** Whether a `Query<D, ...>` data part is a mutable borrow. */
-function isMutableQuery(data: string): boolean {
-  return /&\s*mut\s+/.test(data) || /^\s*mut\s+\w/.test(data);
-}
-
-/** The component type read/written by a `Query<D, ...>` data part. */
-function queryDataType(data: string): string | undefined {
-  return data.trim().match(/&(?:\s*mut\s+)?([A-Za-z_][A-Za-z0-9_]*)/)?.[1];
-}
-
 /** Run all conflict rules against extracted access patterns. */
 export function checkConflicts(params: ParamKind[]): Finding[] {
   const findings: Finding[] = [];
 
-  // R1 / R2 — conflicting Query data access (B0001), unless filters disjoint them.
-  const queries: { type: string; mutable: boolean; filters: string[] }[] = [];
+  // R1 / R2 — conflicting Query component access (B0001), unless filters are
+  // provably disjoint. Tuple members are compared individually.
+  const queries: { accesses: QueryAccess[]; filters: string[] }[] = [];
   for (const p of params) {
-    if (p.kind !== "Query") continue;
-    const type = queryDataType(p.data);
-    if (!type) continue;
-    queries.push({ type, mutable: isMutableQuery(p.data), filters: p.filters ?? [] });
+    if (p.kind !== "Query" || !p.accesses.length) continue;
+    queries.push({ accesses: p.accesses, filters: p.filters ?? [] });
   }
   for (let i = 0; i < queries.length; i++) {
     for (let j = i + 1; j < queries.length; j++) {
       const a = queries[i]!;
       const b = queries[j]!;
-      if (a.type !== b.type || !(a.mutable || b.mutable)) continue;
       if (checkFilterDisjointness(a.filters, b.filters)) continue;
-      const bothMutable = a.mutable && b.mutable;
-      findings.push({
-        rule: bothMutable ? "R2" : "R1",
-        severity: "panic",
-        resourceType: a.type,
-        paramA: `Query<&mut ${a.type}>`,
-        paramB: bothMutable ? `Query<&mut ${b.type}>` : `Query<&${b.type}>`,
-        description: bothMutable
-          ? `Two Query<&mut ${a.type}> without disjoint filters — B0001 panic`
-          : `Query<&mut ${a.type}> and Query<&${a.type}> without disjoint filters — B0001 panic`,
-        errorCode: "B0001",
-      });
+      const reported = new Set<string>();
+      for (const accessA of a.accesses) {
+        for (const accessB of b.accesses) {
+          if (accessA.type !== accessB.type) continue;
+          if (!(accessA.mutable || accessB.mutable)) continue;
+          if (reported.has(accessA.type)) continue;
+          reported.add(accessA.type);
+          const bothMutable = accessA.mutable && accessB.mutable;
+          findings.push({
+            rule: bothMutable ? "R2" : "R1",
+            severity: "panic",
+            resourceType: accessA.name,
+            paramA: `Query<${accessA.mutable ? "&mut " : "&"}${accessA.type}>`,
+            paramB: `Query<${accessB.mutable ? "&mut " : "&"}${accessB.type}>`,
+            description: bothMutable
+              ? `Two Query<&mut ${accessA.name}> without disjoint filters — B0001 panic`
+              : `Query<&mut ${accessA.name}> and Query<&${accessA.name}> without disjoint filters — B0001 panic`,
+            errorCode: "B0001",
+          });
+        }
+      }
     }
   }
 

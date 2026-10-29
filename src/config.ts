@@ -18,6 +18,7 @@ function pick(...values: (string | null | undefined)[]): string | undefined {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const corpusSchema = z.object({
   crate: z.string(), version: z.string().optional(), auto: z.boolean().optional(),
+  docDir: z.string().optional(), indexDir: z.string().optional(), source: z.string().optional(),
 });
 const configSchema = z.object({
   projectRoot: z.string().optional(), bevyVersion: z.string().optional(), version: z.string().optional(),
@@ -241,13 +242,16 @@ export function resolveConfig(options: ResolveConfigOptions = {}): ResolvedConfi
   const rawCorpora: unknown[] = Array.isArray(file.corpora) ? file.corpora : [];
   const corpora: CorpusConfig[] = rawCorpora.map((raw) => {
     const cfg = corpusSchema.parse(raw);
+    const docDir = resolveConfigPath(cfg.docDir, configDir);
+    const indexDir = resolveConfigPath(cfg.indexDir, configDir);
     if (cfg.auto) {
       // Auto-detect from Cargo project
       const detected = detectCrateVersion(projectRoot, env, cfg.crate);
       return { crate: cfg.crate, version: detected.version ?? cfg.version,
-        auto: true };
+        auto: true, docDir, indexDir, source: cfg.source };
     }
-    return { crate: cfg.crate, version: cfg.version ?? "?", auto: false } as const;
+    return { crate: cfg.crate, version: cfg.version ?? "?", auto: false,
+      docDir, indexDir, source: cfg.source } as const;
   });
 
   return { projectRoot, bevyVersion: version, versionSource: detected.source, versionNote: detected.note,

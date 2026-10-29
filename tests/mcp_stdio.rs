@@ -1074,28 +1074,27 @@ fn write_compat_fixture(root: &Path) -> std::path::PathBuf {
     std::fs::write(
         &path,
         serde_json::to_string_pretty(&json!({
-            "bevy_egui": [
-                { "plugin": "bevy_egui", "plugin_version": "0.43.1", "requires_bevy": "^0.20.0" },
-                { "plugin": "bevy_egui", "plugin_version": "0.42.0", "requires_bevy": "^0.19" },
-                { "plugin": "bevy_egui", "plugin_version": "0.0.1", "requires_bevy": "^0.0.3" }
-            ],
-            "edge_plugin": [
-                { "plugin": "edge_plugin", "plugin_version": "1.0.0", "requires_bevy": ">=0.20.0" }
-            ]
+            "meta": {
+                "harvested_at": "2026-01-02T00:00:00Z",
+                "source": "fixture",
+                "version_count": 4,
+                "plugin_count": 2,
+                "complete": true
+            },
+            "plugins": {
+                "bevy_egui": [
+                    { "plugin": "bevy_egui", "plugin_version": "0.43.1", "requires_bevy": "^0.20.0" },
+                    { "plugin": "bevy_egui", "plugin_version": "0.42.0", "requires_bevy": "^0.19" },
+                    { "plugin": "bevy_egui", "plugin_version": "0.0.1", "requires_bevy": "^0.0.3" }
+                ],
+                "edge_plugin": [
+                    { "plugin": "edge_plugin", "plugin_version": "1.0.0", "requires_bevy": ">=0.20.0" }
+                ]
+            }
         }))
         .expect("compat json"),
     )
     .expect("write compat");
-    std::fs::write(
-        dir.join("compat-meta.json"),
-        serde_json::to_string_pretty(&json!({
-            "harvested_at": "2026-01-02T00:00:00Z",
-            "source": "fixture",
-            "version_count": 4
-        }))
-        .expect("meta json"),
-    )
-    .expect("write compat meta");
     path
 }
 

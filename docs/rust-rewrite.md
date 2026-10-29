@@ -846,9 +846,9 @@ few small corpora stays in the same millisecond range as one search.
 ### Compatibility without a network fallback
 
 `vendor/ecosystem/compat.json` is the only source; the description no longer
-claims crates.io. `vendor/ecosystem/compat-meta.json` travels with it and records
-`harvested_at`, `source` and `version_count`; `scripts/harvest-compat.mts`
-writes both, and the tool returns `provenance` in every response (C-12).
+claims crates.io. `vendor/ecosystem/compat.json` carries a `meta` block with
+`harvested_at`, `source`, `version_count`, `plugin_count` and `complete`; the
+tool returns that block as `provenance` in every response (C-12).
 
 Requirement handling is cargo-shaped and **tri-state**:
 
@@ -991,7 +991,7 @@ Four maintenance verbs join the CLI; none are needed to serve MCP:
 | `fetch-docs [version] [--out]` | docs.rs `all.html` discovery, cached page list, resume, shared throttle, 4 workers, version manifest |
 | `fetch-website [--out] [--ref]` | sparse `git clone --filter=blob:none`, prose/`.rs`/LICENSE only, staged atomic swap |
 | `harvest-meta <version> [--tag] [--out] [--force]` | error-code guides, feature graph + closure (implicit optional deps included), default features, profiles, plugin gates, panic sites, provenance |
-| `harvest-compat [--out]` | compat snapshot + `compat-meta.json` from the **crates.io sparse index** (one request per crate) instead of the API |
+| `harvest-compat [--out]` | compat snapshot with a `meta` provenance block from the **crates.io sparse index** (one request per crate) instead of the API |
 
 Live validation:
 

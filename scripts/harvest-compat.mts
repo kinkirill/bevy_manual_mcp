@@ -87,20 +87,35 @@ async function main(): Promise<void> {
     console.log(`  ${entries.length} versions recorded`);
   }
 
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, JSON.stringify(compat, null, 2) + "\n");
   const total = Object.values(compat).reduce((n, list) => n + list.length, 0);
+  const complete = CRATES.every((crate) => (compat[crate]?.length ?? 0) > 0);
+  const snapshot = {
+    meta: {
+      harvested_at: new Date().toISOString(),
+      source: "crates.io API",
+      version_count: total,
+      plugin_count: Object.keys(compat).length,
+      complete,
+    },
+    plugins: compat,
+  };
 
-  // Provenance travels beside the snapshot so `bevy_ecosystem_compat` can say
-  // when and from where the data came without a network lookup.
-  const metaPath = path.join(path.dirname(outPath), "compat-meta.json");
-  fs.writeFileSync(metaPath, JSON.stringify({
-    harvested_at: new Date().toISOString(),
-    source: "crates.io API via scripts/harvest-compat.mts",
-    crates: CRATES,
-    version_count: total,
-  }, null, 2) + "\n");
-  console.log(`\nWrote ${total} entries to ${outPath} (+ compat-meta.json)`);
+  // A partial harvest must not silently replace a good snapshot.
+  let target = outPath;
+  if (!complete && fs.existsSync(outPath)) {
+    let existingGood = false;
+    try {
+      const existing = JSON.parse(fs.readFileSync(outPath, "utf8")) as { meta?: { complete?: boolean } };
+      existingGood = existing?.meta?.complete !== false;
+    } catch { /* an unreadable existing file can be replaced */ }
+    if (existingGood) {
+      target = `${outPath}.partial.json`;
+      console.error(`\n! Harvest is incomplete (${total} entries); keeping the good snapshot and writing a partial result to ${target}.`);
+    }
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(snapshot, null, 2) + "\n");
+  console.log(`\nWrote ${total} entries to ${target}${complete ? "" : " (incomplete)"}`);
 }
 
 main().catch((error: unknown) => {

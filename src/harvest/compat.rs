@@ -80,7 +80,7 @@ fn entries_from_index(ndjson: &str, crate_name: &str) -> Vec<CompatEntry> {
     entries
 }
 
-/// Harvest compat data into `out/compat.json` and `out/compat-meta.json`.
+/// Harvest compat data into `out/compat.json` (with a `meta` provenance block).
 pub fn harvest_compat(out: &Path) -> Result<()> {
     let fetcher = Fetcher::new(60);
     let mut compat: BTreeMap<String, Vec<CompatEntry>> = BTreeMap::new();
@@ -106,25 +106,25 @@ pub fn harvest_compat(out: &Path) -> Result<()> {
 
     fs::create_dir_all(out).with_context(|| format!("cannot create {}", out.display()))?;
     let version_count: usize = compat.values().map(Vec::len).sum();
-    fs::write(
-        out.join("compat.json"),
-        serde_json::to_string_pretty(&compat)? + "\n",
-    )
-    .context("cannot write compat.json")?;
-    let meta = serde_json::json!({
-        "harvested_at": chrono::Utc::now().to_rfc3339(),
-        "source": "crates.io sparse index via bevy-manual-mcp harvest-compat",
-        "crates": CRATES,
-        "version_count": version_count,
+    let complete = !compat.is_empty() && compat.values().all(|entries| !entries.is_empty());
+    let snapshot = serde_json::json!({
+        "meta": {
+            "harvested_at": chrono::Utc::now().to_rfc3339(),
+            "source": "crates.io sparse index via bevy-manual-mcp harvest-compat",
+            "version_count": version_count,
+            "plugin_count": compat.len(),
+            "complete": complete,
+        },
+        "plugins": compat,
     });
     fs::write(
-        out.join("compat-meta.json"),
-        serde_json::to_string_pretty(&meta)? + "\n",
+        out.join("compat.json"),
+        serde_json::to_string_pretty(&snapshot)? + "\n",
     )
-    .context("cannot write compat-meta.json")?;
+    .context("cannot write compat.json")?;
 
     println!(
-        "\nWrote {version_count} entries to {} (+ compat-meta.json)",
+        "\nWrote {version_count} entries to {}",
         out.join("compat.json").display()
     );
     Ok(())

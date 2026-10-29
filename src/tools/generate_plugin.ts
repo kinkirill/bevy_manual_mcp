@@ -8,10 +8,15 @@ import type { ToolContext, VersionResolution } from "./types.js";
 interface PluginTemplate {
   id: string;
   title: string;
-  requires: string[];   // Symbols needed (App, Plugin, etc.)
-  shape: string;        // Template with {{SLOT}} placeholders
-  verify?: string[];    // Symbols to verify exist before generating
+  /** Symbols that must exist in the pinned index. Diagnostic, not a compile check. */
+  requires: string[];
+  /** Named, allowlisted placeholders and their defaults. */
+  slots: Record<string, string>;
+  /** Template with `{{SLOT}}` placeholders. Every referenced type is declared here. */
+  shape: string;
 }
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Load templates from vendored data or use built-in definitions. */
 function getTemplates(): PluginTemplate[] {
@@ -20,84 +25,106 @@ function getTemplates(): PluginTemplate[] {
       id: "plugin-skeleton",
       title: "Minimal Plugin with one system and one resource",
       requires: ["App", "Plugin", "add_systems"],
+      slots: {
+        PLUGIN_NAME: "MyPlugin",
+        RESOURCE_TYPE: "MyResource",
+        SYSTEM_NAME: "my_system",
+      },
       shape: `use bevy::prelude::*;
 
-pub struct MyResource;
+#[derive(Resource)]
+pub struct {{RESOURCE_TYPE}};
 
-impl Plugin for MyPlugin {
+pub struct {{PLUGIN_NAME}};
+
+impl Plugin for {{PLUGIN_NAME}} {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MyResource>()
-            .add_systems(Update, my_system);
+        app.init_resource::<{{RESOURCE_TYPE}}>()
+            .add_systems(Update, {{SYSTEM_NAME}});
     }
 }
 
-fn my_system(resource: Res<MyResource>) {
-    // TODO: implement logic
+fn {{SYSTEM_NAME}}(resource: Res<{{RESOURCE_TYPE}}>) {
+    let _ = &resource;
 }`,
-      verify: ["App", "Plugin", "add_systems"],
     },
     {
       id: "plugin-with-systemset",
-      title: "Plugin with SystemSet for ordering",
+      title: "Plugin with a SystemSet for ordering",
       requires: ["App", "Plugin", "SystemSet", "add_systems"],
+      slots: {
+        PLUGIN_NAME: "MyPlugin",
+        RESOURCE_TYPE: "MyResource",
+        SYSTEM_NAME: "my_system",
+        SYSTEM_SET_NAME: "MySystemSet",
+      },
       shape: `use bevy::prelude::*;
 
-#[system_set]
-struct MySystemSet;
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct {{SYSTEM_SET_NAME}};
 
-impl Plugin for MyPlugin {
+#[derive(Resource)]
+pub struct {{RESOURCE_TYPE}};
+
+pub struct {{PLUGIN_NAME}};
+
+impl Plugin for {{PLUGIN_NAME}} {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MyResource>()
-            .configure_sets(Update, MySystemSet.before(OtherSystem))
-            .add_systems(Update, my_system.in_set(MySystemSet));
+        app.init_resource::<{{RESOURCE_TYPE}}>()
+            .configure_sets(Update, {{SYSTEM_SET_NAME}})
+            .add_systems(Update, {{SYSTEM_NAME}}.in_set({{SYSTEM_SET_NAME}}));
     }
 }
 
-fn my_system(resource: Res<MyResource>) {
-    // TODO: implement logic
+fn {{SYSTEM_NAME}}(resource: Res<{{RESOURCE_TYPE}}>) {
+    let _ = &resource;
 }`,
-      verify: ["App", "Plugin", "SystemSet", "add_systems"],
     },
   ];
 }
 
-/** Verify all required symbols exist in the index. */
+/** Verify required symbols exist in the index. This is a name check, not a compile. */
 function verifySymbols(idx: BevyIndex, requires: string[]): boolean {
   for (const symbol of requires) {
-    const hits = idx.lookupSymbol(symbol);
-    if (!hits.length) return false;
+    if (!idx.lookupSymbol(symbol).length) return false;
   }
   return true;
 }
 
-/** Fill template slots with the user's parameters. */
-function fillTemplate(template: PluginTemplate, params: Record<string, unknown>): string {
-  let result = template.shape;
+interface FillResult {
+  code: string;
+  ignored: string[];
+  invalid: string[];
+}
 
-  // Replace common slots
-  const defaults: Record<string, string> = {
-    "{{RESOURCE_TYPE}}": "MyResource",
-    "{{SYSTEM_NAME}}": "my_system",
-    "{{PLUGIN_NAME}}": "MyPlugin",
-    "{{PARAMS}}": "resource: Res<MyResource>",
-    "{{UPDATE}}": "",
-  };
+/**
+ * Fill template slots with the user's parameters. Keys are matched against the
+ * template's allowlist and values must be Rust identifiers, so an arbitrary key
+ * can never become a regular expression or corrupt the output.
+ */
+function fillTemplate(template: PluginTemplate, params: Record<string, unknown>): FillResult {
+  const values = new Map<string, string>(Object.entries(template.slots));
+  const ignored: string[] = [];
+  const invalid: string[] = [];
 
-  for (const [key, value] of Object.entries(params)) {
-    const slot = "{{" + key.toUpperCase() + "}}";
-    if (typeof value === "string") {
-      result = result.replace(new RegExp(slot.replace(/\*/g, "\\*").replace(/\?/g, "?"), "g"), value);
+  for (const [rawKey, rawValue] of Object.entries(params)) {
+    const key = rawKey.toUpperCase();
+    if (!Object.prototype.hasOwnProperty.call(template.slots, key)) {
+      ignored.push(rawKey);
+      continue;
     }
+    if (typeof rawValue !== "string" || !IDENTIFIER.test(rawValue)) {
+      invalid.push(rawKey);
+      continue;
+    }
+    values.set(key, rawValue);
   }
 
-  // Fill any remaining default slots
-  for (const [slot, defaultValue] of Object.entries(defaults)) {
-    if (result.includes(slot)) {
-      result = result.replace(new RegExp(slot.replace(/\*/g, "\\*").replace(/\?/g, "?"), "g"), defaultValue);
-    }
+  let code = template.shape;
+  for (const [slot, value] of values) {
+    code = code.split(`{{${slot}}}`).join(value);
   }
-
-  return result;
+  return { code, ignored, invalid };
 }
 
 export function register(server: McpServer, ctx: ToolContext): void {
@@ -108,9 +135,13 @@ export function register(server: McpServer, ctx: ToolContext): void {
     {
       title: "Generate version-correct plugin scaffolds",
       description:
-        `Generates plugin skeleton code for the pinned Bevy version. Templates are verified ` +
-        `against the index before use — if a symbol is missing in this version, the tool refuses ` +
-        `that template rather than emitting broken code.`,
+        `Generates a self-contained plugin skeleton for the pinned Bevy version. Every type the ` +
+        `scaffold references is declared in the output, and the required Bevy symbols are checked ` +
+        `against the pinned index first; a missing symbol refuses that template. The symbol check is ` +
+        `a diagnostic, not a compile: the tool reports \`compile_verified: false\` and never claims ` +
+        `the scaffold was compiled. Supported parameters: PLUGIN_NAME, RESOURCE_TYPE, SYSTEM_NAME ` +
+        `(and SYSTEM_SET_NAME for the SystemSet template); unknown keys are returned in ` +
+        `\`ignored_params\` and malformed values are rejected.`,
       inputSchema: {
         template: z
           .string()
@@ -124,34 +155,49 @@ export function register(server: McpServer, ctx: ToolContext): void {
       const idx = res.index;
 
       const templates = getTemplates();
-      const selectedTemplate = templates.find((t) => t.id === template);
+      const selectedTemplate = templates.find((candidate) => candidate.id === template);
 
       if (!selectedTemplate) {
         return {
           isError: true,
-          content: [{ type: "text", text: "Unknown template ID. Available: " + templates.map((t) => "`" + t.id + "`").join(", ") }],
+          content: [{ type: "text", text: "Unknown template ID. Available: " + templates.map((candidate) => "`" + candidate.id + "`").join(", ") }],
         };
       }
 
-      if (selectedTemplate.verify) {
-        const allExist = verifySymbols(idx, selectedTemplate.verify);
-        if (!allExist) {
-          return {
-            isError: true,
-            content: [{ type: "text", text: `Template requires symbols not found in Bevy ${config.bevyVersion}: ${selectedTemplate.requires.join(", ")}` }],
-          };
-        }
+      if (!verifySymbols(idx, selectedTemplate.requires)) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Template requires symbols not found in Bevy ${config.bevyVersion}: ${selectedTemplate.requires.join(", ")}` }],
+        };
       }
 
-      const code = fillTemplate(selectedTemplate, params ?? {});
+      const filled = fillTemplate(selectedTemplate, params ?? {});
+      if (filled.invalid.length) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: `Malformed parameter value(s): ${filled.invalid.join(", ")}. ` +
+              `Each must be a Rust identifier (letters, digits and underscores, not starting with a digit).`,
+          }],
+          structuredContent: { template_id: selectedTemplate.id, invalid_params: filled.invalid },
+        };
+      }
+
+      const acceptedSlots = Object.keys(selectedTemplate.slots);
 
       return {
-        content: [{ type: "text", text: "## Plugin Scaffold\n\n```rust\n" + code + "\n```\n" }],
+        content: [{ type: "text", text: "## Plugin Scaffold\n\n```rust\n" + filled.code + "\n```\n" }],
         structuredContent: {
           template_id: selectedTemplate.id,
           title: selectedTemplate.title,
           bevy_version: config.bevyVersion,
-          code,
+          code: filled.code,
+          symbol_check: "passed",
+          compile_verified: false,
+          compile_note: "Bevy symbols were checked against the index; the scaffold was not compiled.",
+          accepted_params: acceptedSlots,
+          ignored_params: filled.ignored,
         },
       };
     },

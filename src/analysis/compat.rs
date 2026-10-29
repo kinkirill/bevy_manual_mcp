@@ -187,6 +187,8 @@ pub struct Provenance {
     pub harvested_at: String,
     pub version_count: usize,
     pub crates: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complete: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,11 +198,21 @@ pub struct Snapshot {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct MetaFile {
+struct CompatMeta {
     #[serde(default)]
     harvested_at: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    complete: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CompatDocument {
+    #[serde(default)]
+    meta: CompatMeta,
+    #[serde(default)]
+    plugins: BTreeMap<String, Vec<CompatEntry>>,
 }
 
 /// Locate the vendored snapshot: explicit override first, then the sibling of
@@ -244,22 +256,32 @@ pub fn load(meta_dir: Option<&Path>, project_root: &Path) -> Result<Option<Snaps
 }
 
 /// Load a snapshot from an explicit path (used by tests and mirrors).
+///
+/// The current schema is `{ meta, plugins }`. A legacy top-level map is still
+/// accepted, with provenance from a sibling `compat-meta.json` when present.
 pub fn load_file(path: &Path) -> Result<Snapshot> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("cannot read compat snapshot {}", path.display()))?;
-    let plugins: BTreeMap<String, Vec<CompatEntry>> = serde_json::from_str(&text)
+    let value: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("invalid compat snapshot {}", path.display()))?;
+    let (plugins, meta) = if value.get("plugins").is_some() {
+        let document: CompatDocument = serde_json::from_value(value)
+            .with_context(|| format!("invalid compat snapshot {}", path.display()))?;
+        (document.plugins, document.meta)
+    } else {
+        let plugins: BTreeMap<String, Vec<CompatEntry>> = serde_json::from_value(value)
+            .with_context(|| format!("invalid compat snapshot {}", path.display()))?;
+        let legacy = path
+            .parent()
+            .map(|parent| parent.join("compat-meta.json"))
+            .and_then(|meta_path| fs::read_to_string(meta_path).ok())
+            .and_then(|text| serde_json::from_str::<CompatMeta>(&text).ok())
+            .unwrap_or_default();
+        (plugins, legacy)
+    };
     let version_count = plugins.values().map(Vec::len).sum();
     let crates: Vec<String> = plugins.keys().cloned().collect();
 
-    let meta_path = path
-        .parent()
-        .map(|parent| parent.join("compat-meta.json"))
-        .unwrap_or_else(|| PathBuf::from("compat-meta.json"));
-    let meta = fs::read_to_string(&meta_path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<MetaFile>(&text).ok())
-        .unwrap_or_default();
     let (harvested_at, source) = match meta.harvested_at {
         Some(harvested_at) => (
             harvested_at,
@@ -268,7 +290,7 @@ pub fn load_file(path: &Path) -> Result<Snapshot> {
         ),
         None => (
             file_timestamp(path).unwrap_or_else(|| "unknown".to_string()),
-            "compat.json file mtime (compat-meta.json is missing)".to_string(),
+            "compat.json file mtime (no provenance block)".to_string(),
         ),
     };
 
@@ -280,6 +302,7 @@ pub fn load_file(path: &Path) -> Result<Snapshot> {
             harvested_at,
             version_count,
             crates,
+            complete: meta.complete,
         },
     })
 }
