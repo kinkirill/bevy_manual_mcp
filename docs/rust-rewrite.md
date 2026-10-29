@@ -961,6 +961,23 @@ Those counts are **identical** to the canonical TypeScript-built corpus: 249,353
 rustdoc + 3,389 website + 448 examples + 6 error codes = 253,196, and 653,264
 exact symbol keys. Local rebuilds no longer need the TS pipeline.
 
+Pre-rewrite baseline, from the 0.19.1 documentation: a cold build of the full
+corpus took **13–15 minutes at a 2 GB heap** (~270k records: 265,741 rustdoc
+items, 3,389 website chunks, 445 examples), persisted as 189 MB
+`records.ndjson` plus a 120 MB FlexSearch dump. Later starts validated the
+NDJSON and imported the text export at **7–15 s per bundle**; six bundles meant
+doing that six times. The Rust path is a full rebuild in **31 s including the
+bundle** and a mmap + `bytecheck` load of the active corpus in **6–8 ms**, with
+no NDJSON parse and no per-bundle text import. The machines differ (Windows
+validation box then, Linux now) and the cache was warm, so treat this as an
+order-of-magnitude result, not a controlled benchmark.
+
+The trade accepted: the TypeScript line could repair a damaged text export
+locally from validated NDJSON without re-downloading rustdoc. The Rust design
+instead fails loudly on a bad archive and rebuilds or re-downloads (decision
+10). With a 30 s rebuild, "repair by rebuilding" is now cheaper than maintaining
+a repair path.
+
 The integration test `build_ingests_rustdoc_html_from_a_local_doc_dir` generates
 a crate with `cargo doc` and asserts items, fields, variants, local-trait
 methods, std-trait filtering, tuple-field exclusion and searchability.
