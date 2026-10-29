@@ -48,6 +48,8 @@ pub struct Enabled {
     /// Bevy dependency is still a manifest; `no_manifest` means missing.
     pub manifest_found: bool,
     pub source: &'static str,
+    /// True only when Cargo resolved the complete dependency feature graph.
+    pub authoritative: bool,
     /// Why `cargo metadata` could not be used, when the fallback parser ran.
     pub metadata_error: Option<String>,
 }
@@ -87,6 +89,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             default_features,
             manifest_found: true,
             source,
+            authoritative: source == "cargo metadata",
             metadata_error: None,
         };
     }
@@ -100,6 +103,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
                 default_features,
                 manifest_found,
                 source: "Cargo.toml",
+                authoritative: false,
                 metadata_error,
             }
         }
@@ -113,6 +117,7 @@ pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
             } else {
                 "none"
             },
+            authoritative: false,
             metadata_error,
         },
     }
@@ -394,18 +399,50 @@ fn closure(explicit: &[String], default_features: bool, data: &FeaturesData) -> 
 
 pub struct Verdict {
     pub available: bool,
+    pub unknown: bool,
+    pub recognized: bool,
     pub reason: String,
     pub gating_feature: Option<String>,
     pub text: String,
 }
 
+/// Feature check assuming the feature graph was fully resolved.
+#[cfg(test)]
 pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict {
+    check_with_resolution(query, data, transitive, true)
+}
+
+/// Feature check with a resolution flag. Disabled verdicts from an incomplete
+/// graph become `unknown` instead of authoritative false negatives.
+pub fn check_with_resolution(
+    query: &str,
+    data: &FeaturesData,
+    transitive: &[String],
+    resolved: bool,
+) -> Verdict {
+    let mut verdict = check_inner(query, data, transitive);
+    if !resolved && verdict.recognized && !verdict.available {
+        verdict.unknown = true;
+        verdict.reason = format!(
+            "Cannot prove disabled: full Cargo feature resolution is unavailable. {}",
+            verdict.reason
+        );
+        verdict.text = format!(
+            "? `{query}` — unknown (unresolved feature graph; rerun with network or a populated Cargo cache to confirm)"
+        );
+    }
+    verdict
+}
+
+fn check_inner(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict {
     let enabled = |feature: &str| transitive.iter().any(|value| value == feature);
     let known = |feature: &str| data.features.contains_key(feature);
 
     if query == "DefaultPlugins" {
         let is_enabled = enabled("default");
         return Verdict {
+            unknown: false,
+            recognized: true,
             available: is_enabled,
             reason: if is_enabled {
                 "Bevy's default feature set is enabled".to_string()
@@ -426,6 +463,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
     }
     if query == "MinimalPlugins" {
         return Verdict {
+            unknown: false,
+            recognized: true,
             available: true,
             reason: "MinimalPlugins does not require Bevy's default feature set".to_string(),
             gating_feature: None,
@@ -436,6 +475,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
     if known(query) {
         let is_enabled = enabled(query);
         return Verdict {
+            unknown: false,
+            recognized: true,
             available: is_enabled,
             reason: if is_enabled {
                 format!("\"{query}\" is enabled")
@@ -459,6 +500,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
     if known(&prefixed) {
         let is_enabled = enabled(&prefixed);
         return Verdict {
+            unknown: false,
+            recognized: true,
             available: is_enabled,
             reason: format!(
                 "\"{prefixed}\" is {}",
@@ -477,6 +520,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
         let gating = gating_feature_for(&subcrate, data);
         let is_enabled = gating.as_deref().is_some_and(enabled);
         return Verdict {
+            unknown: false,
+            recognized: true,
             available: is_enabled,
             reason: format!(
                 "subcrate \"{subcrate}\" gated by feature \"[{}]\"",
@@ -500,6 +545,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
             if gate.plugin.contains(query) || query.contains(&gate.plugin) {
                 let is_enabled = enabled(&gate.requires_feature);
                 return Verdict {
+                    unknown: false,
+                    recognized: true,
                     available: is_enabled,
                     reason: format!(
                         "\"{}\" gated by \"[{}]\"",
@@ -526,6 +573,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
         if known(&fallback) {
             let is_enabled = enabled(&fallback);
             return Verdict {
+                unknown: false,
+                recognized: true,
                 available: is_enabled,
                 reason: format!(
                     "{} via feature \"[{fallback}]\"",
@@ -546,6 +595,8 @@ pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict
     }
 
     Verdict {
+        unknown: false,
+        recognized: false,
         available: false,
         reason: format!("\"{query}\" is not a known feature or module in Bevy"),
         gating_feature: None,
@@ -739,6 +790,18 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
         let disabled = check("DefaultPlugins", &data(), &[]);
         assert!(!disabled.available);
         assert!(disabled.reason.contains("default"), "{}", disabled.reason);
+    }
+
+    #[test]
+    fn disabled_features_are_unknown_when_the_graph_is_unresolved() {
+        let verdict = check_with_resolution("bevy_ui", &data(), &[], false);
+        assert!(!verdict.available);
+        assert!(verdict.unknown, "{}", verdict.text);
+        assert!(verdict.text.contains("unknown"), "{}", verdict.text);
+
+        let resolved = check_with_resolution("bevy_ui", &data(), &[], true);
+        assert!(!resolved.available);
+        assert!(!resolved.unknown);
     }
 
     #[test]

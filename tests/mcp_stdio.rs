@@ -483,6 +483,11 @@ fn search_and_api_tools_answer_over_stdio() {
         text.contains("Creates a widget"),
         "documentation missing: {text}"
     );
+
+    let response = server.call_tool("bevy_api", json!({ "symbol": "pub fn new() -> Widget" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("demo::Widget::new"), "{text}");
 }
 
 #[test]
@@ -953,8 +958,14 @@ fn check_manifest_falls_back_to_the_manifest_and_reports_gates() {
         !transitive.contains(&json!("bevy_render")),
         "{transitive:?}"
     );
-    let disabled = structured["disabled"].as_array().expect("disabled");
-    assert!(disabled.contains(&json!("bevy_render")), "{disabled:?}");
+    let unknown_features = structured["unknown_features"]
+        .as_array()
+        .expect("unknown features");
+    assert!(
+        unknown_features.contains(&json!("bevy_render")),
+        "{unknown_features:?}"
+    );
+    assert_eq!(structured["disabled"], json!([]));
 
     let response = server.call_tool(
         "bevy_check_manifest",
@@ -962,7 +973,8 @@ fn check_manifest_falls_back_to_the_manifest_and_reports_gates() {
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["available"], false);
+    assert!(structured["available"].is_null(), "{structured}");
+    assert_eq!(structured["unknown"], true, "{structured}");
     assert_eq!(structured["gating_feature"], "bevy_render");
 
     let response = server.call_tool("bevy_check_manifest", json!({ "check": "UiPlugin" }));
@@ -1031,8 +1043,12 @@ fn check_manifest_reports_a_missing_manifest() {
     assert_eq!(structured["no_manifest"], true);
     assert_eq!(structured["source"], "none");
     assert_eq!(structured["explicit"], json!([]));
+    assert_eq!(structured["disabled"], json!([]));
     assert_eq!(
-        structured["disabled"].as_array().expect("disabled").len(),
+        structured["unknown_features"]
+            .as_array()
+            .expect("unknown features")
+            .len(),
         3
     );
 }

@@ -605,6 +605,52 @@ mod tests {
         assert_eq!(unique.len(), 1);
     }
 
+    fn migration_guide(from: &str, to: &str) -> crate::archive::RecordInput {
+        crate::archive::RecordInput {
+            source: "website".into(),
+            kind: "migration_guide".into(),
+            name: format!("Migration guide {from} -> {to}"),
+            full_path: format!("migration_guide:content/{from}-to-{to}.md"),
+            module: "content::learn::migration-guides".into(),
+            docs: format!("Breaking changes from {from} to {to}."),
+            file: format!("content/{from}-to-{to}.md"),
+            from_version: Some(from.into()),
+            to_version: Some(to.into()),
+            bevy_version: Some("9.9.9".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn migration_ranges_include_every_intermediate_guide() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let out = dir.path().join("version");
+        crate::archive::build(
+            vec![
+                migration_guide("0.10", "0.11"),
+                migration_guide("0.17", "0.18"),
+                migration_guide("0.18", "0.19"),
+                migration_guide("0.19", "0.20"),
+            ],
+            &out,
+            &crate::archive::BuildOptions {
+                bevy_version: Some("9.9.9".into()),
+                ..Default::default()
+            },
+        )
+        .expect("build");
+        let corpus = LoadedCorpus::open(&out.join(crate::archive::ARCHIVE_FILE)).expect("corpus");
+        let entries = find_migrations(corpus.root(), Some("0.17"), Some("0.20"), None, 6);
+        let paths: Vec<&str> = entries
+            .iter()
+            .map(|(record, _)| corpus.root().string(record.full_path))
+            .collect();
+        assert_eq!(paths.len(), 3, "{paths:?}");
+        assert!(paths.iter().any(|path| path.contains("0.17-to-0.18")));
+        assert!(paths.iter().any(|path| path.contains("0.18-to-0.19")));
+        assert!(paths.iter().any(|path| path.contains("0.19-to-0.20")));
+    }
+
     #[test]
     fn comma_filters_split_and_trim() {
         let parts: Vec<&str> = split_list("struct, enum ,trait").collect();
@@ -937,12 +983,15 @@ pub fn find_migrations<'a>(
                 let guide_to = major_minor(root.string(record.to_version));
                 let from_match = from_core.is_some_and(|value| guide_from == value);
                 let to_match = to_core.is_some_and(|value| guide_to == value);
+                let in_range = migration_step_in_range(guide_from, guide_to, from_core, to_core);
                 if from_match && to_match {
                     100
                 } else if to_match {
-                    70
+                    90
+                } else if in_range {
+                    80
                 } else if from_match {
-                    60
+                    70
                 } else {
                     continue;
                 }
@@ -998,6 +1047,70 @@ pub fn find_migrations<'a>(
     out.into_iter()
         .map(|(score, record)| (record, score))
         .collect()
+}
+
+fn migration_step_in_range(
+    guide_from: &str,
+    guide_to: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> bool {
+    let (Some(from), Some(to)) = (from, to) else {
+        return false;
+    };
+    if !crate::versions::cmp_version(from, to).is_lt() {
+        return false;
+    }
+    !crate::versions::cmp_version(guide_from, from).is_lt()
+        && !crate::versions::cmp_version(guide_to, to).is_gt()
+        && crate::versions::cmp_version(guide_from, guide_to).is_lt()
+}
+
+/// Match a pasted Rust signature against the corpus signatures.
+pub fn lookup_signature<'a>(
+    root: &'a ArchivedCorpus,
+    query: &str,
+    limit: usize,
+) -> Vec<&'a ArchivedRecord> {
+    let needle = normalized_signature(query);
+    if needle.len() < 8 || !query.contains("fn ") {
+        return Vec::new();
+    }
+    let mut scored: Vec<(u8, &ArchivedRecord)> = Vec::new();
+    for record in root.records.iter() {
+        let signature = root.string(record.signature);
+        if !signature.contains("fn ") {
+            continue;
+        }
+        let normalized = normalized_signature(signature);
+        if normalized == needle {
+            scored.push((2, record));
+        } else if normalized.len() > 12
+            && needle.len() > 12
+            && (normalized.starts_with(&needle) || needle.starts_with(&normalized))
+        {
+            scored.push((1, record));
+        }
+    }
+    scored.sort_by_key(|(score, record)| {
+        (
+            std::cmp::Reverse(*score),
+            root.string(record.full_path).to_string(),
+        )
+    });
+    dedupe_records(root, scored.into_iter().map(|(_, record)| record))
+        .into_iter()
+        .take(limit)
+        .collect()
+}
+
+fn normalized_signature(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .trim_end_matches(',')
+        .to_string()
 }
 
 fn topic_terms(topic: &str) -> Vec<String> {

@@ -553,11 +553,14 @@ impl BevyMcp {
                 snapshot.corpus_version
             )
         })?;
-        let records: Vec<_> =
-            search::dedupe_records(state.root(), state.root().lookup(&params.symbol))
-                .into_iter()
-                .take(6)
-                .collect();
+        let mut candidates = state.root().lookup(&params.symbol);
+        if candidates.is_empty() && params.symbol.contains("fn ") {
+            candidates = search::lookup_signature(state.root(), &params.symbol, 24);
+        }
+        let records: Vec<_> = search::dedupe_records(state.root(), candidates)
+            .into_iter()
+            .take(6)
+            .collect();
         let related = if params.include_related.unwrap_or(true) && !records.is_empty() {
             search::related_records(state.root(), records[0], 12)
         } else {
@@ -1210,7 +1213,12 @@ impl BevyMcp {
             .map(str::trim)
             .filter(|query| !query.is_empty())
         {
-            let verdict = features::check(query, &data, &enabled.transitive);
+            let verdict = features::check_with_resolution(
+                query,
+                &data,
+                &enabled.transitive,
+                enabled.authoritative,
+            );
             let mut text = format!("## Check: `{query}`\n\n{}\n\n", verdict.text);
             text.push_str(&format!(
                 "- Feature graph: Bevy {graph_version}\n- Feature source: {source}\n- Confidence: {confidence}\n"
@@ -1227,7 +1235,8 @@ impl BevyMcp {
                 text,
                 json!({
                     "query": query,
-                    "available": verdict.available,
+                    "available": if verdict.unknown { Value::Null } else { json!(verdict.available) },
+                    "unknown": verdict.unknown,
                     "reason": verdict.reason,
                     "gating_feature": verdict.gating_feature,
                     "bevy_version": graph_version,
@@ -1240,11 +1249,16 @@ impl BevyMcp {
         }
 
         let all: Vec<String> = data.features.keys().cloned().collect();
-        let disabled: Vec<String> = all
+        let not_enabled: Vec<String> = all
             .iter()
             .filter(|feature| !enabled.transitive.contains(feature))
             .cloned()
             .collect();
+        let (disabled, unknown_features) = if enabled.authoritative {
+            (not_enabled, Vec::new())
+        } else {
+            (Vec::new(), not_enabled)
+        };
 
         let mut text = format!("## Bevy {graph_version} — Feature Report\n\n");
         if no_manifest {
@@ -1258,6 +1272,11 @@ impl BevyMcp {
         }
         if let Some(error) = &enabled.metadata_error {
             text.push_str(&format!("> `cargo metadata` unavailable: {error}\n"));
+        }
+        if !enabled.authoritative {
+            text.push_str(
+                "> Full dependency resolution is unavailable; features not proven enabled are marked unknown, not disabled.\n",
+            );
         }
         text.push_str(&format!(
             "**Explicit**: {}\n",
@@ -1276,8 +1295,10 @@ impl BevyMcp {
                 "explicit"
             } else if transitive {
                 "transitive"
-            } else {
+            } else if enabled.authoritative {
                 "off"
+            } else {
+                "unknown"
             };
             text.push_str(&format!(
                 "| `{feature}` | {} | {} | {status} |\n",
@@ -1319,6 +1340,7 @@ impl BevyMcp {
                 "explicit": enabled.explicit,
                 "transitive": enabled.transitive,
                 "disabled": disabled,
+                "unknown_features": unknown_features,
             }),
         ))
     }
