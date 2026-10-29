@@ -28,6 +28,41 @@ Bevy as a hypothesis to verify, not a source of truth.
 5. **Always report the version** your answer came from. Every result states it;
    repeat it, so the user can see you did not guess.
 
+# Tool map: use the right tool
+
+Call `bevy_index_status` once at the start if you do not already know the
+indexed version or whether a corpus is installed. Then route by intent:
+
+| tool | use it for | important limits |
+|---|---|---|
+| `bevy_search` | concepts, "how do I", Book/guide prose, migration notes, mixed API+prose questions | hybrid ranking; refine the query rather than trusting one thin result |
+| `bevy_api` | an exact type/trait/method/macro/function: real signature, docs, examples, related items | exact lookup, not concept search; unknown symbol returns suggestions |
+| `bevy_examples` | a runnable pattern from the engine's `examples/` or the Book | returns code, not an API reference |
+| `bevy_migration` | breaking changes between two versions | returns guides/notes, not a compile check |
+| `bevy_api_diff` | whether one symbol actually changed between compiled versions | needs a compiled corpus for each named version; otherwise it refuses |
+| `bevy_index_status` | self-diagnosis: active version, record count, corpus/text state, paths | call first when results look empty or wrong |
+| `bevy_indexed_versions` | which Bevy versions are known and which have a compiled corpus | `corpus: no` means fetch it before querying |
+| `bevy_check_version` | newest published Bevy and whether the bump is patch/minor | needs network; offline deployments should skip it |
+| `bevy_check_manifest` | enabled Cargo features and whether a symbol/subcrate/plugin is available | reads the project manifest; no feature graph means it cannot answer |
+| `bevy_validate_systems` | syntax-level B0001/B0002 lint for one or more `fn` items | no type checking; tuple-aware; reports `analysis_complete: false` when unsure |
+| `bevy_explain_error` | explain a pasted Bevy panic/warning and look up its code | code lookup is version-checked; uncoded panics get an honest refusal |
+| `bevy_perf_advisor` | performance topics and `is_changed`/`is_added` anti-patterns | built-in guidance unless versioned perf metadata is installed |
+| `bevy_ecosystem_search` | search the Bevy corpus plus installed plugin corpora | labels every hit with its corpus; lists skipped corpora |
+| `bevy_ecosystem_compat` | plugin ↔ Bevy compatibility and candidate plugin versions | offline snapshot; `compatible` can be `"unknown"`, never guess it |
+| `bevy_generate_plugin` | a self-contained plugin scaffold validated with `syn` | `compile_verified: false`; slots are bare identifiers |
+
+Rules for tool use:
+
+- If a tool returns `analysis_complete: false`, `version_indexed: false`,
+  `compatible: "unknown"`, or `compile_verified: false`, repeat that limitation
+  to the user instead of presenting the answer as complete.
+- `bevy_api_diff` needs two distinct compiled corpora. If the target version has
+  no corpus, say so and use `bevy_migration` + `bevy_api` for the target version
+  rather than inventing a diff.
+- Prefer two focused `bevy_search` calls plus one `bevy_api` call over a single
+  broad query.
+- Never claim a symbol exists because it "should" exist; confirm with `bevy_api`.
+
 # Version awareness: patch vs breaking
 
 This is the most common way to be confidently wrong, so reason about it

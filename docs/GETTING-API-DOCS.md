@@ -7,9 +7,9 @@ not build it: the first server start downloads a prebuilt bundle, and
 ## Install a prebuilt index
 
 ```bash
-bevy-manual-mcp fetch-index 0.20.0     # explicit version
+bevy-manual-mcp fetch-index 0.20.1     # explicit version
 bevy-manual-mcp fetch-index            # detected version
-bevy-manual-mcp fetch-index 0.20.0 --force
+bevy-manual-mcp fetch-index 0.20.1 --force
 ```
 
 `fetch-index` tries the exact release tag (`v0.20.1`), then the Bevy minor
@@ -51,7 +51,7 @@ disable this.
 If you already have `cargo doc` output or a docs.rs mirror:
 
 ```bash
-bevy-manual-mcp build --doc-dir target/doc --out data/versions/0.20.0
+bevy-manual-mcp build --doc-dir target/doc --out data/versions/0.20.1
 ```
 
 `--doc-dir` (or `BEVY_DOC_DIR`) ingests the rustdoc HTML directly: items,
@@ -65,7 +65,7 @@ directories are configured (`BEVY_WEBSITE_DIR`, `BEVY_EXAMPLES_DIR`,
 `records.ndjson` stays the canonical, diffable source. The archive is derived:
 
 ```bash
-bevy-manual-mcp build --records records.ndjson --out data/versions/0.20.0
+bevy-manual-mcp build --records records.ndjson --out data/versions/0.20.1
 ```
 
 This path does not parse HTML, so it is much faster, but it depends on a
@@ -74,7 +74,7 @@ previously generated NDJSON file.
 ## Mirror docs.rs yourself
 
 ```bash
-bevy-manual-mcp fetch-docs 0.20.0 --out ~/.cache/bevy-mcp/bevy-0.20.0
+bevy-manual-mcp fetch-docs 0.20.1 --out ~/.cache/bevy-mcp/bevy-0.20.1
 ```
 
 It discovers item pages from `all.html`, caches the page list, resumes missing
@@ -98,8 +98,8 @@ Engine examples are auto-detected from the published `bevy` crate in
 ## Harvest metadata
 
 ```bash
-bevy-manual-mcp harvest-meta 0.20.0 --out vendor/bevy-meta/0.20.0
-bevy-manual-mcp harvest-meta 0.20.0 --tag v0.20.0 --force
+bevy-manual-mcp harvest-meta 0.20.1 --out vendor/bevy-meta/0.20.1
+bevy-manual-mcp harvest-meta 0.20.1 --tag v0.20.1 --force
 ```
 
 This fetches the feature graph (including implicit optional-dependency
@@ -119,9 +119,9 @@ This uses the crates.io sparse index (one request per plugin crate) and writes
 ## Produce a release bundle
 
 ```bash
-bevy-manual-mcp build --doc-dir ~/.cache/bevy-mcp/bevy-0.20.0 \
-  --out data/versions/0.20.0 \
-  --pack dist/bevy-0.20.0-fmt1.tar.zst \
+bevy-manual-mcp build --doc-dir ~/.cache/bevy-mcp/bevy-0.20.1 \
+  --out data/versions/0.20.1 \
+  --pack dist/bevy-0.20.1-fmt1.tar.zst \
   --manifest dist/index-manifest.json \
   --revision 1
 ```

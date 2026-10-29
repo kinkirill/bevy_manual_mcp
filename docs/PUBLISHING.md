@@ -36,7 +36,7 @@ or inside the binary's ingest path.
 ## Build one index bundle
 
 ```bash
-VERSION=0.20.0
+VERSION=0.20.1
 REVISION=1
 
 bevy-manual-mcp fetch-docs "$VERSION" --out "$HOME/.cache/bevy-mcp/bevy-$VERSION"
@@ -62,11 +62,11 @@ sparse `bevy` checkout and point `BEVY_EXAMPLES_DIR` at `<checkout>/examples`.
 
 Upload `bevy-<version>-fmt1.tar.zst` and `index-manifest.json` to the GitHub
 Release tagged by Bevy **minor**, `v<major.minor>` (e.g. `v0.20`). The manifest
-records the exact corpus version (`0.20.0`). `fetch-index` tries the exact tag
+records the exact corpus version (`0.20.1`). `fetch-index` tries the exact tag
 first, then the minor tag, verifies SHA-256 and size, and only then installs.
 
 The six supported corpora are `0.15.3`, `0.16.1`, `0.17.3`, `0.18.1`, `0.19.1`
-and `0.20.0`, in releases `v0.15` … `v0.20`. When a Bevy patch lands, rebuild
+and `0.20.1`, in releases `v0.15` … `v0.20`. When a Bevy patch lands, rebuild
 the same minor release with the new patch and bump `--revision`; users on any
 patch of that minor resolve to the newest corpus unless an exact release exists.
 
@@ -85,8 +85,7 @@ After the crate is live:
 - verify a clean machine: `cargo install bevy-manual-mcp`, point it at a Cargo
   project, let first-run auto-fetch install the bundle, run one query.
 
-`0.0.1` exists only as a lib-only name reservation and has no binaries;
-`0.1.0` is yanked. Use the current `0.1.x` release.
+Use the current `0.1.x` release.
 
 ## CI/release automation
 

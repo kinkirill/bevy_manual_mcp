@@ -22,3 +22,14 @@ this is the condensed version.
 
    Confirm each one with `bevy_api_diff` rather than inferring it, and say so
    when a call site did *not* change.
+
+## Tool shortcuts
+
+- `bevy_check_version` - patch vs breaking (network).
+- `bevy_migration` - the concrete change list.
+- `bevy_api_diff` - verify one symbol changed between compiled versions.
+- `bevy_api` - the real target-version signature/path.
+- `bevy_search` / `bevy_examples` - the new pattern and runnable code.
+- `bevy_check_manifest` - feature gates that affect the migration.
+- `bevy_validate_systems` - syntax-level system-access lint after edits.
+- `bevy_explain_error` - version-checked panic explanation.

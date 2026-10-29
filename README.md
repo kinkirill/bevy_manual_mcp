@@ -31,8 +31,6 @@ cargo install bevy-manual-mcp
 ```
 
 Requires a Rust toolchain. There is no prebuilt binary matrix and no npm shim.
-`0.0.1` is a lib-only name reservation; `0.1.0` is the first installable
-release.
 
 The first server start downloads the prebuilt index for the detected Bevy
 version (progress on stderr). Index releases are per Bevy **minor** (`v0.20`);
@@ -40,7 +38,7 @@ an exact-patch corpus is used when present, otherwise the same minor's newest
 corpus answers for the patch. To install it explicitly:
 
 ```bash
-bevy-manual-mcp fetch-index 0.20.0
+bevy-manual-mcp fetch-index 0.20.1
 bevy-manual-mcp status
 ```
 

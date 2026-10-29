@@ -17,6 +17,25 @@ Bevy is pre-1.0, so **the minor digit is the breaking-change axis**:
 
 Confirm which you are dealing with before planning any work: call `bevy_check_version`. If it reports a patch, tell the user there is nothing to do and stop.
 
+## Tools you will use
+
+| tool | role in a migration |
+|---|---|
+| `bevy_check_version` | confirm patch vs minor; needs network, skip it when offline |
+| `bevy_migration` | concrete guides/per-PR notes for `from_version` → `to_version` |
+| `bevy_api_diff` | did this exact symbol change? Requires a compiled corpus for every version named; if a corpus is missing, say so instead of inferring |
+| `bevy_api` | real signature/path of the replacement in the target version |
+| `bevy_search` | guides and prose for the new pattern |
+| `bevy_examples` | working code for the target release |
+| `bevy_check_manifest` | feature flags and whether a gated type/plugin is available |
+| `bevy_validate_systems` | syntax-level B0001/B0002 check for edited system signatures; not a compiler |
+| `bevy_explain_error` | explain a panic the user hits after the upgrade |
+
+`bevy_api_diff` is deliberately strict: it never substitutes one version for
+another. If it reports that a version has no compiled corpus, state that
+limitation and fetch/install the corpus or fall back to documented migration
+evidence.
+
 ## Process
 
 1. **Establish scope.** Call `bevy_check_version` with `from_version`/`to_version` implied by the project. Confirm the target really is a breaking release.
