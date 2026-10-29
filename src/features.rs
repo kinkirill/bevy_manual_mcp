@@ -60,16 +60,30 @@ pub fn load_path(path: &Path) -> Option<FeaturesData> {
 pub fn enabled(project_root: &Path, data: &FeaturesData) -> Enabled {
     let manifest_found = project_root.join("Cargo.toml").is_file();
     let manual = parse_manifest(project_root);
-    let metadata = cargo_metadata_features(project_root);
+    let metadata = match cargo_metadata_features(project_root) {
+        Ok(features) => Ok(features),
+        Err(full_error) => cargo_metadata_no_deps_features(project_root)
+            .map_err(|no_deps_error| format!("{full_error}; {no_deps_error}")),
+    };
     let metadata_error = metadata.as_ref().err().cloned();
     if let Ok((features, default_features, source)) = metadata {
-        let explicit = manual
-            .as_ref()
-            .map(|(features, _)| features.clone())
-            .unwrap_or_default();
+        let no_deps = source == "cargo metadata (no-deps)";
+        let explicit = if no_deps {
+            features.clone()
+        } else {
+            manual
+                .as_ref()
+                .map(|(features, _)| features.clone())
+                .unwrap_or_default()
+        };
+        let transitive = if no_deps {
+            closure(&features, default_features, data)
+        } else {
+            features
+        };
         return Enabled {
             explicit,
-            transitive: features,
+            transitive,
             default_features,
             manifest_found: true,
             source,
@@ -144,6 +158,68 @@ fn cargo_metadata_features(root: &Path) -> Result<(Vec<String>, bool, &'static s
         features.into_iter().collect(),
         default_features,
         "cargo metadata",
+    ))
+}
+
+/// Direct dependency features from `cargo metadata --no-deps`, which does not
+/// resolve or download the dependency graph.
+fn cargo_metadata_no_deps_features(
+    root: &Path,
+) -> Result<(Vec<String>, bool, &'static str), String> {
+    let cargo = cargo_executable();
+    let output = Command::new(&cargo)
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--offline",
+            "--no-deps",
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("could not run {}: {error}", cargo.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.lines().next().unwrap_or("no stderr").trim();
+        return Err(format!("cargo metadata --no-deps failed: {detail}"));
+    }
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("cargo metadata --no-deps returned invalid JSON: {error}"))?;
+    let packages = data["packages"]
+        .as_array()
+        .ok_or_else(|| "cargo metadata --no-deps omitted packages".to_string())?;
+
+    let mut explicit: BTreeSet<String> = BTreeSet::new();
+    let mut default_features = true;
+    let mut found = false;
+    for package in packages {
+        let Some(dependencies) = package["dependencies"].as_array() else {
+            continue;
+        };
+        for dependency in dependencies {
+            if dependency["name"].as_str() != Some("bevy") {
+                continue;
+            }
+            found = true;
+            default_features &= dependency["uses_default_features"]
+                .as_bool()
+                .unwrap_or(true);
+            if let Some(features) = dependency["features"].as_array() {
+                explicit.extend(
+                    features
+                        .iter()
+                        .filter_map(|feature| feature.as_str().map(str::to_string)),
+                );
+            }
+        }
+    }
+    if !found {
+        return Err("cargo metadata --no-deps found no `bevy` dependency".to_string());
+    }
+    Ok((
+        explicit.into_iter().collect(),
+        default_features,
+        "cargo metadata (no-deps)",
     ))
 }
 
@@ -326,6 +402,36 @@ pub struct Verdict {
 pub fn check(query: &str, data: &FeaturesData, transitive: &[String]) -> Verdict {
     let enabled = |feature: &str| transitive.iter().any(|value| value == feature);
     let known = |feature: &str| data.features.contains_key(feature);
+
+    if query == "DefaultPlugins" {
+        let is_enabled = enabled("default");
+        return Verdict {
+            available: is_enabled,
+            reason: if is_enabled {
+                "Bevy's default feature set is enabled".to_string()
+            } else {
+                "Bevy's default feature set is disabled".to_string()
+            },
+            gating_feature: Some("default".to_string()),
+            text: format!(
+                "{} `DefaultPlugins` — {}",
+                if is_enabled { "✓" } else { "✗" },
+                if is_enabled {
+                    "available with the default feature set"
+                } else {
+                    "requires the `[default]` feature set"
+                }
+            ),
+        };
+    }
+    if query == "MinimalPlugins" {
+        return Verdict {
+            available: true,
+            reason: "MinimalPlugins does not require Bevy's default feature set".to_string(),
+            gating_feature: None,
+            text: "✓ `MinimalPlugins` — available".to_string(),
+        };
+    }
 
     if known(query) {
         let is_enabled = enabled(query);
@@ -602,6 +708,37 @@ b2 = { package = "bevy", version = "9.9.9", features = ["bevy_ui"] }
         assert!(enabled.transitive.contains(&"ui".to_string()));
         assert!(enabled.transitive.contains(&"bevy_ui".to_string()));
         assert!(enabled.transitive.contains(&"bevy_render".to_string()));
+    }
+
+    #[test]
+    fn no_deps_metadata_is_used_when_full_resolution_fails() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(dir.path().join("src")).expect("src dir");
+        fs::write(dir.path().join("src/lib.rs"), "").expect("lib");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nbevy = \"9.9.9\"\n",
+        )
+        .expect("manifest");
+        let enabled = enabled(dir.path(), &data());
+        assert_eq!(enabled.source, "cargo metadata (no-deps)");
+        assert!(enabled.default_features);
+        assert!(enabled.transitive.contains(&"bevy_render".to_string()));
+    }
+
+    #[test]
+    fn default_plugins_is_a_known_query() {
+        let enabled = check(
+            "DefaultPlugins",
+            &data(),
+            &["default".to_string(), "bevy_render".to_string()],
+        );
+        assert!(enabled.available, "{}", enabled.text);
+        assert_eq!(enabled.gating_feature.as_deref(), Some("default"));
+
+        let disabled = check("DefaultPlugins", &data(), &[]);
+        assert!(!disabled.available);
+        assert!(disabled.reason.contains("default"), "{}", disabled.reason);
     }
 
     #[test]

@@ -385,7 +385,7 @@ impl BevyMcp {
     /// Check which Bevy features a project enables.
     #[tool(
         name = "bevy_check_manifest",
-        description = "Checks which Bevy features are enabled in the project's Cargo.toml and whether specific symbols or subcrates are available. Use this when writing code to verify that types, plugins, or systems you reference are actually available given the project's feature flags. Returns a clear yes/no for each check with the reason why it is available or not. Uses `cargo metadata --offline --locked` when the project resolves and falls back to parsing Cargo.toml otherwise."
+        description = "Checks which Bevy features are enabled in the project's Cargo.toml and whether specific symbols or subcrates are available. Use this when writing code to verify that types, plugins, or systems you reference are actually available given the project's feature flags. Returns a clear yes/no for each check with the reason and confidence. Prefers resolved `cargo metadata --offline --locked`; if full resolution needs missing packages, uses `cargo metadata --offline --no-deps` plus the pinned feature graph, and only then falls back to parsing Cargo.toml."
     )]
     async fn bevy_check_manifest(
         &self,
@@ -1196,6 +1196,8 @@ impl BevyMcp {
         let no_manifest = !enabled.manifest_found;
         let confidence = if source == "cargo metadata" {
             "high"
+        } else if source == "cargo metadata (no-deps)" {
+            "medium"
         } else if no_manifest {
             "none"
         } else {
