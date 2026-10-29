@@ -40,8 +40,16 @@ jobs:
         env:
           FETCH_CONCURRENCY: "6"
         run: |
-          target/release/bevy-manual-mcp fetch-docs "$VERSION" \
-            --out "$RUNNER_TEMP/bevy-docs"
+          for attempt in 1 2 3; do
+            if target/release/bevy-manual-mcp fetch-docs "$VERSION" \
+              --out "$RUNNER_TEMP/bevy-docs"; then
+              exit 0
+            fi
+            echo "fetch-docs attempt $attempt failed; retrying only the missing pages"
+            sleep 5
+          done
+          echo "fetch-docs still failing after 3 attempts" >&2
+          exit 1
 
       - name: Fetch Bevy engine examples
         run: |
