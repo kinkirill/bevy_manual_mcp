@@ -226,6 +226,19 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
     result.map(Some)
 }
 
+/// crates.io sparse-index path for a crate name.
+pub fn sparse_index_url(crate_name: &str) -> String {
+    let name = crate_name.to_ascii_lowercase();
+    let path = match name.len() {
+        0 => name.clone(),
+        1 => format!("1/{name}"),
+        2 => format!("2/{name}"),
+        3 => format!("3/{}/{name}", &name[..1]),
+        _ => format!("{}/{}/{name}", &name[..2], &name[2..4]),
+    };
+    format!("https://index.crates.io/{path}")
+}
+
 fn join(base: &str, release: &str, name: &str) -> String {
     format!(
         "{}/{}/{}",

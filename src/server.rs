@@ -553,51 +553,44 @@ impl BevyMcp {
         if self.config.offline {
             bail!("BEVY_MCP_OFFLINE=1 disables the crates.io check");
         }
-        let url = std::env::var("BEVY_MCP_CRATES_API")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "https://crates.io/api/v1/crates/bevy".to_string());
-        // A hard outer cap guarantees a response even if name resolution or a
-        // proxy misbehaves beyond ureq's own timeouts.
-        let background_url = url.clone();
-        let body = tokio::time::timeout(
-            std::time::Duration::from_secs(8),
-            tokio::task::spawn_blocking(move || {
-                crate::bundle::read_url_timeout(&background_url, 6)
-            }),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(
-                "crates.io request timed out after 8s. Set BEVY_MCP_OFFLINE=1 to suppress this check."
-            )
-        })?
-        .map_err(|error| anyhow!("crates.io request task failed: {error}"))?
-        .map_err(|error| {
-            anyhow!(
-                "Could not reach crates.io at {url}: {error}. Set BEVY_MCP_OFFLINE=1 to suppress this check."
-            )
-        })?;
-        let data: Value = serde_json::from_slice(&body)
-            .map_err(|error| anyhow!("invalid crates.io response from {url}: {error}"))?;
-        let newest = data["crate"]["max_stable_version"]
-            .as_str()
-            .or_else(|| data["crate"]["max_version"].as_str())
-            .ok_or_else(|| anyhow!("crates.io response did not contain a version"))?
-            .to_string();
-        let max_version = data["crate"]["max_version"]
-            .as_str()
-            .unwrap_or(&newest)
-            .to_string();
-        let preview = if max_version.contains('-') && max_version != newest {
-            Some(max_version)
+        // Prefer the sparse index: it is the same host cargo uses, usually
+        // reachable even when the crates.io API is blocked. BEVY_MCP_CRATES_API
+        // still overrides with a JSON response for mirrors and tests.
+        let (newest, preview, source) = if let Ok(url) = std::env::var("BEVY_MCP_CRATES_API")
+            && !url.is_empty()
+        {
+            let body = crate::bundle::read_url_timeout(&url, 6).map_err(|error| {
+                anyhow!(
+                    "Could not read {url}: {error}. Set BEVY_MCP_OFFLINE=1 to suppress this check."
+                )
+            })?;
+            let (newest, preview) = parse_crates_api(&body)?;
+            (newest, preview, "crates.io API")
         } else {
-            None
+            let index_url = crate::bundle::sparse_index_url("bevy");
+            match crate::bundle::read_url_timeout(&index_url, 6)
+                .and_then(|body| parse_sparse_index(&body))
+            {
+                Ok((newest, preview)) => (newest, preview, "sparse index"),
+                Err(index_error) => {
+                    let api_url = "https://crates.io/api/v1/crates/bevy";
+                    match crate::bundle::read_url_timeout(api_url, 6)
+                        .and_then(|body| parse_crates_api(&body))
+                    {
+                        Ok((newest, preview)) => (newest, preview, "crates.io API"),
+                        Err(api_error) => {
+                            return Err(anyhow!(
+                                "Could not reach crates.io or its sparse index (index: {index_error}; api: {api_error}). Set BEVY_MCP_OFFLINE=1 to suppress this check."
+                            ));
+                        }
+                    }
+                }
+            }
         };
         let mine = self.config.bevy_version.clone();
         let bump = bump_between(mine.as_deref(), Some(&newest));
         let text = format!(
-            "# Bevy version status\n\n- **Indexed for:** {}\n- **Newest stable:** {newest}\n- **Newest pre-release:** {}\n\n## Assessment\n\n{}\n",
+            "# Bevy version status\n\n- **Indexed for:** {}\n- **Newest stable:** {newest}\n- **Newest pre-release:** {}\n- **Source:** {source}\n\n## Assessment\n\n{}\n",
             mine.as_deref().unwrap_or("UNKNOWN"),
             preview.as_deref().unwrap_or("none"),
             bump.label
@@ -611,6 +604,7 @@ impl BevyMcp {
                 "level": bump.level,
                 "breaks_api": bump.breaks_api,
                 "direction": bump.direction,
+                "source": source,
             }),
         ))
     }
@@ -697,6 +691,61 @@ struct ApiParams {
     /// Query a different indexed Bevy version (only the active one is loaded here).
     #[serde(default)]
     version: Option<String>,
+}
+
+/// Newest stable and newest pre-release from a crates.io API response.
+fn parse_crates_api(body: &[u8]) -> anyhow::Result<(String, Option<String>)> {
+    let data: Value = serde_json::from_slice(body)
+        .map_err(|error| anyhow!("invalid crates.io response: {error}"))?;
+    let newest = data["crate"]["max_stable_version"]
+        .as_str()
+        .or_else(|| data["crate"]["max_version"].as_str())
+        .ok_or_else(|| anyhow!("crates.io response did not contain a version"))?
+        .to_string();
+    let max_version = data["crate"]["max_version"]
+        .as_str()
+        .unwrap_or(&newest)
+        .to_string();
+    let preview = (max_version.contains('-') && cmp_version(&max_version, &newest).is_gt())
+        .then_some(max_version);
+    Ok((newest, preview))
+}
+
+/// Newest stable and newest pre-release from sparse-index NDJSON.
+fn parse_sparse_index(body: &[u8]) -> anyhow::Result<(String, Option<String>)> {
+    let text = std::str::from_utf8(body)
+        .map_err(|error| anyhow!("sparse index response is not UTF-8: {error}"))?;
+    let mut stable: Option<String> = None;
+    let mut preview: Option<String> = None;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: Value = serde_json::from_str(line)
+            .map_err(|error| anyhow!("invalid sparse index line: {error}"))?;
+        if entry["yanked"].as_bool() == Some(true) {
+            continue;
+        }
+        let Some(version) = entry["vers"].as_str() else {
+            continue;
+        };
+        let slot = if version.contains('-') {
+            &mut preview
+        } else {
+            &mut stable
+        };
+        let better = slot
+            .as_deref()
+            .is_none_or(|current| cmp_version(version, current).is_gt());
+        if better {
+            *slot = Some(version.to_string());
+        }
+    }
+    let newest = stable.ok_or_else(|| anyhow!("sparse index contained no stable version"))?;
+    // An old RC (e.g. 0.20.0-rc.1 when 0.20.1 is stable) is not a preview of
+    // anything; only show pre-releases newer than the newest stable.
+    let preview = preview.filter(|preview| cmp_version(preview, &newest).is_gt());
+    Ok((newest, preview))
 }
 
 fn split_versions(list: &str) -> Vec<String> {
@@ -852,4 +901,39 @@ pub fn serve_blocking(config: Config) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(serve(config))
+}
+
+#[cfg(test)]
+mod version_source_tests {
+    use super::*;
+
+    #[test]
+    fn sparse_index_picks_newest_stable_and_preview() {
+        let body = br#"{"name":"bevy","vers":"0.19.1","yanked":false}
+{"name":"bevy","vers":"0.20.0","yanked":false}
+{"name":"bevy","vers":"0.20.1","yanked":true}
+{"name":"bevy","vers":"0.21.0-rc.1","yanked":false}
+{"name":"bevy","vers":"0.20.2","yanked":false}"#;
+        let (stable, preview) = parse_sparse_index(body).expect("parse");
+        assert_eq!(stable, "0.20.2");
+        assert_eq!(preview.as_deref(), Some("0.21.0-rc.1"));
+
+        let old_rc = br#"{"name":"bevy","vers":"0.20.0-rc.1","yanked":false}
+{"name":"bevy","vers":"0.20.1","yanked":false}"#;
+        let (stable, preview) = parse_sparse_index(old_rc).expect("parse");
+        assert_eq!(stable, "0.20.1");
+        assert_eq!(preview, None);
+    }
+
+    #[test]
+    fn sparse_index_paths_follow_crates_io_rules() {
+        assert_eq!(
+            crate::bundle::sparse_index_url("bevy"),
+            "https://index.crates.io/be/vy/bevy"
+        );
+        assert_eq!(
+            crate::bundle::sparse_index_url("syn"),
+            "https://index.crates.io/3/s/syn"
+        );
+    }
 }

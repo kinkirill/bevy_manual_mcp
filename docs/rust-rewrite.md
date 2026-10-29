@@ -686,13 +686,22 @@ Fixes:
   response open.
 - Failure text says what happened and points at `BEVY_MCP_OFFLINE=1`.
 
-Measured with the current binary:
+A third change made the check independent of the crates.io API: it now reads
+the **sparse index** (`https://index.crates.io/be/vy/bevy`) first. That is the
+same host cargo uses and it is reachable directly here; the JSON API remains a
+fallback, and `BEVY_MCP_CRATES_API` still overrides both for mirrors/tests.
+Pre-releases older than the newest stable (e.g. `0.20.0-rc.1` when `0.20.1` is
+out) are reported as "none", not as a preview.
+
+Measured with the current binary and no proxy:
 
 | condition | result |
 |---|---|
-| no proxy | error after **5.97 s**: "Network is unreachable … Set BEVY_MCP_OFFLINE=1" |
-| via `HTTPS_PROXY=http://127.0.0.1:2080` | success after **0.94 s**: newest stable **0.20.1**, indexed 0.20.0 (patch, no API changes) |
+| sparse index, no proxy | success after **1.86 s**: newest stable **0.20.1** |
+| previous direct crates.io API | error after **5.97 s** ("Network is unreachable") |
+| via `HTTPS_PROXY=…` | success after **0.94 s** |
 
 Operational note: after rebuilding the binary, restart/reconnect the MCP server
 (`/mcp` reconnect or restart pi); a running server keeps its old executable
-mapped. The pi config now passes the local proxy env to `bevy-rust`.
+mapped. The pi config no longer pins the local proxy, so a stopped proxy cannot
+break the version check.
