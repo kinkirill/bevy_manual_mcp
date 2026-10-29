@@ -964,7 +964,7 @@ pub fn split_name_tokens(base: &str) -> Vec<String> {
         .collect()
 }
 
-fn singular_term(term: &str) -> String {
+pub fn singular_term(term: &str) -> String {
     if term.len() > 4 && term.ends_with("ies") {
         return format!("{}y", &term[..term.len() - 3]);
     }

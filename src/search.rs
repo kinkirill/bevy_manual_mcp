@@ -6,9 +6,9 @@
 
 use crate::archive::{
     ArchivedCorpus, ArchivedRecord, LoadedCorpus, MaybeNativeId, base_name, norm_key,
-    split_name_tokens,
+    singular_term, split_name_tokens,
 };
-use crate::text::{TextIndex, query_terms};
+use crate::text::{QUERY_STOPWORDS, TextIndex, query_terms};
 
 pub struct SearchState<'a> {
     pub corpus: &'a LoadedCorpus,
@@ -53,6 +53,8 @@ pub fn search<'a>(
     }
 
     let terms = query_terms(query);
+    let subjects = canonical_subjects(&terms);
+    let surfaces = query_surfaces(query);
     let mut seen: Vec<u32> = Vec::new();
     let mut scored: Vec<(u32, f32)> = Vec::new();
 
@@ -94,7 +96,9 @@ pub fn search<'a>(
             }
             text_raw.push((
                 id,
-                score * record_weight(root, record) * relevance_boost(root, record, &terms),
+                score
+                    * record_weight(root, record)
+                    * relevance_boost(root, record, &subjects, &surfaces),
             ));
         }
     }
@@ -123,15 +127,25 @@ pub fn search<'a>(
             if !passes(filters, root, record) {
                 continue;
             }
-            let leaf_terms = split_name_tokens(&base_name(root.string(record.name)));
-            let own_match = terms
-                .iter()
-                .any(|term| leaf_terms.iter().any(|leaf| leaf == term));
+            let coverage = name_coverage(root, record, &subjects);
             let definition = is_definition(root.string(record.kind));
-            let raw = if own_match && definition { 240.0 } else { 90.0 };
+            // A record that names every subject in the query is the concept even
+            // when it is a constant or a field.
+            let names_the_concept = coverage > 0 && (definition || coverage == subjects.len());
+            let raw = if names_the_concept {
+                240.0
+            } else if coverage > 0 {
+                90.0
+            } else {
+                0.0
+            };
+            if raw == 0.0 {
+                continue;
+            }
             name_raw.push((
                 id,
-                raw * record_weight(root, record) * relevance_boost(root, record, &terms),
+                raw * record_weight(root, record)
+                    * relevance_boost(root, record, &subjects, &surfaces),
             ));
         }
     }
@@ -274,56 +288,6 @@ fn is_definition(kind: &str) -> bool {
     )
 }
 
-/// Port of the TypeScript `relevanceBoost`: the query's own nouns in a
-/// record's name matter more than the same words buried in its docs.
-fn relevance_boost(root: &ArchivedCorpus, record: &ArchivedRecord, terms: &[String]) -> f32 {
-    if terms.is_empty() {
-        return 1.0;
-    }
-    let leaf_raw = base_name(root.string(record.name));
-    let leaf = crate::archive::norm_key(&leaf_raw);
-    let leaf_words = split_name_tokens(&leaf_raw);
-    let owner_words = split_name_tokens(&base_name(root.string(record.owner)));
-    let path_words = split_name_tokens(root.string(record.full_path));
-
-    let first_subject = terms.iter().find(|term| !is_intent(term));
-    let mut boost = 1.0f32;
-    let mut matched = 0usize;
-    for term in terms {
-        let first_term = first_subject == Some(term);
-        if leaf == *term {
-            boost += if first_term { 4.5 } else { 3.0 };
-            matched += 1;
-        } else if leaf_words.iter().any(|word| word == term) {
-            boost += if first_term { 3.7 } else { 2.2 };
-            matched += 1;
-        } else if term.len() > 3 && leaf.contains(term.as_str()) {
-            boost += if first_term { 2.9 } else { 1.4 };
-            matched += 1;
-        } else if owner_words.iter().any(|word| word == term) {
-            boost += 0.9;
-        } else if path_words.iter().any(|word| word == term) {
-            boost += 0.8;
-        }
-    }
-    if matched > 1 {
-        boost += (matched - 1) as f32 * 1.2;
-    }
-    // A name that covers several query subjects is the subject, not a neighbour.
-    let subject_terms: Vec<&String> = terms.iter().filter(|term| !is_intent(term)).collect();
-    let name_coverage = subject_terms
-        .iter()
-        .filter(|term| leaf == ***term || leaf_words.iter().any(|word| word == **term))
-        .count();
-    if name_coverage > 1 {
-        boost += (name_coverage - 1) as f32 * 4.0;
-    }
-    if is_definition(root.string(record.kind)) {
-        boost += 0.5;
-    }
-    boost
-}
-
 /// Intent verbs shape the query but are not its subject (ported list).
 fn is_intent(term: &str) -> bool {
     matches!(
@@ -368,6 +332,140 @@ fn is_intent(term: &str) -> bool {
             | "compare"
             | "difference"
     )
+}
+
+/// Words the user actually typed, for exact surface-name matches.
+pub fn query_surfaces(query: &str) -> Vec<String> {
+    let mut surfaces: Vec<String> = Vec::new();
+    for word in query
+        .to_lowercase()
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+    {
+        if word.len() < 2 || QUERY_STOPWORDS.contains(&word) {
+            continue;
+        }
+        if !surfaces.iter().any(|existing| existing == word) {
+            surfaces.push(word.to_string());
+        }
+    }
+    surfaces
+}
+
+/// Canonical query subjects: singular, de-duplicated, intent verbs removed.
+fn canonical_subjects(terms: &[String]) -> Vec<String> {
+    let mut subjects: Vec<String> = Vec::new();
+    for term in terms {
+        if is_intent(term) {
+            continue;
+        }
+        let singular = singular_term(term);
+        if !subjects.iter().any(|existing| existing == &singular) {
+            subjects.push(singular);
+        }
+    }
+    subjects
+}
+
+/// How many of `subjects` appear in a record's name or owner.
+fn name_coverage(root: &ArchivedCorpus, record: &ArchivedRecord, subjects: &[String]) -> usize {
+    let leaf = base_name(root.string(record.name));
+    let leaf_singular = singular_term(&crate::archive::norm_key(&leaf));
+    let leaf_words = split_name_tokens(&leaf);
+    subjects
+        .iter()
+        .filter(|term| {
+            leaf_singular == ***term
+                || leaf_words
+                    .iter()
+                    .any(|word| word == *term || singular_term(word) == ***term)
+        })
+        .count()
+}
+
+/// Port of the TypeScript `relevanceBoost`: the query's own nouns in a
+/// record's name matter more than the same words buried in its docs.
+fn relevance_boost(
+    root: &ArchivedCorpus,
+    record: &ArchivedRecord,
+    subjects: &[String],
+    surfaces: &[String],
+) -> f32 {
+    if subjects.is_empty() {
+        return 1.0;
+    }
+    let leaf_raw = base_name(root.string(record.name));
+    let leaf = crate::archive::norm_key(&leaf_raw);
+    let leaf_singular = singular_term(&leaf);
+    let leaf_words = split_name_tokens(&leaf_raw);
+    let owner_words = split_name_tokens(&base_name(root.string(record.owner)));
+    let path_words = split_name_tokens(root.string(record.full_path));
+    let module_words = split_name_tokens(root.string(record.module));
+
+    let first_subject = subjects.first().cloned();
+    let exact_surface = surfaces
+        .iter()
+        .any(|surface| surface == &leaf_raw.to_lowercase());
+    let mut boost = 1.0f32;
+    let mut matched = 0usize;
+    let mut coverage = 0usize;
+    if exact_surface && !is_intent(&leaf_raw.to_lowercase()) {
+        // The user typed this exact name: the strongest signal available.
+        let first = first_subject
+            .as_deref()
+            .is_some_and(|term| term == leaf_singular);
+        boost += if first { 10.5 } else { 8.0 };
+        matched += 1;
+        coverage += 1;
+    }
+    for term in subjects {
+        let first_term = first_subject.as_deref() == Some(term.as_str());
+        if exact_surface && leaf_singular == *term {
+            continue;
+        } else if leaf_singular == *term {
+            // The record is the named concept, not merely a word that contains it.
+            boost += if first_term { 6.5 } else { 4.0 };
+            matched += 1;
+            coverage += 1;
+        } else if leaf_words
+            .iter()
+            .any(|word| word == term || singular_term(word) == *term)
+        {
+            boost += if first_term { 3.7 } else { 2.2 };
+            matched += 1;
+            coverage += 1;
+        } else if term.len() > 3 && leaf.contains(term.as_str()) {
+            boost += if first_term { 2.9 } else { 1.4 };
+            matched += 1;
+            coverage += 1;
+        } else if owner_words.iter().any(|word| word == term) {
+            boost += 0.9;
+        } else if path_words.iter().any(|word| word == term) {
+            boost += 0.8;
+        }
+    }
+    if matched > 1 {
+        boost += (matched - 1) as f32 * 1.2;
+    }
+    // A name covering every subject is the concept itself; partial coverage is
+    // just a name that happens to share words.
+    if subjects.len() > 1 && coverage == subjects.len() {
+        boost += 3.0;
+    }
+    // Matching the module the query names ("ecs", "camera", "ui") is evidence.
+    let module_coverage = subjects
+        .iter()
+        .filter(|term| {
+            module_words
+                .iter()
+                .any(|word| word == *term || singular_term(word) == ***term)
+        })
+        .count()
+        .min(2);
+    boost += module_coverage as f32 * 1.5;
+    if is_definition(root.string(record.kind)) {
+        boost += 0.5;
+    }
+    boost
 }
 
 fn definition_key(root: &ArchivedCorpus, record: &ArchivedRecord) -> String {

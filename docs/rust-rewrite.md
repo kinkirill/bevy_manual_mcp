@@ -423,3 +423,44 @@ stdio end-to-end test; the `search` CLI verb is live.
 
 Still open from step 2: `.tar.zst` bundle packing and the `fetch-index`
 download (the bundle contents are now final, so this is container work).
+
+## 20. Ranking precision pass
+
+Field-testing surfaced a real weakness: `Events ECS event system` ranked
+`AssetEventSystems` above `Event`. The TypeScript baseline had the same bug
+(it put `gamepad_event_processing_system` and `AssetEventSystems` above
+`Event`), so this pass beats the baseline instead of matching it.
+
+Changes in the hybrid merge:
+
+- **Canonical query subjects.** Plural/singular and surface variants are
+  collapsed before name scoring, so `Events`/`event` is one concept, not two.
+  Intent verbs (`spawn`, `difference`, …) are excluded from subject scoring.
+- **Exact surface-name priority.** A record whose name is exactly a word the
+  user typed (`Commands` for "commands", `Camera` for "camera") gets the
+  strongest name bonus.
+- **Exact-concept priority.** A record whose leaf equals a subject in singular
+  form (`Event`, `System`) outranks a name that merely contains the word
+  (`AssetEventSystems`).
+- **Module coverage.** Matching the module the query names (`ecs`, `camera`,
+  `ui`) adds evidence (`Event` lives in `bevy::ecs::event`).
+- **Full-subject coverage.** A name that covers *all* subjects is treated as the
+  concept even for constants, which fixes `render world` →
+  `RenderAssetUsages::RENDER_WORLD`.
+- Partial multi-word coverage no longer dominates; `AssetEventSystems`
+  covering two of four words is not "the concept".
+
+Results on the real corpus:
+
+| query | before | after |
+|---|---|---|
+| `Events ECS event system` | `AssetEventSystems` | **`bevy::ecs::event::Event`** |
+| `render world` | `RenderAssetUsages` | **`RENDER_WORLD`** |
+| `commands spawn` | `RelatedSpawnerCommands` / `Commands` | **`Commands`** (surface-exact) |
+| 15-query snapshot | 13/15 top-1 | **13/15 top-1** (unchanged; the two differences are still reviewed) |
+
+`tests/archive.rs::ranking_puts_the_named_concept_first` builds a fixture with
+`Event`/`AssetEventSystems`/`System`/`Commands`/`Message` and locks in those
+top-1 outcomes. Further precision work (kind priors for `*Systems`/`*Plugin`,
+PMI relatedness, did-you-mean on misses) needs a larger query set to avoid
+overfitting the 15-query snapshot.

@@ -25,7 +25,7 @@ const TOKENIZER: &str = "bevy_ident";
 /// Field boosts for the query; name matches outrank prose, as before.
 const FIELD_BOOSTS: [(&str, f32); 3] = [("name", 4.0), ("signature", 2.0), ("docs", 1.0)];
 
-const QUERY_STOPWORDS: &[&str] = &[
+pub const QUERY_STOPWORDS: &[&str] = &[
     "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at", "by", "with", "from",
     "into", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "how",
     "what", "which", "when", "where", "why", "who", "i", "me", "my", "we", "you", "your", "it",
