@@ -1,0 +1,21 @@
+[package]
+name = "bevy-mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Version-accurate Bevy API docs, guides, examples and migration notes as an MCP server"
+license = "MIT"
+repository = "https://github.com/kinkirill/bevy_manual_mcp"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+rmcp = { version = "=3.8.0", default-features = false, features = ["macros", "server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+toml = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
