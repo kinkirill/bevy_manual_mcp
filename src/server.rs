@@ -22,6 +22,7 @@ use crate::registry::Registry;
 use crate::search::{self, SearchFilters, SearchState};
 use crate::status;
 use crate::text::{self, TextIndex};
+use crate::versions::{bump_between, cmp_version};
 
 pub struct BevyMcp {
     config: Config,
@@ -144,6 +145,63 @@ impl BevyMcp {
         }
     }
 
+    /// Find runnable code examples.
+    #[tool(
+        name = "bevy_examples",
+        description = "Finds runnable Bevy example code, either from the engine's own `examples/` directory or from the Bevy Book's quick-start projects. Use this when you need a working pattern for a concrete task (2D/3D rendering, UI, input, audio, assets, state, gizmos) rather than an API signature. Returns the actual source code."
+    )]
+    async fn bevy_examples(
+        &self,
+        Parameters(params): Parameters<ExamplesParams>,
+    ) -> CallToolResult {
+        match self.run_examples(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Breaking changes between Bevy versions.
+    #[tool(
+        name = "bevy_migration",
+        description = "Returns breaking changes between two Bevy versions. Use this whenever upgrading a project, when the user's code fails to compile, or when you are unsure whether an API changed between releases. Includes consolidated migration guides and per-PR breaking-change notes."
+    )]
+    async fn bevy_migration(
+        &self,
+        Parameters(params): Parameters<MigrationParams>,
+    ) -> CallToolResult {
+        match self.run_migration(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Compare one symbol across versions.
+    #[tool(
+        name = "bevy_api_diff",
+        description = "Shows the same API symbol as it exists in each compiled Bevy version, and states plainly whether the signature changed. Use this during an upgrade to decide whether a specific call site actually needs rewriting, instead of guessing from a migration guide. Call bevy_indexed_versions first to see what is available."
+    )]
+    async fn bevy_api_diff(&self, Parameters(params): Parameters<DiffParams>) -> CallToolResult {
+        match self.run_api_diff(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Check crates.io for a newer Bevy.
+    #[tool(
+        name = "bevy_check_version",
+        description = "Checks crates.io for the newest published Bevy version and compares it to the version this server is indexed for. IMPORTANT: it distinguishes a PATCH release (bug fixes only, no API changes) from a MINOR release (where Bevy makes sweeping breaking API changes). Pre-releases are reported separately and never recommended as a target."
+    )]
+    async fn bevy_check_version(
+        &self,
+        Parameters(params): Parameters<CheckVersionParams>,
+    ) -> CallToolResult {
+        match self.run_check_version(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
     /// Lists every Bevy version this server has an index for.
     #[tool(
         name = "bevy_indexed_versions",
@@ -247,6 +305,277 @@ impl BevyMcp {
             }),
         ))
     }
+    fn run_examples(&self, params: ExamplesParams) -> anyhow::Result<(String, Value)> {
+        let state = self.search_state().ok_or_else(|| {
+            anyhow!(
+                "no corpus is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` or `bevy-mcp fetch-index` first.",
+                self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let filters = SearchFilters {
+            kind: Some("code_example".into()),
+            category: params.category.clone(),
+            ..Default::default()
+        };
+        let limit = params.limit.unwrap_or(5).clamp(1, 15);
+        let hits = search::search(&state, &params.task, limit, &filters);
+        if hits.is_empty() {
+            let count = state
+                .root()
+                .by_kind
+                .iter()
+                .find(|row| row.name.as_str() == "code_example")
+                .map(|row| row.count.to_native())
+                .unwrap_or(0);
+            let engine_hint = if self.config.examples_dir.is_none() {
+                " Engine examples are not installed; set BEVY_SRC_DIR to a Bevy checkout (or BEVY_EXAMPLES_DIR) to index them."
+            } else {
+                ""
+            };
+            bail!(
+                "No examples matched \"{}\". The corpus has {count} code example(s){}.{}",
+                params.task,
+                params
+                    .category
+                    .as_deref()
+                    .map(|category| format!(" in category \"{category}\""))
+                    .unwrap_or_default(),
+                engine_hint
+            );
+        }
+        let text = format::examples_markdown(&state, &hits, &params.task);
+        let results: Vec<Value> = hits
+            .iter()
+            .map(|hit| format::hit_json(&state, hit))
+            .collect();
+        Ok((
+            text,
+            json!({
+                "task": params.task,
+                "category": params.category,
+                "results": results,
+            }),
+        ))
+    }
+
+    fn run_migration(&self, params: MigrationParams) -> anyhow::Result<(String, Value)> {
+        let state = self.search_state().ok_or_else(|| {
+            anyhow!(
+                "no corpus is installed for Bevy {}. Run `bevy-mcp build --records <records.ndjson>` or `bevy-mcp fetch-index` first.",
+                self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let to = params
+            .to_version
+            .clone()
+            .or_else(|| self.config.bevy_version.clone())
+            .ok_or_else(|| anyhow!("specify `to_version`, or set BEVY_VERSION"))?;
+        let entries = search::find_migrations(
+            state.root(),
+            params.from_version.as_deref(),
+            Some(&to),
+            params.topic.as_deref(),
+            6,
+        );
+        let text = format::migration_markdown(
+            &state,
+            &entries,
+            params.from_version.as_deref(),
+            &to,
+            params.topic.as_deref(),
+        );
+        let results: Vec<Value> = entries
+            .iter()
+            .map(|(record, score)| {
+                let mut value = format::record_json(&state, record);
+                if let Value::Object(ref mut map) = value {
+                    map.insert("score".into(), json!(score));
+                }
+                value
+            })
+            .collect();
+        Ok((
+            text,
+            json!({
+                "from_version": params.from_version,
+                "to_version": to,
+                "topic": params.topic,
+                "results": results,
+            }),
+        ))
+    }
+
+    fn run_api_diff(&self, params: DiffParams) -> anyhow::Result<(String, Value)> {
+        let installed: Vec<String> = self
+            .registry
+            .indexed_versions()
+            .into_iter()
+            .filter(|version| archive::archive_path_for(&self.config.data_dir, version).is_file())
+            .collect();
+        let wanted: Vec<String> = match &params.versions {
+            Some(list) => split_versions(list),
+            None => installed.clone(),
+        };
+        if wanted.len() < 2 {
+            bail!(
+                "need at least two compiled corpora to diff; installed: {}. Build or fetch another version first.",
+                if installed.is_empty() {
+                    "none".to_string()
+                } else {
+                    installed.join(", ")
+                }
+            );
+        }
+        for version in &wanted {
+            if !installed.contains(version) {
+                bail!(
+                    "version {version} has no compiled corpus; installed: {}",
+                    installed.join(", ")
+                );
+            }
+        }
+
+        let baseline = wanted
+            .iter()
+            .max_by(|a, b| cmp_version(a, b))
+            .cloned()
+            .unwrap_or_default();
+
+        struct Row {
+            version: String,
+            found: bool,
+            kind: String,
+            signature: String,
+            docs_len: usize,
+        }
+        let mut rows: Vec<Row> = Vec::new();
+        for version in &wanted {
+            let path = archive::archive_path_for(&self.config.data_dir, version);
+            let corpus = LoadedCorpus::open(&path)?;
+            let hit = corpus.root().lookup(&params.symbol).into_iter().next();
+            rows.push(match hit {
+                Some(record) => Row {
+                    version: version.clone(),
+                    found: true,
+                    kind: corpus.root().string(record.kind).to_string(),
+                    signature: corpus.root().string(record.signature).to_string(),
+                    docs_len: corpus.root().string(record.docs).chars().count(),
+                },
+                None => Row {
+                    version: version.clone(),
+                    found: false,
+                    kind: String::new(),
+                    signature: String::new(),
+                    docs_len: 0,
+                },
+            });
+        }
+
+        let baseline_row = rows.iter().find(|row| row.version == baseline);
+        let mut lines = vec![
+            format!("# `{}` across Bevy versions", params.symbol),
+            String::new(),
+            "| version | state | kind | signature |".to_string(),
+            "|---|---|---|---|".to_string(),
+        ];
+        let mut values: Vec<Value> = Vec::new();
+        for row in &rows {
+            let changed = match baseline_row {
+                Some(base) if base.found && row.found => {
+                    if base.signature == row.signature {
+                        "same"
+                    } else {
+                        "changed"
+                    }
+                }
+                Some(_) if row.found => "only here",
+                _ => "-",
+            };
+            let signature_cell = if row.signature.is_empty() {
+                "-".to_string()
+            } else {
+                row.signature.replace('\n', " ")
+            };
+            let kind_cell = if row.kind.is_empty() {
+                "-".to_string()
+            } else {
+                row.kind.clone()
+            };
+            lines.push(format!(
+                "| {} | {} | {} | {} |",
+                row.version,
+                if row.found { changed } else { "not found" },
+                kind_cell,
+                signature_cell
+            ));
+            values.push(json!({
+                "version": row.version,
+                "found": row.found,
+                "kind": row.kind,
+                "signature": row.signature,
+                "docs_chars": row.docs_len,
+                "vs_baseline": changed,
+            }));
+        }
+        lines.push(String::new());
+        lines.push(format!("Baseline: Bevy {baseline}."));
+        Ok((
+            lines.join("\n"),
+            json!({
+                "symbol": params.symbol,
+                "baseline": baseline,
+                "versions": values,
+            }),
+        ))
+    }
+
+    fn run_check_version(&self, params: CheckVersionParams) -> anyhow::Result<(String, Value)> {
+        // No cache yet: `refresh` is accepted but has no work to do.
+        let _ = params.refresh;
+        if self.config.offline {
+            bail!("BEVY_MCP_OFFLINE=1 disables the crates.io check");
+        }
+        let url = std::env::var("BEVY_MCP_CRATES_API")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://crates.io/api/v1/crates/bevy".to_string());
+        let body = crate::bundle::read_url(&url)?;
+        let data: Value = serde_json::from_slice(&body)
+            .map_err(|error| anyhow!("invalid crates.io response from {url}: {error}"))?;
+        let newest = data["crate"]["max_stable_version"]
+            .as_str()
+            .or_else(|| data["crate"]["max_version"].as_str())
+            .ok_or_else(|| anyhow!("crates.io response did not contain a version"))?
+            .to_string();
+        let max_version = data["crate"]["max_version"]
+            .as_str()
+            .unwrap_or(&newest)
+            .to_string();
+        let preview = if max_version.contains('-') && max_version != newest {
+            Some(max_version)
+        } else {
+            None
+        };
+        let mine = self.config.bevy_version.clone();
+        let bump = bump_between(mine.as_deref(), Some(&newest));
+        let text = format!(
+            "# Bevy version status\n\n- **Indexed for:** {}\n- **Newest stable:** {newest}\n- **Newest pre-release:** {}\n\n## Assessment\n\n{}\n",
+            mine.as_deref().unwrap_or("UNKNOWN"),
+            preview.as_deref().unwrap_or("none"),
+            bump.label
+        );
+        Ok((
+            text,
+            json!({
+                "indexed": mine,
+                "newest_stable": newest,
+                "preview": preview,
+                "level": bump.level,
+                "breaks_api": bump.breaks_api,
+                "direction": bump.direction,
+            }),
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -280,6 +609,47 @@ struct SearchParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct ExamplesParams {
+    /// What you want to build, e.g. "2d camera", "button ui", "keyboard input".
+    task: String,
+    /// Max results (default 5).
+    #[serde(default)]
+    limit: Option<usize>,
+    /// Optional category filter, e.g. "ui", "2d", "input", "audio".
+    #[serde(default)]
+    category: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MigrationParams {
+    /// Version being upgraded from, e.g. "0.19". Omit with to_version for a release summary.
+    #[serde(default)]
+    from_version: Option<String>,
+    /// Version being upgraded to, e.g. "0.20". Defaults to the configured version.
+    #[serde(default)]
+    to_version: Option<String>,
+    /// Optional topic filter, e.g. "scheduler", "render", "ui", "asset".
+    #[serde(default)]
+    topic: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct DiffParams {
+    /// Symbol to compare, e.g. "App::add_systems", "Query", "Camera2d".
+    symbol: String,
+    /// Comma-separated versions, e.g. "0.19.1,0.20.0". Defaults to every compiled corpus.
+    #[serde(default)]
+    versions: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CheckVersionParams {
+    /// Accepted for compatibility; this build always queries crates.io.
+    #[serde(default)]
+    refresh: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct ApiParams {
     /// Symbol to look up, e.g. "App::add_systems", "Query", "Commands::spawn".
     symbol: String,
@@ -289,6 +659,17 @@ struct ApiParams {
     /// Query a different indexed Bevy version (only the active one is loaded here).
     #[serde(default)]
     version: Option<String>,
+}
+
+fn split_versions(list: &str) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for part in list.split(',') {
+        let part = part.trim();
+        if !part.is_empty() && !versions.iter().any(|existing| existing == part) {
+            versions.push(part.to_string());
+        }
+    }
+    versions
 }
 
 fn with_structured(text: String, structured: serde_json::Value) -> CallToolResult {

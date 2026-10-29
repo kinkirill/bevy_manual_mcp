@@ -558,3 +558,32 @@ End-to-end test (`bundle_pack_and_fetch_round_trip`) builds a fixture, packs it,
 serves it from a directory, fetches it into a fresh data dir, and answers a
 lookup through the installed corpus; `fetch_rejects_a_typescript_manifest` locks
 in the version mismatch error.
+
+## 23. Step 3 (first half): examples, migration, diff, version check
+
+Four more tools are live; `pi mcp list` now reports 8.
+
+- **`bevy_examples`** reuses hybrid search with `kind = code_example` and an
+  optional category filter. When nothing matches it says how many examples
+  exist and, if `examples_dir` is unset, that engine examples are not installed
+  (`BEVY_SRC_DIR`/`BEVY_EXAMPLES_DIR`).
+- **`bevy_migration`** ports `findMigrations`: guides weigh 100/70/60 depending
+  on whether both endpoints or only one match, per-PR entries 50, release notes
+  45, at most six chunks per source document, with a topic substring filter.
+  Versions are compared at major.minor, so `to_version: "0.20.0"` still finds
+  the `0.19 → 0.20` guide (the TypeScript code compared exact strings).
+- **`bevy_api_diff`** opens each requested version's archive on demand and
+  compares the symbol's signature against the newest baseline. Versions without
+  a compiled corpus are refused by name, not silently substituted.
+- **`bevy_check_version`** queries crates.io (override with
+  `BEVY_MCP_CRATES_API` for mirrors/tests), reports newest stable and
+  pre-release separately, and classifies patch/minor/major with `bump_between`.
+  `BEVY_MCP_OFFLINE=1` refuses the check.
+
+Measured against the real 0.20.0 corpus: migration notes for `0.19 → 0.20`
+return the consolidated guide; `bevy_examples "camera"` correctly reports that
+only the 13 Book examples are indexed; `bevy_api_diff` requires a second
+compiled corpus and says so.
+
+Still open in step 3: MCP resources/resource templates, completions and list
+pagination (the `bevy://` surface).

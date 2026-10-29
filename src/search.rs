@@ -833,3 +833,100 @@ mod suggestion_tests {
         assert_eq!(common_prefix_chars("event", "message"), 0);
     }
 }
+
+/// Migration material for a version pair (or a single target version).
+/// Ported from `findMigrations`: guides weighing more than per-PR entries.
+pub fn find_migrations<'a>(
+    root: &'a ArchivedCorpus,
+    from: Option<&str>,
+    to: Option<&str>,
+    topic: Option<&str>,
+    per_doc: usize,
+) -> Vec<(&'a ArchivedRecord, i32)> {
+    let from_core = from.map(major_minor);
+    let to_core = to.map(major_minor);
+    let topic = topic.map(str::to_lowercase);
+    let matches_topic = |record: &ArchivedRecord| {
+        let Some(topic) = &topic else {
+            return true;
+        };
+        let mut haystack = String::new();
+        for id in [record.name, record.heading, record.docs, record.full_path] {
+            haystack.push_str(root.string(id));
+            haystack.push(' ');
+        }
+        for breadcrumb in record.breadcrumb.iter() {
+            haystack.push_str(root.string(*breadcrumb));
+            haystack.push(' ');
+        }
+        haystack.to_lowercase().contains(topic)
+    };
+
+    let mut scored: Vec<(i32, &ArchivedRecord)> = Vec::new();
+    for record in root.records.iter() {
+        if !matches_topic(record) {
+            continue;
+        }
+        let kind = root.string(record.kind);
+        let score = match kind {
+            "migration_guide" => {
+                let guide_from = major_minor(root.string(record.from_version));
+                let guide_to = major_minor(root.string(record.to_version));
+                let from_match = from_core.is_some_and(|value| guide_from == value);
+                let to_match = to_core.is_some_and(|value| guide_to == value);
+                if from_match && to_match {
+                    100
+                } else if to_match {
+                    70
+                } else if from_match {
+                    60
+                } else {
+                    continue;
+                }
+            }
+            "migration_entry" => {
+                if to_core.is_some_and(|to| major_minor(root.string(record.version)) == to) {
+                    50
+                } else {
+                    continue;
+                }
+            }
+            "release_notes" => {
+                if to_core.is_some_and(|to| major_minor(root.string(record.version)) == to) {
+                    45
+                } else {
+                    continue;
+                }
+            }
+            _ => continue,
+        };
+        scored.push((score, record));
+    }
+
+    // At most `per_doc` chunks per source document, then rank globally.
+    let mut by_doc: Vec<(String, Vec<(i32, &ArchivedRecord)>)> = Vec::new();
+    for (score, record) in scored {
+        let key = root.string(record.full_path).to_string();
+        match by_doc.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, entries)) => entries.push((score, record)),
+            None => by_doc.push((key, vec![(score, record)])),
+        }
+    }
+    let mut out: Vec<(i32, &ArchivedRecord)> = Vec::new();
+    for (_, mut entries) in by_doc {
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+        out.extend(entries.into_iter().take(per_doc));
+    }
+    out.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    out.into_iter()
+        .map(|(score, record)| (record, score))
+        .collect()
+}
+
+fn major_minor(version: &str) -> &str {
+    let version = version.trim();
+    match version.match_indices('.').nth(1) {
+        Some((index, _)) => &version[..index],
+        None => version,
+    }
+}

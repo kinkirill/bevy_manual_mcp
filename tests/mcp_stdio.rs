@@ -95,7 +95,14 @@ struct Server {
 impl Server {
     /// Spawn the bare command: no `serve` argument, exactly how MCP clients do.
     fn spawn(dir: &Path) -> Self {
+        Self::spawn_with_env(dir, &[])
+    }
+
+    fn spawn_with_env(dir: &Path, envs: &[(&str, &str)]) -> Self {
         let mut command = base_command(dir);
+        for (key, value) in envs {
+            command.env(key, value);
+        }
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -320,6 +327,34 @@ fn build_corpus(dir: &Path) {
             "bevy_version": "9.9.9"
         }),
         json!({
+            "source": "bevy-examples",
+            "kind": "code_example",
+            "name": "camera",
+            "full_path": "bevy-examples:camera",
+            "module": "examples",
+            "signature": "",
+            "docs": "2D camera example.\n\n```rust\nfn main() { spawn_camera(); }\n```",
+            "code": "fn main() { spawn_camera(); }",
+            "file": "examples/camera.rs",
+            "categories": ["2d", "render"],
+            "bevy_version": "9.9.9",
+            "title": "camera"
+        }),
+        json!({
+            "source": "website",
+            "kind": "migration_guide",
+            "name": "Migration guide 9.8 -> 9.9",
+            "full_path": "migration_guide:content/learn/migration-guides/9.8-to-9.9.md",
+            "module": "content::learn::migration-guides",
+            "signature": "",
+            "docs": "Widget was renamed to Gadget.",
+            "file": "content/learn/migration-guides/9.8-to-9.9.md",
+            "bevy_version": "9.9.9",
+            "from_version": "9.8",
+            "to_version": "9.9",
+            "heading": "Widget rename"
+        }),
+        json!({
             "source": "website",
             "kind": "migration_guide",
             "name": "Event trait split",
@@ -432,4 +467,119 @@ fn missing_symbol_returns_suggestions_over_stdio() {
             .any(|row| row["full_path"] == "demo::MessageReader"),
         "{suggestions:?}"
     );
+}
+
+fn build_old_corpus(dir: &Path) {
+    let out = dir.join("versions/9.8.0");
+    std::fs::create_dir_all(&out).expect("version dir");
+    let records = serde_json::json!({
+        "source": "rustdoc",
+        "kind": "struct",
+        "name": "Widget",
+        "full_path": "demo::Widget",
+        "crate": "demo",
+        "module": "demo",
+        "signature": "pub struct WidgetV1;",
+        "docs": "The old widget.",
+        "file": "demo/struct.Widget.html",
+        "bevy_version": "9.8.0"
+    })
+    .to_string();
+    let records_path = out.join("records.ndjson");
+    std::fs::write(&records_path, records).expect("records");
+
+    let empty = dir.join("no-sources");
+    std::fs::create_dir_all(&empty).expect("empty dir");
+    let output = base_command(dir)
+        .env("BEVY_VERSION", "9.8.0")
+        .env("BEVY_WEBSITE_DIR", &empty)
+        .env("BEVY_EXAMPLES_DIR", &empty)
+        .env("BEVY_META_DIR", &empty)
+        .env("BEVY_ERRORS_DIR", &empty)
+        .args(["build", "--records"])
+        .arg(&records_path)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .expect("run build");
+    assert!(
+        output.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn examples_and_migration_tools_answer() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool("bevy_examples", json!({ "task": "camera" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("2D camera example"), "{text}");
+    assert!(text.contains("spawn_camera"), "{text}");
+    let results = response["result"]["structuredContent"]["results"]
+        .as_array()
+        .expect("results");
+    assert!(!results.is_empty());
+
+    let response = server.call_tool(
+        "bevy_migration",
+        json!({ "from_version": "9.8", "to_version": "9.9" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("Widget was renamed"), "{text}");
+}
+
+#[test]
+fn api_diff_compares_installed_versions() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    build_old_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool(
+        "bevy_api_diff",
+        json!({ "symbol": "Widget", "versions": "9.8.0,9.9.9" }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("9.8.0"), "{text}");
+    assert!(text.contains("changed"), "{text}");
+    let versions = response["result"]["structuredContent"]["versions"]
+        .as_array()
+        .expect("versions");
+    assert_eq!(versions.len(), 2);
+}
+
+#[test]
+fn check_version_reads_the_crates_response() {
+    let dir = fixture();
+    let api = dir.path().join("crates.json");
+    std::fs::write(
+        &api,
+        r#"{"crate":{"max_stable_version":"9.10.0","max_version":"9.11.0-rc.1"}}"#,
+    )
+    .expect("crates json");
+    let mut server = Server::spawn_with_env(
+        dir.path(),
+        &[
+            ("BEVY_MCP_CRATES_API", api.to_str().expect("path")),
+            ("BEVY_MCP_OFFLINE", "0"),
+        ],
+    );
+    server.initialize();
+
+    let response = server.call_tool("bevy_check_version", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("9.10.0"), "{text}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["newest_stable"], "9.10.0");
+    assert_eq!(structured["preview"], "9.11.0-rc.1");
 }

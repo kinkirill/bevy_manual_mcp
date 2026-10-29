@@ -234,7 +234,7 @@ fn join(base: &str, release: &str, name: &str) -> String {
     )
 }
 
-fn read_url(url: &str) -> Result<Vec<u8>> {
+pub fn read_url(url: &str) -> Result<Vec<u8>> {
     if url.starts_with("http://") || url.starts_with("https://") {
         let mut response = ureq::get(url)
             .call()

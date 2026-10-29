@@ -205,3 +205,75 @@ fn truncate_chars(value: &str, max: usize) -> String {
     out.push('…');
     out
 }
+
+pub fn examples_markdown(state: &SearchState<'_>, hits: &[Hit<'_>], task: &str) -> String {
+    let root = state.root();
+    let mut lines = vec![
+        format!("## Examples for \"{task}\""),
+        String::new(),
+        format!("**Bevy {}** · {} example(s)", root.bevy_version, hits.len()),
+    ];
+    for hit in hits {
+        let record = hit.record;
+        lines.push(String::new());
+        lines.push("---".to_string());
+        lines.push(String::new());
+        lines.push(format!("# `{}`", root.string(record.full_path)));
+        let categories = record
+            .categories
+            .iter()
+            .map(|id| root.string(*id))
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if !categories.is_empty() {
+            lines.push(format!("categories: {}", categories.join(", ")));
+        }
+        let docs = root.string(record.docs);
+        if !docs.is_empty() {
+            lines.push(String::new());
+            lines.push(truncate_chars(docs, 4000));
+        }
+    }
+    lines.join("\n")
+}
+
+pub fn migration_markdown(
+    state: &SearchState<'_>,
+    entries: &[(&ArchivedRecord, i32)],
+    from: Option<&str>,
+    to: &str,
+    topic: Option<&str>,
+) -> String {
+    let root = state.root();
+    let range = match from {
+        Some(from) => format!("{from} → {to}"),
+        None => to.to_string(),
+    };
+    let mut lines = vec![format!("## Migration notes {range}")];
+    if let Some(topic) = topic {
+        lines[0].push_str(&format!(" matching \"{topic}\""));
+    }
+    if entries.is_empty() {
+        lines.push(String::new());
+        lines.push(format!(
+            "No migration notes found for {range}. The guide may not exist for this pair, or the vendored website data may not cover it."
+        ));
+        return lines.join("\n");
+    }
+    for (record, _) in entries.iter().take(12) {
+        lines.push(String::new());
+        lines.push("---".to_string());
+        lines.push(String::new());
+        let heading = non_empty(root.string(record.heading));
+        match heading {
+            Some(heading) => lines.push(format!(
+                "### `{}` — {heading}",
+                root.string(record.full_path)
+            )),
+            None => lines.push(format!("### `{}`", root.string(record.full_path))),
+        }
+        lines.push(String::new());
+        lines.push(truncate_chars(root.string(record.docs), 1800));
+    }
+    lines.join("\n")
+}
