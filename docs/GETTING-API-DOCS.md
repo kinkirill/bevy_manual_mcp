@@ -25,6 +25,11 @@ Where the bundle comes from:
 - override with `BEVY_MCP_INDEX_BASE_URL` (mirrors and tests)
 - `BEVY_MCP_OFFLINE=1` refuses all downloads
 
+To check whether a newer index release exists without installing it, call the
+`bevy_mcp_check_release_index` MCP tool. It compares the installed corpus
+version and revision with the GitHub `index-manifest.json`, reports the exact
+`fetch-index` command when an update exists, and caches the check for six hours.
+
 A bundle contains:
 
 ```

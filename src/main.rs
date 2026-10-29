@@ -354,6 +354,7 @@ fn main() -> anyhow::Result<()> {
                 );
                 if let Some(manifest_path) = manifest {
                     bundle::write_release_manifest(&path, &version, &manifest_path, revision)?;
+                    fs::copy(&manifest_path, out_dir.join(bundle::INSTALLED_MANIFEST))?;
                     println!("- manifest: {}", manifest_path.display());
                 }
             }

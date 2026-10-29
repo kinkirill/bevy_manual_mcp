@@ -18,6 +18,7 @@ use crate::registry::version_dir_name;
 use crate::text::TEXT_DIR;
 
 pub const RELEASE_MANIFEST: &str = "index-manifest.json";
+pub const INSTALLED_MANIFEST: &str = ".installed-index.json";
 /// 1 was the TypeScript bundle; Rust bundles are 2.
 pub const RUST_MANIFEST_VERSION: u32 = 2;
 pub const DEFAULT_RELEASES_BASE: &str =
@@ -200,31 +201,15 @@ pub fn release_tags(version: &str) -> Vec<String> {
     tags
 }
 
-/// Download and install the published bundle for `version`.
-///
-/// Exact releases win; otherwise the same Bevy minor is used. The bundle is
-/// installed under the exact corpus version from its manifest, and the loaders
-/// resolve same-minor corpora on demand.
-pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathBuf>> {
-    // An explicit fetch upgrades to the requested exact corpus. Same-minor
-    // fallback is a loader concern, not an "already installed" shortcut.
-    let exact = data_dir
-        .join("versions")
-        .join(version_dir_name(version))
-        .join(ARCHIVE_FILE);
-    if exact.is_file() && !force {
-        return Ok(None);
-    }
-
-    let base = std::env::var("BEVY_MCP_INDEX_BASE_URL")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_RELEASES_BASE.to_string());
-
+/// Find a compatible published manifest for `version`: exact tag first, then
+/// its Bevy minor. Errors list every attempted release.
+pub fn find_release_manifest(
+    version: &str,
+    base: &str,
+) -> Result<(String, ReleaseManifest), String> {
     let mut errors = Vec::new();
-    let mut selected = None;
     for release in release_tags(version) {
-        let manifest_url = join(&base, &release, RELEASE_MANIFEST);
+        let manifest_url = join(base, &release, RELEASE_MANIFEST);
         eprintln!("[bevy-manual-mcp] fetching {manifest_url}");
         let bytes = match read_url(&manifest_url) {
             Ok(bytes) => bytes,
@@ -262,16 +247,44 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
             ));
             continue;
         }
-        selected = Some((release, manifest));
-        break;
+        return Ok((release, manifest));
+    }
+    Err(format!(
+        "could not find a compatible index for Bevy {version}. Tried {}.",
+        errors.join("; ")
+    ))
+}
+
+/// Read the manifest recorded when a corpus was fetched or built.
+pub fn installed_manifest(version_dir: &Path) -> Option<ReleaseManifest> {
+    let path = version_dir.join(INSTALLED_MANIFEST);
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Download and install the published bundle for `version`.
+///
+/// Exact releases win; otherwise the same Bevy minor is used. The bundle is
+/// installed under the exact corpus version from its manifest, and the loaders
+/// resolve same-minor corpora on demand.
+pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathBuf>> {
+    // An explicit fetch upgrades to the requested exact corpus. Same-minor
+    // fallback is a loader concern, not an "already installed" shortcut.
+    let exact = data_dir
+        .join("versions")
+        .join(version_dir_name(version))
+        .join(ARCHIVE_FILE);
+    if exact.is_file() && !force {
+        return Ok(None);
     }
 
-    let Some((release, manifest)) = selected else {
-        bail!(
-            "could not fetch a compatible index for Bevy {version}. Tried {}.",
-            errors.join("; ")
-        );
-    };
+    let base = std::env::var("BEVY_MCP_INDEX_BASE_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_RELEASES_BASE.to_string());
+
+    let (release, manifest) =
+        find_release_manifest(version, &base).map_err(|error| anyhow!(error))?;
 
     let asset_url = join(&base, &release, &manifest.asset);
     eprintln!("[bevy-manual-mcp] downloading {}", manifest.asset);
@@ -316,7 +329,13 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
 
     let result = (|| -> Result<PathBuf> {
         unpack(&archive, &staging)?;
-        install(&staging, data_dir, &target_version)
+        let target = install(&staging, data_dir, &target_version)?;
+        fs::write(
+            target.join(INSTALLED_MANIFEST),
+            serde_json::to_string_pretty(&manifest)? + "\n",
+        )
+        .with_context(|| format!("cannot write installed manifest for {}", target.display()))?;
+        Ok(target)
     })();
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_dir_all(&staging);

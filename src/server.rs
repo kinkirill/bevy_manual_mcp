@@ -3,10 +3,10 @@
 //! Step 0 exposes the two tools that answer from `registry.json` and
 //! `versions/<v>/meta.json`: `bevy_index_status` and `bevy_indexed_versions`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -43,6 +43,7 @@ pub struct BevyMcp {
     corpus_load_ms: u128,
     text: Option<TextIndex>,
     text_load_ms: u128,
+    release_index_cache: Mutex<HashMap<String, (Instant, String, Value)>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -94,6 +95,7 @@ impl BevyMcp {
             corpus_load_ms,
             text,
             text_load_ms,
+            release_index_cache: Mutex::new(HashMap::new()),
             tool_router: Self::tool_router(),
         }
     }
@@ -208,6 +210,21 @@ impl BevyMcp {
     )]
     async fn bevy_api_diff(&self, Parameters(params): Parameters<DiffParams>) -> CallToolResult {
         match self.run_api_diff(params) {
+            Ok((text, structured)) => with_structured(text, structured),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    /// Check this server's published release index for an update.
+    #[tool(
+        name = "bevy_mcp_check_release_index",
+        description = "Checks THIS MCP server's published release index for a newer corpus than the installed one: patch refreshes, index revisions, and new Bevy minors. It compares the installed corpus version/revision with the GitHub index-manifest.json, caches the result for six hours, and returns the exact `fetch-index` command. It does not query Bevy API docs. Needs network; with BEVY_MCP_OFFLINE=1 it reports installed state only."
+    )]
+    async fn bevy_mcp_check_release_index(
+        &self,
+        Parameters(params): Parameters<CheckReleaseIndexParams>,
+    ) -> CallToolResult {
+        match self.run_check_release_index(params) {
             Ok((text, structured)) => with_structured(text, structured),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
@@ -656,6 +673,240 @@ impl BevyMcp {
                 "versions": values,
             }),
         ))
+    }
+
+    fn run_check_release_index(
+        &self,
+        params: CheckReleaseIndexParams,
+    ) -> anyhow::Result<(String, Value)> {
+        let version = params
+            .version
+            .clone()
+            .or_else(|| self.config.bevy_version.clone())
+            .ok_or_else(|| {
+                anyhow!("no Bevy version detected; set BEVY_VERSION or pass a version")
+            })?;
+        let cache_key = version.clone();
+        let refresh = params.refresh.unwrap_or(false);
+        if !refresh
+            && let Ok(cache) = self.release_index_cache.lock()
+            && let Some((at, text, value)) = cache.get(&cache_key)
+            && at.elapsed() < Duration::from_secs(6 * 60 * 60)
+        {
+            return Ok((text.clone(), value.clone()));
+        }
+
+        let installed = crate::archive::resolve_version_dir(&self.config.data_dir, &version).map(
+            |(resolved, dir)| {
+                let manifest = crate::bundle::installed_manifest(&dir);
+                (resolved, manifest)
+            },
+        );
+        let installed_version = installed.as_ref().map(|(resolved, _)| resolved.clone());
+        let installed_revision = installed
+            .as_ref()
+            .and_then(|(_, manifest)| manifest.as_ref())
+            .and_then(|manifest| manifest.revision);
+
+        let base = std::env::var("BEVY_MCP_INDEX_BASE_URL")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| crate::bundle::DEFAULT_RELEASES_BASE.to_string());
+
+        let mut network_checked = false;
+        let mut network_error: Option<String> = None;
+        let mut available: Option<(String, crate::bundle::ReleaseManifest)> = None;
+        if !self.config.offline {
+            match crate::bundle::find_release_manifest(&version, &base) {
+                Ok(found) => {
+                    network_checked = true;
+                    available = Some(found);
+                }
+                Err(error) => network_error = Some(error),
+            }
+        }
+
+        let mut latest_stable: Option<String> = None;
+        let mut newer_bevy: Option<Value> = None;
+        if params.check_latest.unwrap_or(true)
+            && !self.config.offline
+            && let Ok(body) =
+                crate::bundle::read_url_timeout(&crate::bundle::sparse_index_url("bevy"), 6)
+            && let Ok((stable, _preview)) = parse_sparse_index(&body)
+        {
+            latest_stable = Some(stable.clone());
+            if crate::versions::cmp_version(&stable, &version).is_gt()
+                && crate::versions::minor_label(&stable) != crate::versions::minor_label(&version)
+            {
+                let index = if let Ok((tag, manifest)) =
+                    crate::bundle::find_release_manifest(&stable, &base)
+                {
+                    json!({
+                        "tag": tag,
+                        "bevy_version": manifest.bevy_version,
+                        "revision": manifest.revision,
+                    })
+                } else {
+                    Value::Null
+                };
+                newer_bevy = Some(json!({
+                    "bevy_version": stable,
+                    "index_available": !index.is_null(),
+                    "index": index,
+                }));
+            }
+        }
+
+        let mut update_available = json!("unknown");
+        let mut reason = if self.config.offline {
+            "offline"
+        } else if network_error.is_some() {
+            "network_error"
+        } else {
+            "unavailable"
+        };
+        let mut command: Option<String> = None;
+        if let Some((tag, manifest)) = &available {
+            match &installed_version {
+                None => {
+                    update_available = json!(true);
+                    reason = "missing";
+                    command = Some(format!(
+                        "bevy-manual-mcp fetch-index {}",
+                        manifest.bevy_version
+                    ));
+                }
+                Some(installed_version) => {
+                    let cmp =
+                        crate::versions::cmp_version(&manifest.bevy_version, installed_version);
+                    if cmp.is_gt() {
+                        update_available = json!(true);
+                        reason = "corpus";
+                        command = Some(format!(
+                            "bevy-manual-mcp fetch-index {}",
+                            manifest.bevy_version
+                        ));
+                    } else if cmp.is_lt() {
+                        update_available = json!(false);
+                        reason = "installed_newer";
+                    } else {
+                        match (installed_revision, manifest.revision) {
+                            (Some(installed), Some(available)) if available > installed => {
+                                update_available = json!(true);
+                                reason = "revision";
+                                command = Some(format!(
+                                    "bevy-manual-mcp fetch-index {}",
+                                    manifest.bevy_version
+                                ));
+                            }
+                            (Some(_), Some(_)) => {
+                                update_available = json!(false);
+                                reason = "current";
+                            }
+                            _ => {
+                                update_available = json!("unknown");
+                                reason = "revision_unknown";
+                            }
+                        }
+                    }
+                }
+            }
+            eprintln!(
+                "[bevy-manual-mcp] release index check: available {} via {}",
+                manifest.bevy_version, tag
+            );
+        }
+
+        let mut text = String::from("## Release index check\n\n");
+        if let Some(installed) = &installed_version {
+            let revision = installed_revision
+                .map(|revision| format!(" (revision {revision})"))
+                .unwrap_or_default();
+            text.push_str(&format!("**Installed:** Bevy {installed}{revision}\n"));
+        } else {
+            text.push_str(&format!("**Installed:** no corpus for Bevy {version}\n"));
+        }
+        if self.config.offline {
+            text.push_str(
+                "\n**Network check skipped:** `BEVY_MCP_OFFLINE=1`. Cannot determine whether a newer index is published.\n",
+            );
+        } else if let Some(error) = &network_error {
+            text.push_str(&format!("\n**Network check failed:** {error}\n"));
+        } else if let Some((tag, manifest)) = &available {
+            let revision = manifest
+                .revision
+                .map(|revision| format!(", revision {revision}"))
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "\n**Available:** Bevy {} ({tag}{revision})\n",
+                manifest.bevy_version
+            ));
+        }
+        match &update_available {
+            Value::Bool(true) => {
+                if let Some(command) = &command {
+                    text.push_str(&format!("\n⬆ **Update available** (`{reason}`):\n\n```bash\n{command}\n```\n"));
+                }
+            }
+            Value::Bool(false) => text.push_str("\nInstalled index is current.\n"),
+            _ => text.push_str(
+                "\nWhether a revision-only update exists cannot be determined (no installed release manifest).\n",
+            ),
+        }
+        if let Some(newer) = &newer_bevy {
+            let stable = newer["bevy_version"].as_str().unwrap_or("newer");
+            if newer["index_available"].as_bool() == Some(true) {
+                text.push_str(&format!(
+                    "\n**Newer Bevy:** {stable} is stable and an index is published. Run `bevy-manual-mcp fetch-index {stable}`.\n"
+                ));
+            } else {
+                text.push_str(&format!(
+                    "\n**Newer Bevy:** {stable} is stable, but no index release is published yet.\n"
+                ));
+            }
+        } else if let Some(stable) = &latest_stable
+            && crate::versions::cmp_version(stable, &version).is_gt()
+            && crate::versions::minor_label(stable) == crate::versions::minor_label(&version)
+        {
+            let carrying = available
+                .as_ref()
+                .map(|(_, manifest)| manifest.bevy_version.as_str())
+                .unwrap_or("no corpus");
+            text.push_str(&format!(
+                "\n**Newest Bevy:** {stable}; this index release currently carries {carrying}.\n"
+            ));
+        }
+
+        let structured = json!({
+            "requested_version": version,
+            "installed": installed_version.map(|version| json!({
+                "version": version,
+                "revision": installed_revision,
+            })),
+            "available": available.as_ref().map(|(tag, manifest)| json!({
+                "tag": tag,
+                "bevy_version": manifest.bevy_version,
+                "revision": manifest.revision,
+                "asset": manifest.asset,
+                "size": manifest.size,
+                "format_version": manifest.format_version,
+            })),
+            "update_available": update_available,
+            "reason": reason,
+            "command": command,
+            "network_checked": network_checked,
+            "network_error": network_error,
+            "latest_bevy_stable": latest_stable,
+            "newer_bevy": newer_bevy,
+            "checked_at": chrono::Utc::now().to_rfc3339(),
+        });
+        if network_checked && let Ok(mut cache) = self.release_index_cache.lock() {
+            cache.insert(
+                cache_key,
+                (Instant::now(), text.clone(), structured.clone()),
+            );
+        }
+        Ok((text, structured))
     }
 
     async fn run_check_version(
@@ -1694,6 +1945,19 @@ struct DiffParams {
     /// Comma-separated versions, e.g. "0.19.1,0.20.0". Defaults to every compiled corpus.
     #[serde(default)]
     versions: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CheckReleaseIndexParams {
+    /// Bevy version to check. Defaults to the active version.
+    #[serde(default)]
+    version: Option<String>,
+    /// Bypass the six-hour cache.
+    #[serde(default)]
+    refresh: Option<bool>,
+    /// Also query crates.io for a newer Bevy minor (default true).
+    #[serde(default)]
+    check_latest: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

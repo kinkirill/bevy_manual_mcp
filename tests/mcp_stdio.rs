@@ -230,6 +230,7 @@ fn handshake_reports_server_identity_and_tools() {
         "bevy_ecosystem_search",
         "bevy_ecosystem_compat",
         "bevy_generate_plugin",
+        "bevy_mcp_check_release_index",
     ] {
         assert!(names.contains(&name), "missing {name}: {names:?}");
     }
@@ -1573,4 +1574,16 @@ fn clean_install_auto_fetches_the_bundle_and_its_metadata() {
         response["result"]["structuredContent"]["compatible"], true,
         "{response}"
     );
+
+    let response = server.call_tool(
+        "bevy_mcp_check_release_index",
+        json!({ "check_latest": false }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["network_checked"], true, "{response}");
+    assert_eq!(structured["update_available"], false, "{response}");
+    assert_eq!(structured["installed"]["version"], "9.9.9", "{response}");
+    assert_eq!(structured["installed"]["revision"], 1, "{response}");
+    assert_eq!(structured["available"]["revision"], 1, "{response}");
 }

@@ -91,6 +91,7 @@ project; the version is read from `Cargo.lock` first and `Cargo.toml` second.
 | `bevy_check_version` | Newest published Bevy, patch vs breaking, pre-releases |
 | `bevy_indexed_versions` | Which Bevy versions this install can answer for |
 | `bevy_index_status` | Self-diagnosis: active version, corpus, paths |
+| `bevy_mcp_check_release_index` | Whether this server's GitHub index release has a newer corpus/revision |
 | `bevy_check_manifest` | Enabled Cargo features and whether a symbol is available |
 | `bevy_validate_systems` | Syntax-level B0001/B0002 lint (tuple-aware, filters) |
 | `bevy_explain_error` | Explain a pasted panic/warning, version-checked |
