@@ -34,17 +34,21 @@ cargo install bevy-manual-mcp
 
 Requires a Rust toolchain. There is no prebuilt binary matrix and no npm shim.
 
-The first server start downloads the prebuilt index for the detected Bevy
-version (progress on stderr). Index releases are per Bevy **minor** (`v0.20`);
-an exact-patch corpus is used when present, otherwise the same minor's newest
-corpus answers for the patch. To install it explicitly:
+The server starts answering immediately. If the detected Bevy version has no
+installed index, it downloads the prebuilt bundle in the background (progress on
+stderr) and reloads the index when the install completes. To install it
+explicitly before starting the server:
 
 ```bash
 bevy-manual-mcp fetch-index 0.20.1
 bevy-manual-mcp status
 ```
 
-`BEVY_MCP_OFFLINE=1` disables all downloads, including the first-run fetch.
+Index releases are per Bevy **minor** (`v0.20`); an exact-patch corpus is used
+when present, otherwise the same minor's newest corpus answers for the patch.
+Status, search results and resources report both the project version and the
+corpus version that actually supplied the data. `BEVY_MCP_OFFLINE=1` disables
+all downloads, including the background fetch.
 
 ## Use it
 

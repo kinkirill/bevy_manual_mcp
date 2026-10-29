@@ -7,7 +7,7 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,18 @@ pub const INSTALLED_MANIFEST: &str = ".installed-index.json";
 pub const RUST_MANIFEST_VERSION: u32 = 2;
 pub const DEFAULT_RELEASES_BASE: &str =
     "https://github.com/kinkirill/bevy_manual_mcp/releases/download";
+
+/// Artifacts that make up one generation of an installed corpus. A replacement
+/// installs all of them together; anything else in the version directory is a
+/// local file (for example `records.ndjson`) and is carried over.
+const MANAGED_ARTIFACTS: &[&str] = &[
+    ARCHIVE_FILE,
+    TEXT_DIR,
+    "corpus.manifest.json",
+    "meta.json",
+    "metadata",
+    INSTALLED_MANIFEST,
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseManifest {
@@ -144,7 +156,122 @@ pub fn unpack(archive: &Path, dest: &Path) -> Result<()> {
 /// Replace a version's compiled artifacts with those from a staging directory,
 /// keeping unrelated local files (such as `records.ndjson`).
 pub fn install(staging: &Path, data_dir: &Path, version: &str) -> Result<PathBuf> {
-    let corpus_path = staging.join(ARCHIVE_FILE);
+    let target = data_dir.join("versions").join(version_dir_name(version));
+    install_artifacts(staging, &target)?;
+    Ok(target)
+}
+
+/// Install a complete artifact generation from `staging` into `target`.
+///
+/// The replacement is assembled in a sibling directory, validated, and then
+/// swapped in with directory renames. If the swap fails, the previous install is
+/// restored (or left at the reported backup path), so a failed update never
+/// leaves the corpus and text index from different generations.
+pub fn install_artifacts(staging: &Path, target: &Path) -> Result<()> {
+    let replacement = create_staging(target, "installing")?;
+    let result = (|| -> Result<()> {
+        if target.exists() {
+            if !target.is_dir() {
+                bail!("cannot install into {}: not a directory", target.display());
+            }
+            copy_local_entries(target, &replacement)?;
+        }
+
+        for name in MANAGED_ARTIFACTS {
+            let source = staging.join(name);
+            if !source.exists() {
+                continue;
+            }
+            fs::rename(&source, replacement.join(name)).with_context(|| {
+                format!(
+                    "cannot stage {name} for installation into {}",
+                    target.display()
+                )
+            })?;
+        }
+
+        // Metadata is not tied to record ids. Keep an existing copy when a
+        // build or bundle does not carry it, otherwise `build --pack` after
+        // copying metadata into a version directory would silently drop it.
+        if target.is_dir() {
+            for name in ["metadata", "meta.json"] {
+                let destination = replacement.join(name);
+                let source = target.join(name);
+                if !destination.exists() && source.exists() {
+                    copy_entry(&source, &destination)?;
+                }
+            }
+        }
+
+        validate_installation(&replacement)?;
+        swap_directories(&replacement, target)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&replacement);
+    }
+    result
+}
+
+/// Create a fresh sibling directory for staging an atomic replacement.
+pub(crate) fn create_staging(target: &Path, label: &str) -> Result<PathBuf> {
+    let path = unique_sibling_path(target, label);
+    fs::create_dir_all(&path)
+        .with_context(|| format!("cannot create staging directory {}", path.display()))?;
+    Ok(path)
+}
+
+/// Swap two directories, keeping the old one until the new one is in place.
+pub(crate) fn swap_directories(replacement: &Path, target: &Path) -> Result<()> {
+    if !target.exists() {
+        return fs::rename(replacement, target).with_context(|| {
+            format!(
+                "cannot install {} as {}",
+                replacement.display(),
+                target.display()
+            )
+        });
+    }
+
+    let backup = unique_sibling_path(target, "previous");
+    fs::rename(target, &backup).with_context(|| {
+        format!(
+            "cannot move the previous installation {} aside",
+            target.display()
+        )
+    })?;
+
+    match fs::rename(replacement, target) {
+        Ok(()) => {
+            if let Err(error) = fs::remove_dir_all(&backup) {
+                eprintln!(
+                    "[bevy-manual-mcp] previous installation kept at {}: {error}",
+                    backup.display()
+                );
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let rollback = fs::rename(&backup, target);
+            match rollback {
+                Ok(()) => Err(error).with_context(|| {
+                    format!("cannot install the replacement as {}", target.display())
+                }),
+                Err(rollback_error) => bail!(
+                    "cannot install the replacement as {} ({error}); the previous installation is kept at {} (rollback failed: {rollback_error})",
+                    target.display(),
+                    backup.display()
+                ),
+            }
+        }
+    }
+}
+
+fn validate_installation(dir: &Path) -> Result<()> {
+    let corpus_path = dir.join(ARCHIVE_FILE);
+    if !corpus_path.is_file() {
+        bail!("bundle is incomplete: {} is missing", corpus_path.display());
+    }
     let corpus = LoadedCorpus::open(&corpus_path).with_context(|| {
         format!(
             "downloaded corpus failed validation: {}",
@@ -160,32 +287,62 @@ pub fn install(staging: &Path, data_dir: &Path, version: &str) -> Result<PathBuf
     }
     drop(corpus);
 
-    let target = data_dir.join("versions").join(version_dir_name(version));
-    fs::create_dir_all(&target)?;
+    let text_dir = dir.join(TEXT_DIR);
+    if !text_dir.is_dir() {
+        bail!("bundle is incomplete: {} is missing", text_dir.display());
+    }
+    crate::text::TextIndex::open(&text_dir)
+        .with_context(|| format!("text index failed validation: {}", text_dir.display()))?;
+    Ok(())
+}
 
-    for name in [
-        ARCHIVE_FILE,
-        TEXT_DIR,
-        "corpus.manifest.json",
-        "meta.json",
-        "metadata",
-    ] {
-        let source = staging.join(name);
-        if !source.exists() {
+fn unique_sibling_path(target: &Path, label: &str) -> PathBuf {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("index");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(".{name}.{label}-{}-{nanos}", std::process::id()))
+}
+
+fn copy_local_entries(source: &Path, destination: &Path) -> Result<()> {
+    for entry in
+        fs::read_dir(source).with_context(|| format!("cannot read {}", source.display()))?
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if MANAGED_ARTIFACTS.contains(&name_str) {
             continue;
         }
-        let destination = target.join(name);
-        if destination.exists() {
-            if destination.is_dir() {
-                fs::remove_dir_all(&destination)?;
-            } else {
-                fs::remove_file(&destination)?;
-            }
-        }
-        fs::rename(&source, &destination)
-            .with_context(|| format!("cannot install {name} into {}", target.display()))?;
+        copy_entry(&entry.path(), &destination.join(&name))?;
     }
-    Ok(target)
+    Ok(())
+}
+
+fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
+    if source.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_entry(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if source.is_file() {
+        fs::copy(source, destination).with_context(|| {
+            format!(
+                "cannot preserve local file {} as {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Release tags to try for a requested Bevy version: exact first, then the
@@ -329,13 +486,12 @@ pub fn fetch(version: &str, data_dir: &Path, force: bool) -> Result<Option<PathB
 
     let result = (|| -> Result<PathBuf> {
         unpack(&archive, &staging)?;
-        let target = install(&staging, data_dir, &target_version)?;
         fs::write(
-            target.join(INSTALLED_MANIFEST),
+            staging.join(INSTALLED_MANIFEST),
             serde_json::to_string_pretty(&manifest)? + "\n",
         )
-        .with_context(|| format!("cannot write installed manifest for {}", target.display()))?;
-        Ok(target)
+        .with_context(|| format!("cannot write installed manifest into {}", staging.display()))?;
+        install(&staging, data_dir, &target_version)
     })();
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_dir_all(&staging);
@@ -422,6 +578,78 @@ mod tests {
                 "/index-manifest.json"
             ),
             "https://example.test/dl/v0.20.0/index-manifest.json"
+        );
+    }
+
+    fn record(name: &str) -> crate::archive::RecordInput {
+        crate::archive::RecordInput {
+            source: "rustdoc".into(),
+            kind: "struct".into(),
+            name: name.into(),
+            full_path: format!("demo::{name}"),
+            crate_name: Some("demo".into()),
+            module: "demo".into(),
+            signature: format!("pub struct {name};"),
+            docs: format!("The {name} item."),
+            file: "demo.html".into(),
+            bevy_version: Some("9.9.9".into()),
+            ..Default::default()
+        }
+    }
+
+    fn build(dir: &Path, name: &str) -> Result<()> {
+        crate::archive::build(
+            vec![record(name)],
+            dir,
+            &crate::archive::BuildOptions {
+                bevy_version: Some("9.9.9".into()),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn install_swaps_a_complete_generation_and_keeps_local_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let target = temp.path().join("versions/9.9.9");
+        build(&target, "Old").expect("build old");
+        fs::write(target.join("records.ndjson"), "local canonical records").expect("local file");
+
+        let staging = temp.path().join("staging");
+        build(&staging, "New").expect("build new");
+        install_artifacts(&staging, &target).expect("install");
+
+        let corpus = LoadedCorpus::open(&target.join(ARCHIVE_FILE)).expect("new corpus");
+        assert_eq!(corpus.lookup("New").len(), 1);
+        assert!(corpus.lookup("Old").is_empty());
+        assert!(target.join(TEXT_DIR).is_dir());
+        assert_eq!(
+            fs::read_to_string(target.join("records.ndjson")).expect("local file"),
+            "local canonical records"
+        );
+    }
+
+    #[test]
+    fn an_incomplete_generation_never_replaces_the_old_one() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let target = temp.path().join("versions/9.9.9");
+        build(&target, "Old").expect("build old");
+        fs::write(target.join("records.ndjson"), "keep me").expect("local file");
+
+        let staging = temp.path().join("staging");
+        fs::create_dir_all(&staging).expect("staging");
+        fs::copy(target.join(ARCHIVE_FILE), staging.join(ARCHIVE_FILE))
+            .expect("copy archive without a text index");
+
+        let error = install_artifacts(&staging, &target).expect_err("reject incomplete bundle");
+        assert!(error.to_string().contains("incomplete"), "{error}");
+        let corpus = LoadedCorpus::open(&target.join(ARCHIVE_FILE)).expect("old corpus");
+        assert_eq!(corpus.lookup("Old").len(), 1);
+        assert!(target.join(TEXT_DIR).is_dir());
+        assert_eq!(
+            fs::read_to_string(target.join("records.ndjson")).expect("local file"),
+            "keep me"
         );
     }
 }

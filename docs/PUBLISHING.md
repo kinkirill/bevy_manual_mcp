@@ -7,8 +7,13 @@ Two artifacts are published independently:
 1. the **crate** `bevy-manual-mcp` (binary `bevy-manual-mcp`) on crates.io;
 2. **index bundles** for each Bevy version on GitHub Releases.
 
-The crate version does not track a Bevy version. `0.2.2` is the current release;
+The crate version does not track a Bevy version. `0.3.0` is the current release;
 older releases are yanked. No previews.
+
+Index bundles only need rebuilding when corpus content, the rkyv layout, the
+Tantivy schema/tokenizer, or the bundle manifest changes. A crate-only change
+such as `0.3.0` does not require new index bundles. Existing bundles remain
+compatible as long as `FORMAT_VERSION` and `RUST_MANIFEST_VERSION` are unchanged.
 
 ## Prerequisites
 
@@ -78,13 +83,12 @@ cargo publish
 
 After the crate is live:
 
-- `server.json` already advertises `registryType: "cargo"`, `identifier:
-  "bevy-manual-mcp"`, version `0.1.0`;
+- `server.json` advertises `registryType: "cargo"`, `identifier:
+  "bevy-manual-mcp"`, and the current crate version;
 - publish the MCP registry entry;
 - verify a clean machine: `cargo install bevy-manual-mcp`, point it at a Cargo
-  project, let first-run auto-fetch install the bundle, run one query.
-
-Use the current `0.1.x` release.
+  project, run `fetch-index` (or let the background fetch finish), then run one
+  query.
 
 ## CI/release automation
 

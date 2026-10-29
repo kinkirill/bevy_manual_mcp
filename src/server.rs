@@ -4,7 +4,7 @@
 //! `versions/<v>/meta.json`: `bevy_index_status` and `bevy_indexed_versions`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -36,13 +36,94 @@ use crate::status;
 use crate::text::{self, TextIndex};
 use crate::versions::{bump_between, cmp_version};
 
+struct IndexSnapshot {
+    corpus: Arc<LoadedCorpus>,
+    text: Option<TextIndex>,
+    corpus_version: String,
+    corpus_dir: PathBuf,
+    corpus_load_ms: u128,
+    text_load_ms: u128,
+}
+
+impl IndexSnapshot {
+    fn search_state(&self) -> Option<SearchState<'_>> {
+        self.text.as_ref().map(|text| SearchState {
+            corpus: &self.corpus,
+            text,
+        })
+    }
+}
+
+struct IndexStore {
+    data_dir: PathBuf,
+    project_version: Option<String>,
+    snapshot: Mutex<Option<Arc<IndexSnapshot>>>,
+}
+
+impl IndexStore {
+    fn new(data_dir: PathBuf, project_version: Option<String>) -> Self {
+        Self {
+            data_dir,
+            project_version,
+            snapshot: Mutex::new(None),
+        }
+    }
+
+    fn current(&self) -> Option<Arc<IndexSnapshot>> {
+        self.snapshot.lock().ok().and_then(|state| state.clone())
+    }
+
+    fn reload(&self) -> Result<Option<Arc<IndexSnapshot>>, String> {
+        let snapshot = load_index(&self.data_dir, self.project_version.as_deref())?.map(Arc::new);
+        if let Ok(mut state) = self.snapshot.lock() {
+            *state = snapshot.clone();
+        }
+        Ok(snapshot)
+    }
+}
+
+fn load_index(
+    data_dir: &Path,
+    project_version: Option<&str>,
+) -> Result<Option<IndexSnapshot>, String> {
+    let Some(version) = project_version else {
+        return Ok(None);
+    };
+    let (corpus, corpus_version, corpus_dir, corpus_load_ms) =
+        match archive::load_optional_resolved(data_dir, version) {
+            Ok(Some(found)) => found,
+            Ok(None) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+    let (text, text_load_ms) = {
+        let dir = corpus_dir.join(text::TEXT_DIR);
+        if dir.is_dir() {
+            let started = Instant::now();
+            match TextIndex::open(&dir) {
+                Ok(index) => (Some(index), started.elapsed().as_millis()),
+                Err(error) => {
+                    eprintln!("[bevy-manual-mcp] ignoring text index: {error}");
+                    (None, 0)
+                }
+            }
+        } else {
+            (None, 0)
+        }
+    };
+    Ok(Some(IndexSnapshot {
+        corpus: Arc::new(corpus),
+        text,
+        corpus_version,
+        corpus_dir,
+        corpus_load_ms,
+        text_load_ms,
+    }))
+}
+
 pub struct BevyMcp {
     config: Config,
     registry: Registry,
-    corpus: Option<Arc<LoadedCorpus>>,
-    corpus_load_ms: u128,
-    text: Option<TextIndex>,
-    text_load_ms: u128,
+    index: Arc<IndexStore>,
     release_index_cache: Mutex<HashMap<String, (Instant, String, Value)>>,
     tool_router: ToolRouter<Self>,
 }
@@ -50,69 +131,69 @@ pub struct BevyMcp {
 impl BevyMcp {
     pub fn new(config: Config) -> Self {
         let registry = Registry::load(&config.data_dir);
-        let mut corpus_dir: Option<PathBuf> = None;
-        let (corpus, corpus_load_ms) = match config.bevy_version.as_deref() {
-            Some(version) => match archive::load_optional_resolved(&config.data_dir, version) {
-                Ok(Some((corpus, resolved_version, dir, load_ms))) => {
-                    if resolved_version != version {
-                        config.log(format!(
-                            "using the Bevy {resolved_version} corpus for {version} (same minor)"
-                        ));
-                    }
-                    corpus_dir = Some(dir);
-                    (Some(Arc::new(corpus)), load_ms)
-                }
-                Ok(None) => (None, 0),
-                Err(error) => {
-                    config.log(format!("ignoring corpus archive: {error}"));
-                    (None, 0)
-                }
-            },
-            None => (None, 0),
-        };
-        let (text, text_load_ms) = match (&corpus, &corpus_dir) {
-            (Some(_), Some(dir)) => {
-                let dir = dir.join(text::TEXT_DIR);
-                if !dir.is_dir() {
-                    (None, 0)
-                } else {
-                    let started = Instant::now();
-                    match TextIndex::open(&dir) {
-                        Ok(index) => (Some(index), started.elapsed().as_millis()),
-                        Err(error) => {
-                            config.log(format!("ignoring text index: {error}"));
-                            (None, 0)
-                        }
-                    }
+        let index = Arc::new(IndexStore::new(
+            config.data_dir.clone(),
+            config.bevy_version.clone(),
+        ));
+        match index.reload() {
+            Ok(Some(snapshot)) => {
+                if Some(snapshot.corpus_version.as_str()) != config.bevy_version.as_deref() {
+                    config.log(format!(
+                        "using the Bevy {} corpus for {} (same minor)",
+                        snapshot.corpus_version,
+                        config.bevy_version.as_deref().unwrap_or("unknown")
+                    ));
                 }
             }
-            _ => (None, 0),
-        };
+            Ok(None) => {}
+            Err(error) => config.log(format!("ignoring corpus archive: {error}")),
+        }
         Self {
             config,
             registry,
-            corpus,
-            corpus_load_ms,
-            text,
-            text_load_ms,
+            index,
             release_index_cache: Mutex::new(HashMap::new()),
             tool_router: Self::tool_router(),
         }
     }
 
-    fn resource_source(&self) -> crate::resources::Source<'_> {
-        crate::resources::Source {
-            corpus: self.corpus.as_deref(),
-            active_version: self.config.bevy_version.as_deref(),
-            data_dir: &self.config.data_dir,
-            versions: self.registry.indexed_versions(),
-        }
+    fn snapshot(&self) -> Option<Arc<IndexSnapshot>> {
+        self.index.current()
     }
 
-    fn search_state(&self) -> Option<SearchState<'_>> {
-        match (self.corpus.as_deref(), self.text.as_ref()) {
-            (Some(corpus), Some(text)) => Some(SearchState { corpus, text }),
-            _ => None,
+    fn corpus_version<'a>(&self, snapshot: Option<&'a IndexSnapshot>) -> Option<&'a str> {
+        snapshot.map(|snapshot| snapshot.corpus_version.as_str())
+    }
+
+    fn version_fields(&self, snapshot: Option<&IndexSnapshot>) -> Value {
+        let project = self.config.bevy_version.as_deref();
+        let corpus = self.corpus_version(snapshot);
+        json!({
+            "project_version": project,
+            "corpus_version": corpus,
+            "version_fallback": matches!((project, corpus), (Some(project), Some(corpus)) if project != corpus),
+        })
+    }
+
+    fn with_version_fields(&self, snapshot: Option<&IndexSnapshot>, mut value: Value) -> Value {
+        if let Value::Object(map) = &mut value
+            && let Value::Object(fields) = self.version_fields(snapshot)
+        {
+            map.extend(fields);
+        }
+        value
+    }
+
+    fn resource_source<'a>(
+        &'a self,
+        snapshot: Option<&'a IndexSnapshot>,
+    ) -> crate::resources::Source<'a> {
+        crate::resources::Source {
+            corpus: snapshot.map(|snapshot| snapshot.corpus.as_ref()),
+            active_version: self.config.bevy_version.as_deref(),
+            corpus_version: snapshot.map(|snapshot| snapshot.corpus_version.as_str()),
+            data_dir: &self.config.data_dir,
+            versions: self.registry.indexed_versions(),
         }
     }
 
@@ -138,13 +219,26 @@ impl BevyMcp {
         description = "Reports which Bevy version is indexed, how many records exist, and which source directories were found. Call this first if search results look wrong, empty, or from the wrong version - it is the fastest way to find out whether the API index is missing entirely."
     )]
     async fn bevy_index_status(&self) -> CallToolResult {
+        let snapshot = self.snapshot();
         let (text, structured) = status::status(
             &self.config,
             &self.registry,
-            self.corpus.as_deref(),
-            self.corpus_load_ms,
-            self.text.as_ref().map(|index| index.doc_count()),
-            self.text_load_ms,
+            snapshot.as_ref().map(|snapshot| snapshot.corpus.as_ref()),
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.corpus_version.as_str()),
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.corpus_load_ms)
+                .unwrap_or(0),
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.text.as_ref())
+                .map(|index| index.doc_count()),
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text_load_ms)
+                .unwrap_or(0),
         );
         with_structured(text, structured)
     }
@@ -362,10 +456,16 @@ impl BevyMcp {
 impl BevyMcp {
     fn run_search(&self, params: SearchParams) -> anyhow::Result<(String, Value)> {
         self.check_version(params.version.as_deref())?;
-        let state = self.search_state().ok_or_else(|| {
+        let snapshot = self.snapshot().ok_or_else(|| {
             anyhow!(
-                "no corpus with a text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let state = snapshot.search_state().ok_or_else(|| {
+            anyhow!(
+                "no text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                snapshot.corpus_version
             )
         })?;
         let filters = SearchFilters {
@@ -392,24 +492,32 @@ impl BevyMcp {
             .iter()
             .map(|record| format::record_json(&state, record))
             .collect();
+        let structured = json!({
+            "query": params.query,
+            "queried_version": snapshot.corpus_version,
+            "requested_version": self.config.bevy_version,
+            "version_indexed": true,
+            "results": results,
+            "suggestions": suggestion_values,
+        });
         Ok((
             text,
-            json!({
-                "query": params.query,
-                "queried_version": self.config.bevy_version,
-                "version_indexed": true,
-                "results": results,
-                "suggestions": suggestion_values,
-            }),
+            self.with_version_fields(Some(snapshot.as_ref()), structured),
         ))
     }
 
     fn run_api(&self, params: ApiParams) -> anyhow::Result<(String, Value)> {
         self.check_version(params.version.as_deref())?;
-        let state = self.search_state().ok_or_else(|| {
+        let snapshot = self.snapshot().ok_or_else(|| {
             anyhow!(
-                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let state = snapshot.search_state().ok_or_else(|| {
+            anyhow!(
+                "no text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                snapshot.corpus_version
             )
         })?;
         let records: Vec<_> = state
@@ -441,21 +549,30 @@ impl BevyMcp {
             .iter()
             .map(|record| format::record_json(&state, record))
             .collect();
+        let structured = json!({
+            "symbol": params.symbol,
+            "queried_version": snapshot.corpus_version,
+            "requested_version": self.config.bevy_version,
+            "results": values,
+            "related": related_values,
+            "suggestions": suggestion_values,
+        });
         Ok((
             text,
-            json!({
-                "symbol": params.symbol,
-                "results": values,
-                "related": related_values,
-                "suggestions": suggestion_values,
-            }),
+            self.with_version_fields(Some(snapshot.as_ref()), structured),
         ))
     }
     fn run_examples(&self, params: ExamplesParams) -> anyhow::Result<(String, Value)> {
-        let state = self.search_state().ok_or_else(|| {
+        let snapshot = self.snapshot().ok_or_else(|| {
             anyhow!(
                 "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let state = snapshot.search_state().ok_or_else(|| {
+            anyhow!(
+                "no text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                snapshot.corpus_version
             )
         })?;
         let filters = SearchFilters {
@@ -494,21 +611,29 @@ impl BevyMcp {
             .iter()
             .map(|hit| format::hit_json(&state, hit))
             .collect();
+        let structured = json!({
+            "task": params.task,
+            "category": params.category,
+            "queried_version": snapshot.corpus_version,
+            "results": results,
+        });
         Ok((
             text,
-            json!({
-                "task": params.task,
-                "category": params.category,
-                "results": results,
-            }),
+            self.with_version_fields(Some(snapshot.as_ref()), structured),
         ))
     }
 
     fn run_migration(&self, params: MigrationParams) -> anyhow::Result<(String, Value)> {
-        let state = self.search_state().ok_or_else(|| {
+        let snapshot = self.snapshot().ok_or_else(|| {
             anyhow!(
                 "no corpus is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` or `bevy-manual-mcp fetch-index` first.",
                 self.config.bevy_version.as_deref().unwrap_or("<unknown>")
+            )
+        })?;
+        let state = snapshot.search_state().ok_or_else(|| {
+            anyhow!(
+                "no text index is installed for Bevy {}. Run `bevy-manual-mcp build --records <records.ndjson>` first.",
+                snapshot.corpus_version
             )
         })?;
         let to = params
@@ -540,14 +665,16 @@ impl BevyMcp {
                 value
             })
             .collect();
+        let structured = json!({
+            "from_version": params.from_version,
+            "to_version": to,
+            "topic": params.topic,
+            "queried_version": snapshot.corpus_version,
+            "results": results,
+        });
         Ok((
             text,
-            json!({
-                "from_version": params.from_version,
-                "to_version": to,
-                "topic": params.topic,
-                "results": results,
-            }),
+            self.with_version_fields(Some(snapshot.as_ref()), structured),
         ))
     }
 
@@ -1525,15 +1652,13 @@ impl BevyMcp {
         let mut rows: Vec<(String, Vec<Value>, String)> = Vec::new();
         let mut searched: Vec<String> = Vec::new();
         let mut skipped: Vec<ecosystem::Skipped> = Vec::new();
+        let snapshot = self.snapshot();
 
         if include_bevy
-            && let (Some(corpus), Some(text)) = (self.corpus.as_deref(), self.text.as_ref())
+            && let Some(snapshot) = snapshot.as_ref()
+            && let Some(state) = snapshot.search_state()
         {
-            let state = SearchState { corpus, text };
-            let id = format!(
-                "bevy@{}",
-                self.config.bevy_version.as_deref().unwrap_or("unknown")
-            );
+            let id = format!("bevy@{}", snapshot.corpus_version);
             let (hits, markdown) = corpus_hits(&state, &id, &params.query, limit);
             searched.push(id.clone());
             rows.push((id, hits, markdown));
@@ -1618,16 +1743,18 @@ impl BevyMcp {
                 })
             })
             .collect();
+        let structured = json!({
+            "query": params.query,
+            "bevy_version": self.config.bevy_version,
+            "queried_version": snapshot.as_ref().map(|snapshot| snapshot.corpus_version.clone()),
+            "corpora_searched": searched,
+            "corpora_skipped": skipped_json,
+            "total_hits": total_hits,
+            "results": results,
+        });
         Ok((
             text,
-            json!({
-                "query": params.query,
-                "bevy_version": self.config.bevy_version,
-                "corpora_searched": searched,
-                "corpora_skipped": skipped_json,
-                "total_hits": total_hits,
-                "results": results,
-            }),
+            self.with_version_fields(snapshot.as_deref(), structured),
         ))
     }
 
@@ -1810,7 +1937,8 @@ impl BevyMcp {
 
         let mut symbol_checks = Vec::new();
         let mut missing = Vec::new();
-        if let Some(corpus) = self.corpus.as_deref() {
+        let snapshot = self.snapshot();
+        if let Some(corpus) = snapshot.as_ref().map(|snapshot| snapshot.corpus.as_ref()) {
             for symbol in template.requires {
                 let found = !corpus.lookup(symbol).is_empty();
                 symbol_checks.push(json!({ "symbol": symbol, "found": found }));
@@ -1821,12 +1949,15 @@ impl BevyMcp {
             if !missing.is_empty() {
                 bail!(
                     "Template requires symbols not found in Bevy {}: {}.",
-                    self.config.bevy_version.as_deref().unwrap_or("UNKNOWN"),
+                    snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.corpus_version.as_str())
+                        .unwrap_or("UNKNOWN"),
                     missing.join(", ")
                 );
             }
         }
-        let symbol_check = if self.corpus.is_some() {
+        let symbol_check = if snapshot.is_some() {
             "checked"
         } else {
             "unavailable"
@@ -1838,17 +1969,21 @@ impl BevyMcp {
         );
         Ok((
             text,
-            json!({
-                "template_id": template.id,
-                "title": template.title,
-                "bevy_version": self.config.bevy_version,
-                "code": rendered.code,
-                "compile_verified": false,
-                "symbol_check": symbol_check,
-                "symbols_checked": symbol_checks,
-                "missing_symbols": missing,
-                "ignored_params": rendered.ignored_params,
-            }),
+            self.with_version_fields(
+                snapshot.as_deref(),
+                json!({
+                    "template_id": template.id,
+                    "title": template.title,
+                    "bevy_version": self.config.bevy_version,
+                    "queried_version": snapshot.as_ref().map(|snapshot| snapshot.corpus_version.clone()),
+                    "code": rendered.code,
+                    "compile_verified": false,
+                    "symbol_check": symbol_check,
+                    "symbols_checked": symbol_checks,
+                    "missing_symbols": missing,
+                    "ignored_params": rendered.ignored_params,
+                }),
+            ),
         ))
     }
 }
@@ -2174,7 +2309,8 @@ impl ServerHandler for BevyMcp {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let source = self.resource_source();
+        let snapshot = self.snapshot();
+        let source = self.resource_source(snapshot.as_deref());
         match crate::resources::read(&source, &request.uri) {
             Ok(output) => {
                 let content_uri = match &output.next_cursor {
@@ -2221,7 +2357,8 @@ impl ServerHandler for BevyMcp {
             .context
             .and_then(|context| context.arguments)
             .unwrap_or_default();
-        let source = self.resource_source();
+        let snapshot = self.snapshot();
+        let source = self.resource_source(snapshot.as_deref());
         let (values, total) = crate::resources::complete(
             &source,
             &reference.uri,
@@ -2244,29 +2381,67 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             config.log(note);
         }
         config.log("Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
-    } else if !config.offline
-        && let Some(version) = config.bevy_version.clone()
+    }
+
+    let server = BevyMcp::new(config.clone());
+    let index = server.index.clone();
+
+    if let Some(version) = config.bevy_version.clone()
         && archive::resolve_version_dir(&config.data_dir, &version).is_none()
     {
-        let data_dir = config.data_dir.clone();
-        let fetch_version = version.clone();
-        match tokio::task::spawn_blocking(move || {
-            crate::bundle::fetch(&fetch_version, &data_dir, false)
-        })
-        .await
-        {
-            Ok(Ok(Some(path))) => config.log(format!(
-                "installed the index for Bevy {version} at {}",
-                path.display()
-            )),
-            Ok(Ok(None)) => {}
-            Ok(Err(error)) => config.log(format!(
-                "could not download the index for Bevy {version}: {error}; run `bevy-manual-mcp fetch-index {version}`"
-            )),
-            Err(error) => config.log(format!("index download task failed: {error}")),
+        if config.offline {
+            config.log(format!(
+                "No index for Bevy {version} is installed. BEVY_MCP_OFFLINE=1 is set; run `bevy-manual-mcp fetch-index {version}` when online."
+            ));
+        } else {
+            let fetch_config = config.clone();
+            tokio::spawn(async move {
+                fetch_config.log(format!(
+                    "No index for Bevy {version} is installed; downloading it in the background. The MCP server is available now and will start answering corpus queries after the install completes."
+                ));
+                let data_dir = fetch_config.data_dir.clone();
+                let fetch_version = version.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::bundle::fetch(&fetch_version, &data_dir, false)
+                })
+                .await;
+                match result {
+                    Ok(Ok(_installed)) => match index.reload() {
+                        Ok(Some(snapshot)) => {
+                            fetch_config.log(format!(
+                                "index for Bevy {} is installed and loaded at {}",
+                                snapshot.corpus_version,
+                                snapshot.corpus_dir.display()
+                            ));
+                            if Some(snapshot.corpus_version.as_str())
+                                != fetch_config.bevy_version.as_deref()
+                            {
+                                fetch_config.log(format!(
+                                    "using the Bevy {} corpus for {} (same minor)",
+                                    snapshot.corpus_version,
+                                    fetch_config.bevy_version.as_deref().unwrap_or("unknown")
+                                ));
+                            }
+                        }
+                        Ok(None) => fetch_config.log(format!(
+                            "no index was installed for Bevy {version}; run `bevy-manual-mcp fetch-index {version}`"
+                        )),
+                        Err(error) => fetch_config.log(format!(
+                            "downloaded the index for Bevy {version}, but loading it failed: {error}"
+                        )),
+                    },
+                    Ok(Err(error)) => fetch_config.log(format!(
+                        "could not download the index for Bevy {version}: {error}; run `bevy-manual-mcp fetch-index {version}`"
+                    )),
+                    Err(error) => {
+                        fetch_config.log(format!("index download task failed: {error}"))
+                    }
+                }
+            });
         }
     }
-    let service = BevyMcp::new(config).serve(rmcp::transport::stdio()).await?;
+
+    let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
 }

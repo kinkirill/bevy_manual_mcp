@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -483,6 +483,39 @@ fn search_and_api_tools_answer_over_stdio() {
         text.contains("Creates a widget"),
         "documentation missing: {text}"
     );
+}
+
+#[test]
+fn same_minor_fallback_reports_both_versions() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn_with_env(dir.path(), &[("BEVY_VERSION", "9.9.8")]);
+    server.initialize();
+
+    let response = server.call_tool("bevy_index_status", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["project_version"], "9.9.8", "{response}");
+    assert_eq!(structured["corpus_version"], "9.9.9", "{response}");
+    assert_eq!(structured["version_fallback"], true, "{response}");
+
+    let response = server.call_tool("bevy_search", json!({ "query": "widget" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["requested_version"], "9.9.8");
+    assert_eq!(structured["queried_version"], "9.9.9");
+    assert_eq!(structured["project_version"], "9.9.8");
+    assert_eq!(structured["corpus_version"], "9.9.9");
+    assert_eq!(structured["version_fallback"], true);
+
+    let response = server.request(
+        "resources/read",
+        json!({ "uri": "bevy://api/9.9.8/demo::Widget" }),
+    );
+    let text = response["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("api text");
+    assert!(text.contains("Bevy 9.9.9"), "{text}");
 }
 
 #[test]
@@ -1441,8 +1474,23 @@ fn explain_error_is_version_checked_and_refuses_uncoded_panics() {
     assert_eq!(structured["no_error_code_found"], true);
 }
 
+fn wait_for_index(server: &mut Server) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let response = server.call_tool("bevy_index_status", json!({}));
+        if response["result"]["structuredContent"]["corpus"].is_object() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "background fetch did not become available: {response}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
-fn clean_install_auto_fetches_the_bundle_and_its_metadata() {
+fn clean_install_fetches_in_the_background_and_serves_metadata() {
     let dir = fixture();
     build_corpus(dir.path());
     let out = dir.path().join("versions/9.9.9");
@@ -1536,16 +1584,17 @@ fn clean_install_auto_fetches_the_bundle_and_its_metadata() {
         ],
     );
     server.initialize();
+    wait_for_index(&mut server);
 
     assert!(
         fresh.join("versions/9.9.9/corpus.rkyv").is_file(),
-        "auto-fetch did not install the corpus"
+        "background fetch did not install the corpus"
     );
     assert!(
         fresh
             .join("versions/9.9.9/metadata/features.json")
             .is_file(),
-        "auto-fetch did not install the metadata"
+        "background fetch did not install the metadata"
     );
 
     let response = server.call_tool("bevy_search", json!({ "query": "Widget" }));

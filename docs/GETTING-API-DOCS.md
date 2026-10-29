@@ -1,8 +1,8 @@
 # Getting the API docs
 
 The server answers from a compiled corpus for one Bevy version. You normally do
-not build it: the first server start downloads a prebuilt bundle, and
-`fetch-index` installs one explicitly.
+not build it: `fetch-index` installs a prebuilt bundle explicitly, and a missing
+index is also downloaded in the background after the server has started.
 
 ## Install a prebuilt index
 
@@ -15,9 +15,10 @@ bevy-manual-mcp fetch-index 0.20.1 --force
 `fetch-index` tries the exact release tag (`v0.20.1`), then the Bevy minor
 (`v0.20`). The manifest records the exact corpus it contains; a patch resolves
 to its minor's newest corpus when no exact bundle exists. It verifies size and
-SHA-256, unpacks into a staging directory, validates `corpus.rkyv` with
-`bytecheck`, and only then moves it into `data/versions/<exact-version>/`. A
-partial file never becomes loadable.
+SHA-256, assembles the complete replacement in a staging directory, validates
+`corpus.rkyv` with `bytecheck` and opens the new text index, then swaps the whole
+generation into `data/versions/<exact-version>/`. Local files such as
+`records.ndjson` are carried over, and a failed swap keeps the previous install.
 
 Where the bundle comes from:
 
@@ -43,13 +44,15 @@ metadata/               features.json, error-codes/, compat.json
 The metadata is what makes `bevy_check_manifest`, `bevy_explain_error`,
 `bevy_perf_advisor` and `bevy_ecosystem_compat` work after a clean install.
 
-## First-run auto-fetch
+## First-run background fetch
 
-With a detected project version and no installed corpus, the server downloads
-the bundle automatically at startup. Progress goes to stderr; MCP stdout stays
-clean. A failed download does not kill the server — it logs the error and the
-tool calls explain that no corpus is installed. Set `BEVY_MCP_OFFLINE=1` to
-disable this.
+With a detected project version and no installed corpus, the MCP server starts
+immediately and downloads the bundle in the background. Progress goes to stderr;
+MCP stdout stays clean. While the download runs, `bevy_index_status` reports that
+no corpus is installed yet; when the install finishes the server reloads the
+index and corpus tools start answering without a restart. A failed download does
+not kill the server — it logs the error and the tool calls explain the explicit
+`fetch-index` command. Set `BEVY_MCP_OFFLINE=1` to disable the background fetch.
 
 ## Build from a local rustdoc tree
 

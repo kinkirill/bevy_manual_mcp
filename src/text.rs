@@ -171,10 +171,23 @@ pub struct TextBuildReport {
 }
 
 /// Build (or rebuild) the text index for an unarchived corpus.
+///
+/// The new index is built in a sibling directory and swapped in only after it
+/// is complete, so an interrupted rebuild cannot destroy the current index.
 pub fn build_index(corpus: &Corpus, dir: &Path) -> Result<TextBuildReport> {
-    if dir.exists() {
-        fs::remove_dir_all(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
+    let staging = crate::bundle::create_staging(dir, "text")?;
+    let result = (|| -> Result<TextBuildReport> {
+        let report = build_index_into(corpus, &staging)?;
+        crate::bundle::swap_directories(&staging, dir)?;
+        Ok(report)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
     }
+    result
+}
+
+fn build_index_into(corpus: &Corpus, dir: &Path) -> Result<TextBuildReport> {
     fs::create_dir_all(dir)?;
 
     let schema = build_schema();

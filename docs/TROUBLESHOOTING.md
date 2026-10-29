@@ -13,17 +13,25 @@ export BEVY_PROJECT_ROOT=/path/to/your/game
 export BEVY_VERSION=0.20.0
 ```
 
+If you depend on the modular `bevy_*` crates instead of the umbrella `bevy`
+crate, detection uses those versions. When they resolve to more than one
+version, the server reports the ambiguity instead of guessing; set
+`BEVY_VERSION` to choose one.
+
 `bevy-manual-mcp status` prints what was detected and from where.
 
-## No corpus / first run did not download
+## No corpus / first run did not install
 
-- Check `BEVY_MCP_OFFLINE`; `1` disables auto-fetch and `fetch-index`.
+- Check `BEVY_MCP_OFFLINE`; `1` disables the background fetch and `fetch-index`.
 - Run the install explicitly: `bevy-manual-mcp fetch-index 0.20.0`.
 - A mirror can be used with `BEVY_MCP_INDEX_BASE_URL`.
-- A failed download is logged to stderr but does not kill the server; tool calls
-  then explain that no corpus is installed.
+- The server becomes available before a first-run download finishes. Progress is
+  logged to stderr, and `bevy_index_status` shows when the corpus and text index
+  are loaded. A failed download does not kill the server; tool calls explain
+  that no corpus is installed.
 
-`bevy-manual-mcp status` shows the corpus path, record count and text-index state.
+`bevy-manual-mcp status` shows the project version, the corpus version that
+actually supplied the data, the record count and the text-index state.
 
 ## A rebuilt tool still behaves like the old build
 

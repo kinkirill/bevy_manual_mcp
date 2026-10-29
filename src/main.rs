@@ -161,31 +161,31 @@ fn main() -> anyhow::Result<()> {
         Command::Status => {
             let registry = registry::Registry::load(&config.data_dir);
             let (corpus, load_ms) = load_corpus(&config);
-            let (text_documents, text_load_ms) = match corpus.as_ref() {
-                Some(_) => match config.bevy_version.as_deref() {
-                    Some(version) => {
-                        let dir = archive::resolve_version_dir(&config.data_dir, version)
-                            .map(|(_, dir)| dir.join(text::TEXT_DIR));
-                        if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
-                            let started = std::time::Instant::now();
-                            match text::TextIndex::open(&dir) {
-                                Ok(index) => {
-                                    (Some(index.doc_count()), started.elapsed().as_millis())
-                                }
-                                Err(_) => (None, 0),
-                            }
-                        } else {
-                            (None, 0)
+            let resolved = config
+                .bevy_version
+                .as_deref()
+                .and_then(|version| archive::resolve_version_dir(&config.data_dir, version));
+            let corpus_version = resolved.as_ref().map(|(version, _)| version.as_str());
+            let (text_documents, text_load_ms) = match (corpus.as_ref(), resolved.as_ref()) {
+                (Some(_), Some((_, dir))) => {
+                    let dir = dir.join(text::TEXT_DIR);
+                    if dir.is_dir() {
+                        let started = std::time::Instant::now();
+                        match text::TextIndex::open(&dir) {
+                            Ok(index) => (Some(index.doc_count()), started.elapsed().as_millis()),
+                            Err(_) => (None, 0),
                         }
+                    } else {
+                        (None, 0)
                     }
-                    None => (None, 0),
-                },
-                None => (None, 0),
+                }
+                _ => (None, 0),
             };
             let (text, _) = status::status(
                 &config,
                 &registry,
                 corpus.as_ref(),
+                corpus_version,
                 load_ms,
                 text_documents,
                 text_load_ms,

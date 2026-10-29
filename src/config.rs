@@ -430,9 +430,293 @@ fn resolve_against(value: &str, base: &Path) -> PathBuf {
     }
 }
 
+#[derive(Debug, Clone)]
+struct VersionCandidate {
+    name: String,
+    version: String,
+}
+
+/// Official Bevy engine crates used when a project depends on sub-crates
+/// directly and has no umbrella `bevy` package in its lockfile.
+const BEVY_ENGINE_CRATES: &[&str] = &[
+    "bevy_a11y",
+    "bevy_animation",
+    "bevy_anti_alias",
+    "bevy_app",
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_core",
+    "bevy_core_pipeline",
+    "bevy_derive",
+    "bevy_dev_tools",
+    "bevy_diagnostic",
+    "bevy_dynamic_plugin",
+    "bevy_ecs",
+    "bevy_encase_derive",
+    "bevy_gilrs",
+    "bevy_gizmos",
+    "bevy_gltf",
+    "bevy_hierarchy",
+    "bevy_image",
+    "bevy_input",
+    "bevy_internal",
+    "bevy_light",
+    "bevy_log",
+    "bevy_macro_utils",
+    "bevy_math",
+    "bevy_material",
+    "bevy_mesh",
+    "bevy_pbr",
+    "bevy_picking",
+    "bevy_platform",
+    "bevy_post_process",
+    "bevy_ptr",
+    "bevy_reflect",
+    "bevy_render",
+    "bevy_scene",
+    "bevy_shader",
+    "bevy_sprite",
+    "bevy_state",
+    "bevy_tasks",
+    "bevy_text",
+    "bevy_time",
+    "bevy_transform",
+    "bevy_ui",
+    "bevy_utils",
+    "bevy_viewport",
+    "bevy_window",
+    "bevy_winit",
+    "bevy_world_serialization",
+];
+
+fn is_bevy_engine_crate(name: &str) -> bool {
+    let name = name.replace('-', "_");
+    BEVY_ENGINE_CRATES.contains(&name.as_str())
+        || (name.starts_with("bevy_") && (name.ends_with("_derive") || name.ends_with("_macros")))
+}
+
+fn is_bevy_star_crate(name: &str) -> bool {
+    name.replace('-', "_").starts_with("bevy_")
+}
+
 /// Cargo workspaces keep their lockfile at the workspace root, so walk up.
 fn detect_bevy_version(project_root: &Path) -> Detected {
-    detect_crate_version(project_root, "bevy")
+    let mut directory = project_root.to_path_buf();
+    loop {
+        let lock_path = directory.join("Cargo.lock");
+        if lock_path.is_file()
+            && let Ok(text) = fs::read_to_string(&lock_path)
+        {
+            if let Some(version) = version_from_lock(&text, "bevy") {
+                return Detected {
+                    version: Some(version),
+                    source: Some(lock_path.display().to_string()),
+                    note: None,
+                };
+            }
+            let mut candidates = lock_candidates(&text, is_bevy_engine_crate);
+            if candidates.is_empty() {
+                candidates = lock_candidates(&text, is_bevy_star_crate);
+            }
+            if let Some(detected) =
+                detected_from_candidates(candidates, lock_path.display().to_string())
+            {
+                return detected;
+            }
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+        if parent == directory {
+            break;
+        }
+        directory = parent.to_path_buf();
+    }
+
+    let mut directory = project_root.to_path_buf();
+    loop {
+        let manifest = directory.join("Cargo.toml");
+        if manifest.is_file()
+            && let Ok(text) = fs::read_to_string(&manifest)
+        {
+            if let Some(version) = version_from_manifest(&text, "bevy") {
+                return Detected {
+                    version: Some(version),
+                    source: Some(format!("{} (requested range)", manifest.display())),
+                    note: None,
+                };
+            }
+            let mut candidates = manifest_candidates(&text, is_bevy_engine_crate);
+            if candidates.is_empty() {
+                candidates = manifest_candidates(&text, is_bevy_star_crate);
+            }
+            if let Some(detected) = detected_from_candidates(
+                candidates,
+                format!("{} (requested range)", manifest.display()),
+            ) {
+                return detected;
+            }
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+        if parent == directory {
+            break;
+        }
+        directory = parent.to_path_buf();
+    }
+
+    Detected {
+        version: None,
+        source: None,
+        note: Some(
+            "Could not determine the Bevy version. Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at a Cargo project."
+                .to_string(),
+        ),
+    }
+}
+
+fn detected_from_candidates(
+    mut candidates: Vec<VersionCandidate>,
+    source: String,
+) -> Option<Detected> {
+    candidates.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| crate::versions::cmp_version(&a.version, &b.version))
+    });
+    candidates.dedup_by(|a, b| a.name == b.name && a.version == b.version);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let mut versions: Vec<String> = Vec::new();
+    for candidate in &candidates {
+        if !versions.contains(&candidate.version) {
+            versions.push(candidate.version.clone());
+        }
+    }
+    versions.sort_by(|a, b| crate::versions::cmp_version(a, b));
+
+    if versions.len() == 1 {
+        let crates = candidates
+            .iter()
+            .map(|candidate| format!("{} {}", candidate.name, candidate.version))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Some(Detected {
+            version: Some(versions[0].clone()),
+            source: Some(format!("{source} ({crates})")),
+            note: None,
+        });
+    }
+
+    let details = candidates
+        .iter()
+        .map(|candidate| format!("{} {}", candidate.name, candidate.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(Detected {
+        version: None,
+        source: Some(source),
+        note: Some(format!(
+            "Could not determine the Bevy version: the modular Bevy crates resolve to multiple versions ({details}). Set BEVY_VERSION to choose one."
+        )),
+    })
+}
+
+fn lock_candidates(text: &str, predicate: impl Fn(&str) -> bool) -> Vec<VersionCandidate> {
+    let mut candidates = Vec::new();
+    let Some(parsed) = toml::from_str::<toml::Value>(text).ok() else {
+        return candidates;
+    };
+    let Some(packages) = parsed.get("package").and_then(toml::Value::as_array) else {
+        return candidates;
+    };
+    for package in packages {
+        let Some(name) = package.get("name").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        if !predicate(name) {
+            continue;
+        }
+        let Some(version) = package.get("version").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        candidates.push(VersionCandidate {
+            name: name.to_string(),
+            version: version.to_string(),
+        });
+    }
+    candidates
+}
+
+fn manifest_candidates(text: &str, predicate: impl Fn(&str) -> bool) -> Vec<VersionCandidate> {
+    let mut candidates = Vec::new();
+    let Some(parsed) = toml::from_str::<toml::Value>(text).ok() else {
+        return candidates;
+    };
+    let workspace_deps = parsed.get("workspace").and_then(|w| w.get("dependencies"));
+
+    let mut tables: Vec<&toml::Value> = Vec::new();
+    for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(table) = parsed.get(key) {
+            tables.push(table);
+        }
+    }
+    if let Some(targets) = parsed.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values() {
+            for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(table) = target.get(key) {
+                    tables.push(table);
+                }
+            }
+        }
+    }
+    if let Some(deps) = workspace_deps {
+        tables.push(deps);
+    }
+
+    for table in tables {
+        let Some(entries) = table.as_table() else {
+            continue;
+        };
+        for (name, entry) in entries {
+            let effective = entry
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(name);
+            if !predicate(effective) {
+                continue;
+            }
+            let mut version = entry.as_str().map(str::to_string).or_else(|| {
+                entry
+                    .get("version")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+            });
+            if version.is_none()
+                && entry.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+                && let Some(inherited) = workspace_deps.and_then(|d| d.get(name))
+            {
+                version = inherited.as_str().map(str::to_string).or_else(|| {
+                    inherited
+                        .get("version")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string)
+                });
+            }
+            if let Some(version) = version {
+                candidates.push(VersionCandidate {
+                    name: effective.to_string(),
+                    version,
+                });
+            }
+        }
+    }
+    candidates
 }
 
 fn detect_crate_version(project_root: &Path, crate_name: &str) -> Detected {
@@ -565,4 +849,103 @@ fn version_from_manifest(text: &str, crate_name: &str) -> Option<String> {
             .and_then(toml::Value::as_str)
             .map(str::to_string)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project_with(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for (name, contents) in files {
+            let path = dir.path().join(name);
+            fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+            fs::write(path, contents).expect("write fixture");
+        }
+        dir
+    }
+
+    #[test]
+    fn detects_an_umbrella_bevy_lockfile() {
+        let dir = project_with(&[(
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "bevy"
+version = "0.20.1"
+
+[[package]]
+name = "bevy_ecs"
+version = "0.20.1"
+"#,
+        )]);
+        let detected = detect_bevy_version(dir.path());
+        assert_eq!(detected.version.as_deref(), Some("0.20.1"));
+        assert!(detected.note.is_none());
+    }
+
+    #[test]
+    fn falls_back_to_modular_engine_crates() {
+        let dir = project_with(&[(
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "bevy_ecs"
+version = "0.20.1"
+
+[[package]]
+name = "bevy_app"
+version = "0.20.1"
+"#,
+        )]);
+        let detected = detect_bevy_version(dir.path());
+        assert_eq!(detected.version.as_deref(), Some("0.20.1"));
+        assert!(
+            detected
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("bevy_ecs")),
+            "{detected:?}"
+        );
+    }
+
+    #[test]
+    fn ambiguous_modular_versions_are_reported_not_guessed() {
+        let dir = project_with(&[(
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "bevy_ecs"
+version = "0.20.1"
+
+[[package]]
+name = "bevy_app"
+version = "0.20.0"
+"#,
+        )]);
+        let detected = detect_bevy_version(dir.path());
+        assert_eq!(detected.version, None);
+        let note = detected.note.expect("ambiguity note");
+        assert!(note.contains("multiple versions"), "{note}");
+        assert!(note.contains("bevy_ecs 0.20.1"), "{note}");
+        assert!(note.contains("bevy_app 0.20.0"), "{note}");
+    }
+
+    #[test]
+    fn falls_back_to_modular_crates_in_the_manifest() {
+        let dir = project_with(&[(
+            "Cargo.toml",
+            r#"
+[package]
+name = "modular-game"
+version = "0.1.0"
+
+[dependencies]
+bevy_ecs = "0.20.1"
+bevy_app = "0.20.1"
+"#,
+        )]);
+        let detected = detect_bevy_version(dir.path());
+        assert_eq!(detected.version.as_deref(), Some("0.20.1"));
+    }
 }

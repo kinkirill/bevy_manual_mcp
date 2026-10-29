@@ -24,7 +24,7 @@ The suite includes:
 - archive tests that build real corpora, pack/fetch bundles and ingest a
   `cargo doc` tree;
 - stdio MCP tests that spawn the binary and exercise tools, resources,
-  auto-fetch and metadata.
+  background fetch and metadata.
 
 ## Layout
 
@@ -84,8 +84,9 @@ bevy-manual-mcp build --doc-dir "$HOME/.cache/bevy-mcp/bevy-0.20.0" \
 
 ## Release
 
-See [PUBLISHING.md](PUBLISHING.md). In short: build and upload the six index
-bundles first, then `cargo publish`, then publish the MCP registry entry.
+See [PUBLISHING.md](PUBLISHING.md). In short: rebuild and upload index bundles
+only when their content or format changes, then `cargo publish`, then publish
+the MCP registry entry.
 
 ## Docs
 

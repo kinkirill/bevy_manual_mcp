@@ -212,6 +212,7 @@ pub const TEMPLATES: [TemplateDef; 6] = [
 pub struct Source<'a> {
     pub corpus: Option<&'a LoadedCorpus>,
     pub active_version: Option<&'a str>,
+    pub corpus_version: Option<&'a str>,
     pub data_dir: &'a Path,
     pub versions: Vec<String>,
 }
@@ -231,16 +232,17 @@ impl Loaded<'_> {
 }
 
 impl Source<'_> {
-    fn open(&self, version: &str) -> Option<Loaded<'_>> {
+    fn open(&self, version: &str) -> Option<(Loaded<'_>, String)> {
         if self.active_version == Some(version)
             && let Some(corpus) = self.corpus
         {
-            return Some(Loaded::Borrowed(corpus));
+            let actual = self.corpus_version.unwrap_or(version).to_string();
+            return Some((Loaded::Borrowed(corpus), actual));
         }
-        let (_, dir) = crate::archive::resolve_version_dir(self.data_dir, version)?;
+        let (resolved, dir) = crate::archive::resolve_version_dir(self.data_dir, version)?;
         LoadedCorpus::open(&dir.join(crate::archive::ARCHIVE_FILE))
             .ok()
-            .map(Loaded::Owned)
+            .map(|corpus| (Loaded::Owned(corpus), resolved))
     }
 
     fn missing(&self, version: &str) -> String {
@@ -274,25 +276,25 @@ pub fn read(source: &Source<'_>, uri: &str) -> Result<ReadOutput, String> {
     }
 
     let version = query.version().unwrap_or("unknown").to_string();
-    let loaded = source
+    let (loaded, corpus_version) = source
         .open(&version)
         .ok_or_else(|| source.missing(&version))?;
     let root = loaded.root();
     let cursor = cursor_of(uri);
 
     match &query {
-        Query::Api { version, path } => {
+        Query::Api { path, .. } => {
             let record = root
                 .records
                 .iter()
                 .find(|record| root.string(record.full_path) == path.as_str())
                 .ok_or_else(|| {
                     format!(
-                        "No API item at \"{path}\" in Bevy {version}. Check the path, or search with the bevy_search tool."
+                        "No API item at \"{path}\" in Bevy {corpus_version}. Check the path, or search with the bevy_search tool."
                     )
                 })?;
             let body = format!(
-                "> Read from `{uri}` · Bevy {version}\n\n{}",
+                "> Read from `{uri}` · Bevy {corpus_version}\n\n{}",
                 record_markdown(root, record, 4000)
             );
             Ok(ReadOutput {
@@ -311,13 +313,13 @@ pub fn read(source: &Source<'_>, uri: &str) -> Result<ReadOutput, String> {
                 .collect();
             if matches.is_empty() {
                 return Err(format!(
-                    "No items matched {}=\"{}\" in Bevy {version}.",
+                    "No items matched {}=\"{}\" in Bevy {corpus_version}.",
                     listing.label(),
                     listing.value()
                 ));
             }
             let page = paginate(&matches, &listing.cursor_id(), cursor.as_deref(), None)?;
-            let text = listing_markdown(root, &version, listing, &page);
+            let text = listing_markdown(root, &corpus_version, listing, &page);
             Ok(ReadOutput {
                 text,
                 next_cursor: page.next_cursor,
@@ -433,10 +435,22 @@ fn listing_markdown(
 
 fn index_text(source: &Source<'_>) -> String {
     let active = source.active_version.unwrap_or("UNKNOWN");
+    let corpus = source.corpus_version.unwrap_or("not installed");
     let mut lines = vec![
         "# Indexed Bevy versions".to_string(),
         String::new(),
-        format!("Active (from the host project's Cargo.lock): **{active}**"),
+        format!("Project version (from the host project's Cargo.lock): **{active}**"),
+        format!(
+            "Corpus answering: **{corpus}**{}",
+            if source.active_version.is_some()
+                && source.corpus_version.is_some()
+                && source.active_version != source.corpus_version
+            {
+                " (same-minor fallback)"
+            } else {
+                ""
+            }
+        ),
         String::new(),
         "| version | available |".to_string(),
         "|---|---|".to_string(),
@@ -539,7 +553,7 @@ pub fn complete(
     let Some(loaded) = source.open(selected) else {
         return (Vec::new(), 0);
     };
-    let root = loaded.root();
+    let root = loaded.0.root();
 
     let mut matches: Vec<String> = Vec::new();
     let push = |matches: &mut Vec<String>, candidate: String| {

@@ -696,65 +696,72 @@ pub fn build(
         meta,
     };
 
-    let text_started = std::time::Instant::now();
-    let text = crate::text::build_index(&corpus, &out_dir.join(crate::text::TEXT_DIR))?;
-    let text_build_ms = text_started.elapsed().as_millis();
+    let staging = crate::bundle::create_staging(out_dir, "build")?;
+    let result = (|| -> Result<BuildReport> {
+        let text_started = std::time::Instant::now();
+        let text = crate::text::build_index(&corpus, &staging.join(crate::text::TEXT_DIR))?;
+        let text_build_ms = text_started.elapsed().as_millis();
 
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&corpus)
-        .map_err(|error| anyhow!("cannot serialize corpus: {error}"))?;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&corpus)
+            .map_err(|error| anyhow!("cannot serialize corpus: {error}"))?;
 
-    fs::create_dir_all(out_dir).with_context(|| format!("cannot create {}", out_dir.display()))?;
-    let archive_path = out_dir.join(ARCHIVE_FILE);
-    write_atomic(&archive_path, &bytes)?;
+        let archive_path = staging.join(ARCHIVE_FILE);
+        write_atomic(&archive_path, &bytes)?;
 
-    let sha256 = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let manifest = serde_json::json!({
-        "format_version": FORMAT_VERSION,
-        "rkyv": "0.8.18",
-        "bevy_version": corpus.bevy_version,
-        "file": ARCHIVE_FILE,
-        "size": bytes.len(),
-        "sha256": sha256,
-        "built_at_unix": corpus.built_at_unix,
-        "records": corpus.records.len(),
-        "symbols": symbol_count,
-        "name_tokens": token_count,
-        "text": {
-            "dir": crate::text::TEXT_DIR,
-            "documents": text.documents,
-            "bytes": text.bytes,
-        },
-    });
-    write_atomic(
-        &out_dir.join(MANIFEST_FILE),
-        serde_json::to_string_pretty(&manifest)?.as_bytes(),
-    )?;
+        let sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let manifest = serde_json::json!({
+            "format_version": FORMAT_VERSION,
+            "rkyv": "0.8.18",
+            "bevy_version": corpus.bevy_version,
+            "file": ARCHIVE_FILE,
+            "size": bytes.len(),
+            "sha256": sha256,
+            "built_at_unix": corpus.built_at_unix,
+            "records": corpus.records.len(),
+            "symbols": symbol_count,
+            "name_tokens": token_count,
+            "text": {
+                "dir": crate::text::TEXT_DIR,
+                "documents": text.documents,
+                "bytes": text.bytes,
+            },
+        });
+        write_atomic(
+            &staging.join(MANIFEST_FILE),
+            serde_json::to_string_pretty(&manifest)?.as_bytes(),
+        )?;
 
-    // Prove the archive loads before reporting success.
-    let load_started = std::time::Instant::now();
-    let loaded = LoadedCorpus::open(&archive_path)?;
-    if loaded.format_version() != FORMAT_VERSION {
-        bail!("archive reported the wrong format version");
-    }
-    let load_test_ms = load_started.elapsed().as_millis();
-    let build_ms = started.elapsed().as_millis();
+        // Prove the archive loads before it replaces anything on disk.
+        let load_started = std::time::Instant::now();
+        let loaded = LoadedCorpus::open(&archive_path)?;
+        if loaded.format_version() != FORMAT_VERSION {
+            bail!("archive reported the wrong format version");
+        }
+        let records = loaded.root().records.len();
+        drop(loaded);
+        let load_test_ms = load_started.elapsed().as_millis();
 
-    Ok(BuildReport {
-        records: loaded.root().records.len(),
-        symbols: symbol_count,
-        name_tokens: token_count,
-        duplicates_merged,
-        archive_bytes: bytes.len() as u64,
-        archive_path,
-        text_documents: text.documents,
-        text_bytes: text.bytes,
-        text_build_ms,
-        load_test_ms,
-        build_ms,
-    })
+        crate::bundle::install_artifacts(&staging, out_dir)?;
+
+        Ok(BuildReport {
+            records,
+            symbols: symbol_count,
+            name_tokens: token_count,
+            duplicates_merged,
+            archive_bytes: bytes.len() as u64,
+            archive_path: out_dir.join(ARCHIVE_FILE),
+            text_documents: text.documents,
+            text_bytes: text.bytes,
+            text_build_ms,
+            load_test_ms,
+            build_ms: started.elapsed().as_millis(),
+        })
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
 }
 
 fn counts_to_rows(map: BTreeMap<String, u64>) -> Vec<Count> {

@@ -16,6 +16,7 @@ pub fn status(
     config: &Config,
     registry: &Registry,
     corpus: Option<&LoadedCorpus>,
+    corpus_version: Option<&str>,
     load_ms: u128,
     text_documents: Option<u64>,
     text_load_ms: u128,
@@ -24,6 +25,8 @@ pub fn status(
     let entry = version.and_then(|v| registry.entry(v));
     let meta = version.and_then(|v| registry.meta(v));
     let archived = corpus.map(LoadedCorpus::root);
+    let version_fallback =
+        matches!((version, corpus_version), (Some(project), Some(corpus)) if project != corpus);
 
     let records = archived
         .map(|root| root.records.len() as u64)
@@ -63,7 +66,16 @@ pub fn status(
     let mut lines = vec![
         "# bevy-manual-mcp index status".to_string(),
         String::new(),
-        format!("- **Bevy version:** {}", version.unwrap_or("UNKNOWN")),
+        format!("- **Project version:** {}", version.unwrap_or("UNKNOWN")),
+        format!(
+            "- **Corpus version:** {}{}",
+            corpus_version.unwrap_or("not installed"),
+            if version_fallback {
+                " (same-minor fallback)"
+            } else {
+                ""
+            }
+        ),
         format!(
             "- **Detected from:** {}",
             config.version_source.as_deref().unwrap_or("n/a")
@@ -171,15 +183,16 @@ pub fn status(
 
     let structured = json!({
         "bevy_version": version,
-        "doc_version": Value::Null,
-        "version_mismatch": false,
+        "project_version": version,
+        "corpus_version": corpus_version,
+        "version_fallback": version_fallback,
         "version_source": config.version_source,
         "project_root": config.project_root.display().to_string(),
         "doc_dir": doc_dir,
         "website_dir": website_dir,
         "examples_dir": examples_dir,
-        "meta_dir": Value::Null,
-        "errors_dir": Value::Null,
+        "meta_dir": config.meta_dir.as_ref().map(|path| path.display().to_string()),
+        "errors_dir": config.errors_dir.as_ref().map(|path| path.display().to_string()),
         "stats": {
             "total": records,
             "by_source": by_source,
@@ -208,6 +221,14 @@ pub fn status(
 
 pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
     let active = config.bevy_version.clone();
+    let active_corpus = active
+        .as_deref()
+        .and_then(|version| crate::archive::resolve_version_dir(registry.data_dir(), version))
+        .map(|(version, _)| version);
+    let version_fallback = matches!(
+        (active.as_deref(), active_corpus.as_deref()),
+        (Some(project), Some(corpus)) if project != corpus
+    );
     let mut all = registry.indexed_versions();
     if let Some(active) = &active
         && !all.contains(active)
@@ -228,6 +249,19 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
         "| version | active | corpus | records | symbols | vs active |".to_string(),
         "|---|---|---|---|---|---|".to_string(),
     ];
+    if let Some(corpus) = &active_corpus {
+        lines.insert(
+            3,
+            format!(
+                "**Corpus answering:** {corpus}{}",
+                if version_fallback {
+                    " (same-minor fallback)"
+                } else {
+                    ""
+                }
+            ),
+        );
+    }
 
     for version in &all {
         let entry = registry.entry(version);
@@ -276,6 +310,7 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
         rows.push(json!({
             "version": version,
             "active": is_active,
+            "corpus_version": if is_active { active_corpus.clone() } else { None },
             "compiled": compiled,
             "records": records,
             "symbols": symbols,
@@ -318,6 +353,12 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
 
     (
         lines.join("\n"),
-        json!({ "active": active, "versions": rows }),
+        json!({
+            "active": active,
+            "project_version": active,
+            "corpus_version": active_corpus,
+            "version_fallback": version_fallback,
+            "versions": rows,
+        }),
     )
 }

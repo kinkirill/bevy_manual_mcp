@@ -34,8 +34,9 @@ error codes + feature metadata     ─┘                                    │
   `bevy::ecs::event::Event` rather than `AssetEventSystems`.
 - **Bundles.** A version's artifacts are packed as
   `bevy-<version>-fmt<format>.tar.zst` with a SHA-256 `index-manifest.json`.
-  `fetch-index` verifies and installs atomically; the first server start can do
-  this automatically.
+  `fetch-index` assembles and validates a complete replacement generation and
+  swaps it in atomically. A first server start can start the same install in the
+  background after the MCP endpoint is available.
 
 ## Why it is fast
 
@@ -52,10 +53,14 @@ path: a damaged archive is rebuilt or re-downloaded, never migrated.
 ## Versions and metadata
 
 - Version detection is file-based: `Cargo.lock` first, `Cargo.toml` second, then
-  `BEVY_VERSION`.
+  `BEVY_VERSION`. It prefers the umbrella `bevy` package and falls back to the
+  modular `bevy_*` engine crates; conflicting modular versions are reported as
+  ambiguous instead of guessed.
 - Each Bevy version has its own corpus directory. Only the active version is
   loaded eagerly; `bevy_api_diff` and `bevy://` reads open another version's
-  archive on demand.
+  archive on demand. The project version and the corpus version actually loaded
+  are tracked separately, so same-minor fallback stays visible in status, search
+  results and resources.
 - Feature graphs, error-code guides and the plugin compatibility snapshot ship
   inside the bundle under `metadata/`. On a checkout, `vendor/bevy-meta` and
   `vendor/ecosystem` are the source of truth; installed bundle metadata takes
