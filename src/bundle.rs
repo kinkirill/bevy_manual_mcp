@@ -29,15 +29,15 @@ pub struct ReleaseManifest {
     pub bevy_version: String,
     pub asset: String,
     pub sha256: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_version: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_documents: Option<u64>,
 }
 
@@ -59,11 +59,50 @@ pub fn pack(version_dir: &Path, out: &Path) -> Result<u64> {
         }
         append(&mut tar, version_dir, "corpus.manifest.json")?;
         append(&mut tar, version_dir, "meta.json")?;
+        let metadata = version_dir.join("metadata");
+        if metadata.is_dir() {
+            tar.append_dir_all("metadata", &metadata)
+                .context("cannot add version metadata to the bundle")?;
+        }
         tar.finish().context("cannot finish the bundle tar")?;
     }
     encoder.finish().context("cannot finish the zstd stream")?;
 
     Ok(fs::metadata(out).map(|meta| meta.len()).unwrap_or(0))
+}
+
+/// Write the release manifest that `fetch-index` reads for an asset.
+pub fn write_release_manifest(
+    asset: &Path,
+    version: &str,
+    out: &Path,
+    revision: u32,
+) -> Result<()> {
+    let bytes = fs::read(asset).with_context(|| format!("cannot read {}", asset.display()))?;
+    let digest = Sha256::digest(&bytes);
+    let sha256 = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let manifest = ReleaseManifest {
+        manifest_version: RUST_MANIFEST_VERSION,
+        bevy_version: version.to_string(),
+        asset: asset
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| asset.display().to_string()),
+        sha256,
+        size: Some(bytes.len() as u64),
+        format_version: Some(FORMAT_VERSION),
+        revision: Some(revision),
+        records: None,
+        text_documents: None,
+    };
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(out, serde_json::to_string_pretty(&manifest)? + "\n")
+        .with_context(|| format!("cannot write {}", out.display()))
 }
 
 fn append<W: Write>(tar: &mut tar::Builder<W>, dir: &Path, name: &str) -> Result<()> {
@@ -123,7 +162,13 @@ pub fn install(staging: &Path, data_dir: &Path, version: &str) -> Result<PathBuf
     let target = data_dir.join("versions").join(version_dir_name(version));
     fs::create_dir_all(&target)?;
 
-    for name in [ARCHIVE_FILE, TEXT_DIR, "corpus.manifest.json", "meta.json"] {
+    for name in [
+        ARCHIVE_FILE,
+        TEXT_DIR,
+        "corpus.manifest.json",
+        "meta.json",
+        "metadata",
+    ] {
         let source = staging.join(name);
         if !source.exists() {
             continue;

@@ -1,2 +1,0 @@
-{"source":"rustdoc","kind":"struct","name":"EguiContexts","full_path":"bevy_egui::EguiContexts","module":"bevy_egui","file":"struct.EguiContexts.html","docs":"The main access point for egui contexts in Bevy systems.","signature":"pub struct EguiContexts<'w, 's> { .. }","crate":"bevy_egui","bevy_version":"0.43.1"}
-{"source":"rustdoc","kind":"struct","name":"Button","full_path":"bevy_egui::Button","module":"bevy_egui","file":"struct.Button.html","docs":"An egui button widget newtype.","signature":"pub struct Button { .. }","crate":"bevy_egui","bevy_version":"0.43.1"}

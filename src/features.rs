@@ -41,8 +41,7 @@ pub struct Enabled {
     pub source: &'static str,
 }
 
-pub fn load(meta_dir: Option<&Path>, version: &str) -> Option<FeaturesData> {
-    let path = meta_dir?.join(version).join("features.json");
+pub fn load_path(path: &Path) -> Option<FeaturesData> {
     let text = fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }

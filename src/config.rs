@@ -255,6 +255,46 @@ impl Config {
     pub fn log(&self, message: impl AsRef<str>) {
         eprintln!("[bevy-manual-mcp] {}", message.as_ref());
     }
+
+    /// Metadata shipped inside a version bundle (or the checkout's vendor dir).
+    pub fn version_metadata_dir(&self, version: &str) -> Option<PathBuf> {
+        let installed = self
+            .data_dir
+            .join("versions")
+            .join(crate::registry::version_dir_name(version))
+            .join("metadata");
+        if installed.is_dir() {
+            return Some(installed);
+        }
+        self.meta_dir
+            .as_ref()
+            .map(|meta| meta.join(version))
+            .filter(|path| path.is_dir())
+    }
+
+    pub fn feature_graph_path(&self, version: &str) -> Option<PathBuf> {
+        self.version_metadata_dir(version)
+            .map(|dir| dir.join("features.json"))
+            .filter(|path| path.is_file())
+    }
+
+    pub fn error_codes_dir(&self, version: &str) -> Option<PathBuf> {
+        self.version_metadata_dir(version)
+            .map(|dir| dir.join("error-codes"))
+            .filter(|path| path.is_dir())
+    }
+
+    pub fn compat_path(&self) -> Option<PathBuf> {
+        if let Some(version) = self.bevy_version.as_deref()
+            && let Some(path) = self
+                .version_metadata_dir(version)
+                .map(|dir| dir.join("compat.json"))
+                .filter(|path| path.is_file())
+        {
+            return Some(path);
+        }
+        crate::analysis::compat::locate(self.meta_dir.as_deref(), &self.project_root)
+    }
 }
 
 fn file_source(path: &Option<PathBuf>) -> String {

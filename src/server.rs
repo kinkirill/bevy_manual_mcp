@@ -723,11 +723,16 @@ impl BevyMcp {
                 "no Bevy version detected; set BEVY_VERSION or point BEVY_PROJECT_ROOT at a Cargo project"
             )
         })?;
-        let data = features::load(self.config.meta_dir.as_deref(), &version).ok_or_else(|| {
-            anyhow!(
-                "No feature graph available for Bevy {version}. Expected vendor/bevy-meta/{version}/features.json (set BEVY_META_DIR)."
-            )
-        })?;
+        let data = self
+            .config
+            .feature_graph_path(&version)
+            .as_deref()
+            .and_then(features::load_path)
+            .ok_or_else(|| {
+                anyhow!(
+                    "No feature graph available for Bevy {version}. Expected metadata/features.json in the installed bundle, or vendor/bevy-meta/{version}/features.json."
+                )
+            })?;
         let graph_version = data.bevy_version.clone().unwrap_or_else(|| version.clone());
         let enabled = features::enabled(&self.config.project_root, &data);
         let source = enabled.source;
@@ -910,7 +915,8 @@ impl BevyMcp {
         let version = self.config.bevy_version.clone();
         let vendored = version
             .as_deref()
-            .map(|version| perf::load_vendored(self.config.meta_dir.as_deref(), version))
+            .and_then(|version| self.config.version_metadata_dir(version))
+            .map(|dir| perf::load_vendored(Some(&dir)))
             .unwrap_or_default();
 
         let mut topics = vendored.clone();
@@ -1109,12 +1115,10 @@ impl BevyMcp {
     fn run_explain_error(&self, params: ExplainErrorParams) -> anyhow::Result<(String, Value)> {
         let extracted = errors::extract(&params.message);
         let version = self.config.bevy_version.clone();
-        let meta_dir = self.config.meta_dir.clone();
-        let codes_dir = meta_dir.as_ref().map(|meta| match version.as_deref() {
-            Some(version) => meta.join(version).join("error-codes"),
-            None => meta.join("error-codes"),
-        });
-        let version_indexed = codes_dir.as_ref().is_some_and(|dir| dir.is_dir());
+        let codes_dir = version
+            .as_deref()
+            .and_then(|version| self.config.error_codes_dir(version));
+        let version_indexed = codes_dir.is_some();
 
         let Some(code) = extracted.code.as_deref() else {
             let mut text = String::from("## Error Explanation\n\n");
@@ -1148,9 +1152,9 @@ impl BevyMcp {
         let mut guide = None;
         let mut exists_in_version = false;
         if lookup_available
-            && let (Some(version), Some(meta_dir)) = (version.as_deref(), meta_dir.as_deref())
+            && let (Some(_version), Some(codes_dir)) = (version.as_deref(), codes_dir.as_deref())
         {
-            let path = errors::guide_path(meta_dir, version, code);
+            let path = errors::guide_path(codes_dir, code);
             exists_in_version = path.is_file();
             if exists_in_version {
                 guide = std::fs::read_to_string(path).ok();
@@ -1374,13 +1378,12 @@ impl BevyMcp {
         &self,
         params: EcosystemCompatParams,
     ) -> anyhow::Result<(String, Value)> {
-        let Some(snapshot) =
-            compat::load(self.config.meta_dir.as_deref(), &self.config.project_root)?
-        else {
+        let Some(path) = self.config.compat_path() else {
             bail!(
-                "No compat snapshot installed. Expected vendor/ecosystem/compat.json (or set BEVY_MCP_COMPAT_PATH)."
+                "No compat snapshot installed. Expected metadata/compat.json in the installed bundle, vendor/ecosystem/compat.json, or BEVY_MCP_COMPAT_PATH."
             );
         };
+        let snapshot = compat::load_file(&path)?;
         let provenance = serde_json::to_value(&snapshot.provenance)?;
         let version = self.config.bevy_version.clone();
 
@@ -1971,6 +1974,26 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             config.log(note);
         }
         config.log("Set BEVY_VERSION, or point BEVY_PROJECT_ROOT at your Bevy Cargo project.");
+    } else if !config.offline
+        && let Some(version) = config.bevy_version.clone()
+    {
+        let data_dir = config.data_dir.clone();
+        let fetch_version = version.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::bundle::fetch(&fetch_version, &data_dir, false)
+        })
+        .await
+        {
+            Ok(Ok(Some(path))) => config.log(format!(
+                "installed the index for Bevy {version} at {}",
+                path.display()
+            )),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => config.log(format!(
+                "could not download the index for Bevy {version}: {error}; run `bevy-manual-mcp fetch-index {version}`"
+            )),
+            Err(error) => config.log(format!("index download task failed: {error}")),
+        }
     }
     let service = BevyMcp::new(config).serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;

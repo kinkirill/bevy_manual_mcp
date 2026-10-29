@@ -29,12 +29,12 @@ pub struct AntiPattern {
     pub suggestion: String,
 }
 
-/// Load `perf.json` for a version, if the metadata harvest produced one.
-pub fn load_vendored(meta_dir: Option<&Path>, version: &str) -> Vec<PerfTopic> {
-    let Some(meta_dir) = meta_dir else {
+/// Load `perf.json` from a version metadata directory, if one exists.
+pub fn load_vendored(metadata_dir: Option<&Path>) -> Vec<PerfTopic> {
+    let Some(metadata_dir) = metadata_dir else {
         return Vec::new();
     };
-    let Ok(text) = fs::read_to_string(meta_dir.join(version).join("perf.json")) else {
+    let Ok(text) = fs::read_to_string(metadata_dir.join("perf.json")) else {
         return Vec::new();
     };
     serde_json::from_str(&text).unwrap_or_default()

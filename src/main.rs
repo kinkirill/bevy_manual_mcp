@@ -23,6 +23,7 @@ mod status;
 mod text;
 mod versions;
 
+use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -75,6 +76,12 @@ enum Command {
         /// Also pack the built version into a release `.tar.zst` bundle.
         #[arg(long)]
         pack: Option<PathBuf>,
+        /// Write the `index-manifest.json` for the packed bundle.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Index revision recorded in the manifest (default 1).
+        #[arg(long, default_value_t = 1)]
+        revision: u32,
     },
     /// Search the corpus from the command line.
     Search {
@@ -231,6 +238,8 @@ fn main() -> anyhow::Result<()> {
             out,
             records,
             pack,
+            manifest,
+            revision,
         } => {
             let version = config
                 .bevy_version
@@ -317,6 +326,9 @@ fn main() -> anyhow::Result<()> {
             inputs.extend(examples);
             inputs.extend(error_codes);
             let report = archive::build(inputs, &out_dir, &options)?;
+            if let Err(error) = copy_version_metadata(&config, &version, &out_dir) {
+                eprintln!("[bevy-manual-mcp] metadata not bundled: {error}");
+            }
             println!("# corpus built");
             println!();
             println!("- records: {}", report.records);
@@ -343,6 +355,10 @@ fn main() -> anyhow::Result<()> {
                     path.display(),
                     size as f64 / 1_000_000.0
                 );
+                if let Some(manifest_path) = manifest {
+                    bundle::write_release_manifest(&path, &version, &manifest_path, revision)?;
+                    println!("- manifest: {}", manifest_path.display());
+                }
             }
             Ok(())
         }
@@ -525,6 +541,48 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// Copy the checkout's feature graph, error codes and compat snapshot into the
+/// version directory so they travel inside the release bundle.
+fn copy_version_metadata(config: &Config, version: &str, out_dir: &Path) -> anyhow::Result<()> {
+    let Some(source) = config
+        .meta_dir
+        .as_ref()
+        .map(|meta| meta.join(version))
+        .filter(|path| path.is_dir())
+    else {
+        return Ok(());
+    };
+    let target = out_dir.join("metadata");
+    fs::create_dir_all(&target)?;
+    for name in ["features.json", "perf.json"] {
+        let file = source.join(name);
+        if file.is_file() {
+            fs::copy(&file, target.join(name))?;
+        }
+    }
+    let codes = source.join("error-codes");
+    if codes.is_dir() {
+        let destination = target.join("error-codes");
+        fs::create_dir_all(&destination)?;
+        for entry in fs::read_dir(codes)?.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "md")
+                && let Some(name) = path.file_name()
+            {
+                fs::copy(&path, destination.join(name))?;
+            }
+        }
+    }
+    if let Some(vendor) = config.meta_dir.as_ref().and_then(|meta| meta.parent()) {
+        let compat = vendor.join("ecosystem").join("compat.json");
+        if compat.is_file() {
+            fs::copy(compat, target.join("compat.json"))?;
+        }
+    }
+    Ok(())
 }
 
 fn load_corpus(config: &Config) -> (Option<LoadedCorpus>, u128) {

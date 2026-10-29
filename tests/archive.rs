@@ -629,6 +629,16 @@ fn bundle_pack_and_fetch_round_trip() {
     let records_path = out_dir.join("records.ndjson");
     fs::write(&records_path, fixture_records()).expect("records");
 
+    // Metadata travels inside the bundle next to corpus.rkyv.
+    fs::create_dir_all(out_dir.join("metadata/error-codes")).expect("metadata dir");
+    fs::write(
+        out_dir.join("metadata/features.json"),
+        r#"{"bevy_version":"9.9.9","features":{},"closure":{}}"#,
+    )
+    .expect("features metadata");
+    fs::write(out_dir.join("metadata/error-codes/B0001.md"), "# B0001\n")
+        .expect("error code metadata");
+
     let release = dir.path().join("releases/v9.9.9");
     fs::create_dir_all(&release).expect("release dir");
     let asset = release.join("bevy-9.9.9-fmt1.tar.zst");
@@ -693,6 +703,16 @@ fn bundle_pack_and_fetch_round_trip() {
     );
     assert!(fresh.join("versions/9.9.9/corpus.rkyv").is_file());
     assert!(fresh.join("versions/9.9.9/tantivy").is_dir());
+    assert!(
+        fresh
+            .join("versions/9.9.9/metadata/features.json")
+            .is_file()
+    );
+    assert!(
+        fresh
+            .join("versions/9.9.9/metadata/error-codes/B0001.md")
+            .is_file()
+    );
 
     // The fetched corpus answers through the mmap.
     let output = command(&fresh)

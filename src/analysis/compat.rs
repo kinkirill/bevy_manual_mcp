@@ -247,14 +247,6 @@ pub fn locate(meta_dir: Option<&Path>, project_root: &Path) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Load the snapshot and its provenance, if one is installed.
-pub fn load(meta_dir: Option<&Path>, project_root: &Path) -> Result<Option<Snapshot>> {
-    let Some(path) = locate(meta_dir, project_root) else {
-        return Ok(None);
-    };
-    load_file(&path).map(Some)
-}
-
 /// Load a snapshot from an explicit path (used by tests and mirrors).
 ///
 /// The current schema is `{ meta, plugins }`. A legacy top-level map is still

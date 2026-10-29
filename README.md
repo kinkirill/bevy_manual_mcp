@@ -1,555 +1,192 @@
-# bevy-mcp
+# bevy-manual-mcp
 
-I built this MCP because Bevy is a fast-moving project that changes with every
-release. Its documentation is large and scattered, so finding an answer that
-actually matches *your* version often means digging through rustdoc, the Book,
-migration guides and older forum threads - and still landing on something
-written for a different release. This server removes that friction: instead of
-searching and guessing, you ask your agent a question and it answers from
-knowledge pinned to the exact Bevy version your project is using.
+Version-accurate Bevy documentation for MCP clients. It answers from a local
+index pinned to the Bevy version your project actually uses: rustdoc signatures,
+the Bevy Book, migration guides, release notes and runnable examples.
 
-It is primarily **a reference to ask questions of**. The kind of question it
-exists for:
+Bevy breaks APIs at every minor release. This server makes the model look the
+answer up instead of recalling an API from a different version.
 
-> “How do I create a 3D sphere with a given radius?”
+- **Native.** Rust, stdio MCP, no Node or npm in the user's path.
+- **Small.** A 33 MB bundle per Bevy version (125 MB corpus + 15 MB tantivy
+  index, zstd-compressed).
+- **Fast.** ~10 ms cold start, 22–30 ms concept queries, sub-millisecond exact
+  lookups.
+- **Honest.** Every tool says what it cannot do: `bevy_validate_systems` is a
+  syntax-level linter, compatibility can be `"unknown"`, and missing metadata is
+  reported as missing.
 
-`Sphere::new(radius)`. The answer includes its actual path and signature from
-the installed version's index: `bevy::shape::Sphere` in the current
-0.20.0 bundle. Version checks also distinguish buffered `MessageReader` APIs
-from the older `EventReader` APIs available in 0.15 and 0.16.
+## Install
 
-You can also point a coding agent at it, and it will stop inventing signatures
-for your version - a genuine side benefit. But that is not what it is for: the
-point is that when you ask Bevy something, the answer you get is the one that
-matches your `Cargo.lock`.
-
-An MCP server that gives your agents **version-accurate** Bevy knowledge: the
-real API signatures from rustdoc, the Bevy Book, migration guides, release notes
-and runnable examples - all pinned to the Bevy version your project actually
-uses.
-
-The problem it solves: LLMs have stale, hallucinated Bevy APIs. Bevy breaks
-compatibility every release, so a confident answer given from memory is often
-wrong for the version you are actually on. This server makes the model look the
-answer up instead, and makes it much less possible to silently answer from the wrong
-version's docs.
-
-**Docs:** [Getting the API docs](GETTING-API-DOCS.md) ·
-[Troubleshooting](TROUBLESHOOTING.md) · [How it works](HOW-IT-WORKS.md) ·
-[Publishing](PUBLISHING.md)
-
----
-
-## Quick start
-
-There is no npm package: the server is installed straight from this repository,
-and the search index comes from the GitHub Releases of this repository.
-
-### Install the CLI
-
-Requires **Node.js 22 or newer**. The server, CLI, maintenance scripts, and
-tests are written in TypeScript. Installation from Git builds the executable
-JavaScript automatically through npm's `prepare` lifecycle.
+The `0.1.0` crate is not published yet. Until then install from the repository:
 
 ```bash
-# npm 12 disables fetching git dependencies by default, hence the opt-in flag
-npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
-
-bevy-mcp fetch-index 0.20.0   # download the prebuilt index (~78 MB)
-bevy-mcp status               # show what was auto-detected
-bevy-mcp                      # start the stdio server
+cargo install --git https://github.com/kinkirill/bevy_manual_mcp --branch main
 ```
 
-Or clone it yourself, which needs no npm flags at all:
+After publication the command is simply:
 
 ```bash
-git clone https://github.com/kinkirill/bevy_manual_mcp
-cd bevy_manual_mcp && npm install
-node bin/bevy-mcp.js fetch-index 0.20.0
+cargo install bevy-manual-mcp
 ```
 
-### From source
+Requires a Rust toolchain. There is no prebuilt binary matrix and no npm shim.
 
-The TypeScript sources are `index.ts`, `server.ts`, `bin/bevy-mcp.ts`,
-`src/**/*.ts`, `scripts/**/*.mts` and `test/**/*.mts`. `npm install` compiles
-them into `build/` and generates the `.js`/`.mjs` launchers (`index.js`,
-`bin/bevy-mcp.js`, `scripts/*.mjs`, `test/*.mjs`) that MCP clients and the
-published package invoke.
+The first server start downloads the prebuilt index for the detected Bevy
+version (progress on stderr). To install it explicitly:
 
 ```bash
-npm run build       # tsc + regenerate the .js/.mjs launchers
-npm run typecheck   # tsc --noEmit
-npm test            # build, then every suite
-npm start           # node index.js (the generated launcher)
+bevy-manual-mcp fetch-index 0.20.0
+bevy-manual-mcp status
 ```
 
-### Configure it
+`BEVY_MCP_OFFLINE=1` disables all downloads, including the first-run fetch.
 
-`bevy-mcp.config.json` is the whole setup - no environment variables needed. The
-minimal version points at your game and lets the server find the docs itself:
+## Use it
 
-```json
-{
-  "projectRoot": "/path/to/your/bevy/game",
-  "websiteDir": "./vendor/bevy-website"
-}
-```
-
-It reads the Bevy version from `Cargo.lock` and the API from `target/doc`. Since
-the index is normally installed rather than built, pinning it explicitly is
-usually enough:
-
-```json
-{
-  "bevyVersion": "0.20.0",
-  "websiteDir": "./vendor/bevy-website"
-}
-```
-
-### Run it
-
-`index.js` (the generated launcher for `index.ts`) is a **stdio MCP server**,
-not a daemon and not a web service. Your
-MCP client (Claude, opencode, Zed, pi, …) spawns it as a child process and talks
-JSON-RPC over stdin/stdout. You do not "start it inside a project" - you register
-it with a client, and point the *config* at your project.
-
-You can still run it by hand to check it boots (logs go to stderr; stdout is
-reserved for the protocol):
+The bare command is the MCP server (stdio), exactly as MCP clients launch it.
 
 ```bash
-node index.js
-# [bevy-mcp] config: loaded .../bevy-mcp.config.json
-# [bevy-mcp] version 0.20.0: loaded 252761 records in 15900ms
-# [bevy-mcp] ready - bevy-mcp 0.20.0, bevy 0.20.0
+bevy-manual-mcp                 # serve MCP over stdio
+bevy-manual-mcp serve           # explicit form
+bevy-manual-mcp --help
+bevy-manual-mcp status          # detected version, corpus state, paths
+bevy-manual-mcp versions        # installed corpora
+bevy-manual-mcp search "system ordering"
+bevy-manual-mcp lookup Query::iter --json
 ```
 
-Install a prebuilt index with `bevy-mcp fetch-index` before starting the server.
-When no index is installed, the server builds from locally configured sources
-(see [Getting the API docs](GETTING-API-DOCS.md)). Later runs load it from disk.
+### MCP client configuration
 
----
-
-## Registering with an MCP client
-
-All of these assume the settings live in `bevy-mcp.config.json`, so the only
-thing a client needs is the command. `index.js` (generated from `index.ts`) takes
-no arguments.
-
-If your client can spawn the command itself, `npx` works without a global
-install; pass the project path, since the Bevy version is read from
-`Cargo.lock`:
-
-```json
-{
-  "command": "npx",
-  "args": ["-y", "--allow-git=all", "github:kinkirill/bevy_manual_mcp"],
-  "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
-}
-```
-
-If you cloned instead, point the client at the checkout - no npm involvement:
-
-```json
-{
-  "command": "node",
-  "args": ["/absolute/path/to/bevy_manual_mcp/index.js"],
-  "env": { "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game" }
-}
-```
-
-### Generic / most clients
-
-Claude Desktop, Cursor, Windsurf, Cline, Roo, Continue, **Hermes** and other
-custom agents all accept the standard `mcpServers` shape:
+Most clients only need a command:
 
 ```json
 {
   "mcpServers": {
-    "bevy": {
-      "command": "node",
-      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"]
-    }
-  }
-}
-```
-
-Common config locations:
-
-| Client | File |
-|---|---|
-| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Claude Desktop (Linux) | `~/.config/Claude/claude_desktop_config.json` |
-| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Cursor | `~/.cursor/mcp.json` (or `.cursor/mcp.json` per project) |
-| Cline / Roo / Continue | their MCP settings (same JSON) |
-
-Any client that speaks stdio MCP can run this server. If yours is not listed,
-use the generic block and check its docs for where `mcpServers` goes.
-
-### Claude Code
-
-```bash
-claude mcp add bevy -- node /absolute/path/to/bevy-manual-mcp/index.js
-```
-
-### opencode
-
-`~/.config/opencode/opencode.jsonc` - note the key is `mcp` (not `mcpServers`)
-and `command` is an **array**:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "bevy": {
-      "type": "local",
-      "command": ["node", "/absolute/path/to/bevy-manual-mcp/index.js"],
-      "enabled": true
-    }
-  }
-}
-```
-
-### Zed
-
-`~/.config/zed/settings.json`:
-
-```json
-{
-  "context_servers": {
-    "bevy": {
-      "command": "node",
-      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"],
-      "enabled": true,
-      "remote": false
-    }
-  }
-}
-```
-
-### pi
-
-```bash
-pi mcp add bevy --exposure direct \
-  --description "Version-accurate Bevy API docs, Book, migration guides and examples" \
-  -- node /absolute/path/to/bevy-manual-mcp/index.js
-```
-
-or `~/.pi/agent/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "bevy": {
-      "command": "node",
-      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"],
-      "exposure": "direct"
-    }
-  }
-}
-```
-
-`exposure` is a pi concept: `direct` declares the tools up front (handiest for a
-small, frequently used server), the default `codemode` reaches them through
-scripts, and `deferred` loads them via tool search.
-
-### VS Code / GitHub Copilot
-
-`.vscode/mcp.json` - note the top-level key is `servers`:
-
-```json
-{
-  "servers": {
-    "bevy": {
+    "bevy-manual-mcp": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/absolute/path/to/bevy-manual-mcp/index.js"]
+      "command": "bevy-manual-mcp",
+      "env": {
+        "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game"
+      }
     }
   }
 }
 ```
 
-### Instead of a config file: environment variables
-
-Every client's `env` block works too, and **env overrides the config file**, so a
-one-off override needs no file edit:
-
-```json
-"env": {
-  "BEVY_PROJECT_ROOT": "/path/to/your/bevy/game",
-  "BEVY_DOC_DIR": "/path/to/your/bevy/game/target/doc"
-}
-```
-
----
-
-## Configuration
-
-Settings can live in a **JSON config file** or in **environment variables**.
-Environment variables always win, so a one-off override still works without
-touching the file. **Precedence: env var > config file > auto-detection.**
-
-### Config file (recommended)
-
-The server looks for `bevy-mcp.config.json` in this order:
-
-1. `$BEVY_MCP_CONFIG` (explicit path)
-2. `<projectRoot>/bevy-mcp.config.json`
-3. `<this repo>/bevy-mcp.config.json`
-4. `~/.config/bevy-mcp/config.json`
-
-Relative paths inside the file resolve against the file's own directory, and
-`~` is expanded. Copy `bevy-mcp.config.example.json` and edit:
-
-```json
-{
-  "bevyVersion": "0.20.0",
-  "docDir": "~/.cache/bevy-mcp/bevy-0.20.0",
-  "websiteDir": "./vendor/bevy-website",
-  "dataDir": "./data",
-  "offline": false
-}
-```
-
-All keys are optional:
-
-| Key | Purpose |
-|---|---|
-| `projectRoot` | Cargo project used to detect the Bevy version |
-| `bevyVersion` | Explicit version (`0.20.0`); alias `version` |
-| `docDir` | cargo `target/doc` directory, or a `scripts/fetch-docs.mts` mirror |
-| `websiteDir` | bevy-website checkout (`./vendor/bevy-website` is bundled) |
-| `bevySrcDir` | bevy engine checkout (enables `examples/` and `errors/`) |
-| `examplesDir` / `errorsDir` | Explicit sub-directories |
-| `metaDir` | Vendored Bevy metadata (`./vendor/bevy-meta` is bundled) |
-| `mirrorDir` | Where `scripts/fetch-docs.mts` writes downloads |
-| `dataDir` | Where the persistent index is stored |
-| `offline` | Never contact crates.io |
-| `maxResults` | Default result count for search |
-| `debug` | Verbose parse errors |
-
-`bevy-mcp.config.json` is git-ignored (it is machine-specific); the
-`*.example.json` is the one to commit.
-
-### Environment variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `BEVY_PROJECT_ROOT` | Cargo project used to detect the Bevy version | `process.cwd()` |
-| `BEVY_VERSION` | Explicit version override (`0.20.0`) | detected |
-| `BEVY_DOC_DIR` | cargo `target/doc` directory | auto-detected from project |
-| `BEVY_WEBSITE_DIR` | bevy-website checkout | `./vendor/bevy-website` |
-| `BEVY_SRC_DIR` | bevy engine checkout (for `examples/`, `errors/`) | auto |
-| `BEVY_EXAMPLES_DIR` | Explicit examples dir | auto |
-| `BEVY_ERRORS_DIR` | Explicit `errors/` dir | auto |
-| `BEVY_EXTRA_VERSIONS` | Additional versions to hold, e.g. `0.18.1=/path/to/doc,0.17.0=/other` | none |
-| `BEVY_MIRROR_DIR` | Where `scripts/fetch-docs.mts` writes downloads | `~/.cache/bevy-mcp/<version>` |
-| `BEVY_MCP_CONFIG` | Explicit path to a config file | auto-discovered |
-| `BEVY_MCP_DATA_DIR` | Where the persistent index is stored | `<repo>/data` if present, else `~/.cache/bevy-mcp/data` |
-| `BEVY_MCP_MAX_RESULTS` | Default result count for search | `8` |
-| `BEVY_MCP_REPO` | `owner/repo` used by `fetch-index` to build Release URLs | `kinkirill/bevy_manual_mcp` |
-| `BEVY_MCP_FORCE_REINDEX=1` | Rebuild the index even if cached | off |
-| `BEVY_MCP_OFFLINE=1` | Never contact crates.io | off |
-| `BEVY_MCP_DEBUG=1` | Verbose parse errors | off |
-
-**Version detection order:** `BEVY_VERSION` → `Cargo.lock` → `Cargo.toml` →
-unset (server warns loudly, since an unknown version defeats the point).
-
----
-
-## Getting the API docs
-
-One command, for the version in your `Cargo.lock`:
-
-```bash
-bevy-mcp fetch-index 0.20.0
-```
-
-That downloads the prebuilt index (~78 MB) and unpacks it into `data/`. Indexes
-are published for Bevy **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
-
-The downloader selects the highest numbered asset revision, such as
-`bevy-index-0.20.0+2.tar.gz`, from release `v0.20.0` and checks its advertised
-SHA-256. Each release also carries a small `index-manifest.json` naming the
-current bundle and its digest, so simply re-running `bevy-mcp fetch-index 0.20.0`
-tells you whether a newer revision exists and downloads only when there is one -
-an up-to-date install is left untouched. `--no-recheck` skips that check, and
-`--force` always re-downloads. The indexed Bevy version stays `0.20.0`.
-
-To build an index yourself instead - mirroring rustdoc from docs.rs, using your
-own `cargo doc`, adding engine examples, and what the build costs - see
-**[GETTING-API-DOCS.md](GETTING-API-DOCS.md)**.
-
----
+`BEVY_PROJECT_ROOT` is optional if the client's working directory is the Cargo
+project; the version is read from `Cargo.lock` first and `Cargo.toml` second.
 
 ## Tools
 
-| Tool | Use it for |
+| tool | what it answers |
 |---|---|
-| `bevy_api` | Exact symbol lookup → real signature, docs, and the documented `Default` value. **Start here for API questions.** |
-| `bevy_search` | Hybrid search across API, book, migration guides, examples. Concepts and tasks. |
-| `bevy_examples` | Runnable example code for a concrete task (2d, ui, input, audio…), led by the example's `setup`/`main` body. |
-| `bevy_api_diff` | Compare a symbol across the versions you name - signature changed, or only its module? |
-| `bevy_migration` | Breaking changes between two versions. |
-| `bevy_check_version` | Is my index stale? Distinguishes patch from breaking releases. |
-| `bevy_indexed_versions` | Which versions can this server answer for? |
-| `bevy_index_status` | Self-diagnosis: what's indexed, which version, what's missing. |
-| `bevy_check_manifest` | Which Bevy features are on in *your* `Cargo.toml` (transitively), and whether a symbol, subcrate or plugin is available under them. |
-| `bevy_validate_systems` | Lint system signatures for Bevy's access-rule panics (B0001/B0002) *before* running - filter-aware, so B0001's own documented fix passes clean. |
-| `bevy_explain_error` | Paste a Bevy panic or warning → the cause and the worked fix, resolved against your pinned version. |
-| `bevy_generate_plugin` | Version-correct plugin scaffolds; self-contained output with required symbols checked against the index (not compiled). |
-| `bevy_perf_advisor` | Version-aware performance advice, and detection of anti-patterns such as `is_changed()`. |
-| `bevy_ecosystem_search` | Search indexed plugin corpora (`bevy_egui`, `bevy_rapier3d`, `leafwing_input_manager`), every result labelled with its crate. |
-| `bevy_ecosystem_compat` | Which plugin version goes with your Bevy - and which Bevy a plugin version needs. |
+| `bevy_search` | Hybrid API + prose search: signatures, Book, guides, examples |
+| `bevy_api` | Exact symbol lookup with the real signature, docs and related items |
+| `bevy_examples` | Runnable engine/Book examples for a task |
+| `bevy_migration` | Breaking changes between two Bevy versions |
+| `bevy_api_diff` | One symbol across the compiled versions you name |
+| `bevy_check_version` | Newest published Bevy, patch vs breaking, pre-releases |
+| `bevy_indexed_versions` | Which Bevy versions this install can answer for |
+| `bevy_index_status` | Self-diagnosis: active version, corpus, paths |
+| `bevy_check_manifest` | Enabled Cargo features and whether a symbol is available |
+| `bevy_validate_systems` | Syntax-level B0001/B0002 lint (tuple-aware, filters) |
+| `bevy_explain_error` | Explain a pasted panic/warning, version-checked |
+| `bevy_ecosystem_search` | Fan-out over the Bevy corpus and installed plugin corpora |
+| `bevy_ecosystem_compat` | Plugin ↔ Bevy compatibility from the vendored snapshot |
+| `bevy_generate_plugin` | Self-contained plugin scaffold, parsed with `syn` |
+| `bevy_perf_advisor` | Performance topics and `is_changed`/`is_added` detection |
 
-Examples:
+`bevy_validate_systems` does **not** type-check and cannot decide Bevy runtime
+panics; it recognises the B0001/B0002 access patterns and says when its analysis
+is incomplete. `bevy_generate_plugin` reports `compile_verified: false` because
+no compiler runs. `bevy_ecosystem_compat` is offline-only and returns
+`compatible: "unknown"` for requirement operators it does not evaluate.
+
+## Resources
+
+The server also exposes `bevy://` resources and templates:
 
 ```
-bevy_api             { "symbol": "App::add_systems" }
-bevy_api             { "symbol": "Query" }
-bevy_api_diff        { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
-bevy_search          { "query": "system ordering", "limit": 5 }
-bevy_search          { "query": "spawn ui text", "kind": "code_example" }
-bevy_examples        { "task": "2d camera", "category": "2d" }
-bevy_migration       { "from_version": "0.19", "to_version": "0.20", "topic": "query" }
-bevy_check_manifest  { "check": "bevy::ui::Node" }
-bevy_validate_systems{ "code": "fn f(a: Query<&mut Transform>, b: Query<&Transform>) {}" }
-bevy_explain_error   { "message": "error[B0002]: ResMut<Assets<StandardMaterial>> ..." }
-bevy_generate_plugin { "template": "plugin-skeleton" }
-bevy_perf_advisor    { "topic": "change-detection" }
-bevy_ecosystem_compat{ "crate": "bevy_egui" }
-bevy_check_version   { }
+bevy://index/versions
+bevy://api/<version>/<full::path>
+bevy://kind/<version>/<kind>
+bevy://module/<version>/<module>
+bevy://crate/<version>/<subcrate>
+bevy://owner/<version>/<Type>
+bevy://doc/<version>/<rustdoc file>
 ```
 
-`bevy_check_manifest` resolves the project's feature set from Cargo metadata
-when it is available (`cargo metadata --offline --locked`) and otherwise reads
-`Cargo.toml` directly as a labelled **partial** analysis. It answers the question
-an agent actually has: *may I write `bevy::ui::Node` in this project?* It keeps
-"feature disabled" and "symbol does not exist here" distinct, because
-conflating them produces false alarms, and it never reports a missing
-declaration as "defaults disabled".
+Listings page at 50 items with query-bound cursors; reads open the requested
+version on demand.
 
-`bevy_validate_systems` is a syntax-level linter for Bevy's **access rules**, not
-a Rust type checker. It says so in its own output, tracks component access per
-query tuple member, and reports constructs outside its supported subset as
-`analysis_complete: false` rather than claiming they are conflict-free.
+## Configuration
 
-`bevy_ecosystem_compat` answers version compatibility from the vendored
-`vendor/ecosystem/compat.json` snapshot, so it works offline and never answers
-from a neighbouring Bevy version's index. `bevy_ecosystem_search` fans out over
-any plugin corpora registered with the server (plugin indexes are an opt-in
-layer; the Bevy index itself is always searched).
+File (`bevy-mcp.config.json`), environment and defaults combine in that order;
+environment variables win.
 
----
-
-## Example prompts
-
-System prompts that put the tools to use. Drop one into your agent's
-instructions, or take it as a starting point:
-
-| File | Purpose |
+| variable | meaning |
 |---|---|
-| [`default_prompt_example.md`](default_prompt_example.md) | Answer Bevy questions accurately for the user's version. |
-| [`migration_prompt_example.md`](migration_prompt_example.md) | Full process for a major-version upgrade. |
-| [`migration_prompt_short_example.md`](migration_prompt_short_example.md) | Condensed version of the above. |
+| `BEVY_PROJECT_ROOT` | Cargo project used for version detection |
+| `BEVY_VERSION` | Explicit version override, e.g. `0.20.0` |
+| `BEVY_MCP_DATA_DIR` | Persistent corpus directory (default `~/.cache/bevy-mcp/data`) |
+| `BEVY_MCP_OFFLINE` | `1` disables downloads |
+| `BEVY_MCP_INDEX_BASE_URL` | Mirror for `fetch-index` releases |
+| `BEVY_DOC_DIR` | Local rustdoc tree for `build --doc-dir` |
+| `BEVY_WEBSITE_DIR` / `BEVY_EXAMPLES_DIR` | Local prose/examples sources for rebuilds |
+| `BEVY_META_DIR` | Vendored `bevy-meta` root (feature graphs, error codes) |
+| `BEVY_MCP_COMPAT_PATH` | Explicit `compat.json` path |
+| `BEVY_MCP_MAX_RESULTS` | Default result count, 1–20 |
+| `BEVY_MCP_DEBUG` | `1` for timing/progress diagnostics |
 
----
+The config file additionally accepts a `corpora` array for plugin corpora:
 
-## Distribution and versioning
+```json
+{
+  "corpora": [
+    { "crate": "bevy_egui", "version": "0.43.1" },
+    { "crate": "bevy_rapier3d", "auto": true }
+  ]
+}
+```
 
-Releases track Bevy's minor version: the **`v0.20.x` release** answers for any
-Bevy `0.20.y`, because patch releases never change the public API. Match the
-minor and you are done.
+Plugin corpora live under `data/corpora/<crate>/<version>/` and are built with
+the normal `build` command.
 
-To keep the first run cheap, the pieces are distributed separately:
-
-| Piece | Where | Size |
-|---|---|---|
-| Server code, vendored prose **and metadata** | this repository (`npm install -g --allow-git=all github:…`) | a few MB |
-| Prebuilt index for a Bevy minor | GitHub Releases, via `bevy-mcp fetch-index` | ~78 MB for 0.20.0 |
-| rustdoc mirror (only needed to rebuild) | `bevy-mcp fetch-docs` | ~1.6 GB |
-
-The repository also bundles the metadata the newer tools depend on: `vendor/bevy-meta/<version>/`
-(feature graph, default-plugin gates, error-code guides and panic-site
-provenance) and `vendor/ecosystem/compat.json` (plugin ↔ Bevy compatibility
-derived from crates.io). Both are small, versioned with the code, and make those
-tools work offline and reproducibly.
-
-The index holds API metadata, documentation strings, migration guides and
-examples - not engine source. Maintainers: see [PUBLISHING.md](PUBLISHING.md)
-for the release ritual.
-
----
-
-## Self-renewal and version awareness
-
-The server checks crates.io for new releases (cached 6h, `BEVY_MCP_OFFLINE=1`
-disables it) and tells the agent **what kind** of update exists. This matters
-because Bevy is pre-1.0 and its minor digit is the breaking-change axis:
-
-| Bump | Meaning | Agent should… |
-|---|---|---|
-| `0.19.0 → 0.19.1` | patch: bug fixes, **no API changes** | leave the code alone |
-| `0.19 → 0.20` | minor: **sweeping breaking changes** | call `bevy_migration` first |
-| `0.20.0-rc.2` | pre-release | never recommend as a target |
-
-So a patch release never triggers a pointless rewrite, while a minor release
-blocks on migration notes first. At startup the server also logs a one-line
-notice to stderr if the project is behind - deliberately not on stdout, which
-carries the MCP protocol stream.
-
-### Comparing versions
-
-`bevy_api_diff` answers "did this actually change?" for one symbol. Install the
-indexes you want to compare, then **name the versions to compare** - the tool does
-not guess, because comparing 0.19.1→0.20.0 when you are really moving 0.15→0.20
-would answer a different question than the one you asked:
+## Rebuilding indexes
 
 ```bash
-bevy-mcp fetch-index 0.19.1
-bevy-mcp fetch-index 0.20.0
+# From a local `cargo doc` tree (or a docs.rs mirror)
+bevy-manual-mcp build --doc-dir target/doc
+
+# Canonical NDJSON input
+bevy-manual-mcp build --records records.ndjson --out data/versions/0.20.0
+
+# Release bundle + manifest
+bevy-manual-mcp build --doc-dir ~/.cache/bevy-mcp/bevy-0.20.0 \
+  --pack dist/bevy-0.20.0-fmt1.tar.zst \
+  --manifest dist/index-manifest.json
 ```
 
+A full 0.20.0 rebuild from 8,665 rustdoc pages takes ~30 s in release mode and
+produces exactly the canonical corpus: 253,196 records, 653,264 symbol keys,
+15.2 MB tantivy index. See [GETTING-API-DOCS.md](GETTING-API-DOCS.md) and
+[HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+
+## Development
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
-bevy_api_diff { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
-```
 
-With exactly two versions installed it compares those two automatically; with more
-it asks you to be explicit. There are three possible verdicts:
+The crate is one package; `src/` contains the CLI, MCP surface, rkyv archive,
+tantivy index, analysis tools and ingest/harvest modules. The design record and
+measurements live in [docs/rust-rewrite.md](docs/rust-rewrite.md); the tool
+contract map is [docs/tool-contracts.md](docs/tool-contracts.md).
 
-- the **signature changed** - the call site will not compile;
-- the signature is unchanged but the item **moved between modules** - the `use`
-  will not resolve even though the call looks the same;
-- identical in both place and signature - nothing to do.
+## License
 
-Instead of a Release asset you can add a doc tree you built yourself, with
-`BEVY_EXTRA_VERSIONS="0.18.1=/path/to/0.18.1/target/doc"`.
-
-Signatures are whitespace-normalised before comparison, because rustdoc wraps
-them differently between builds and a line-break difference is not an API change.
-Asking about a version that is **not** indexed returns an error rather than
-silently answering from another version - substituting a different version's
-API is exactly the confusion pinning exists to prevent.
-
----
-
-## Troubleshooting
-
-Common problems - empty index, unknown version, missing examples, npm's
-`EALLOWGIT`, an ambiguous comparison, or a client that has not picked up a newly
-installed version - are covered in **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
-
----
-
-## Further reading
-
-| Document | Contents |
-|---|---|
-| [GETTING-API-DOCS.md](GETTING-API-DOCS.md) | Installing a prebuilt index, mirroring docs.rs, `cargo doc`, build cost. |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | What to do when something is empty, stale, ambiguous or missing. |
-| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | Ranking and design decisions, repository layout, running the tests. |
-| [docs/tool-contracts.md](docs/tool-contracts.md) | Every registered tool's data path, failure states, fixtures and known discrepancies. |
-| [docs/performance-baseline.md](docs/performance-baseline.md) | Recorded startup and search timings, and how to reproduce them. |
-| [PUBLISHING.md](PUBLISHING.md) | Maintainer checklist for a new Bevy minor. |
-| [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Licences of the bundled and derived content. |
+MIT. Vendored Bevy metadata and website prose are covered in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

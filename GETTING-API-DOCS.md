@@ -1,169 +1,141 @@
 # Getting the API docs
 
-bevy-mcp answers from a local index of Bevy's rustdoc, the Book, the migration
-guides and the engine examples. There are two ways to get that index: install a
-prebuilt one (seconds), or build it yourself from a rustdoc mirror (minutes).
+The server answers from a compiled corpus for one Bevy version. You normally do
+not build it: the first server start downloads a prebuilt bundle, and
+`fetch-index` installs one explicitly.
 
-- [Install the prebuilt index](#install-the-prebuilt-index)
-- [Build it yourself](#build-it-yourself)
-- [Using `cargo doc` instead](#cargo-doc---only-with---no-deps-and-with-caveats)
-- [Startup cost](#startup-cost)
-
-Back to the [README](README.md).
-
----
-
-## Install the prebuilt index
-
-The index for a released Bevy minor is identical for everyone, so it is built
-once and published as a GitHub Release asset (~78 MB compressed for 0.20.0). This is the
-fast path:
+## Install a prebuilt index
 
 ```bash
-bevy-mcp fetch-index 0.20.0    # omit the version to read Cargo.lock
+bevy-manual-mcp fetch-index 0.20.0     # explicit version
+bevy-manual-mcp fetch-index            # detected version
+bevy-manual-mcp fetch-index 0.20.0 --force
 ```
 
-It unpacks into `data/versions/0.20.0/` (or `$BEVY_MCP_DATA_DIR`), and merges the
-version into `data/registry.json` without disturbing anything already installed -
-so you can keep several versions side by side and compare them with
-`bevy_api_diff`.
+`fetch-index` reads `index-manifest.json` from the release for that Bevy
+version, verifies size and SHA-256, unpacks into a staging directory, validates
+`corpus.rkyv` with `bytecheck`, and only then moves it into
+`data/versions/<version>/`. A partial file never becomes loadable.
 
-Indexes are published for **0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and 0.20.0**.
-If `fetch-index` reports no asset for a version, build it yourself (below) or ask
-for a release.
+Where the bundle comes from:
 
-Rebuilt indexes can be published with a numeric asset suffix, for example
-`bevy-index-0.20.0+1.tar.gz` under release `v0.20.0`. The downloader selects the
-highest revision and verifies GitHub's SHA-256 digest when provided. The suffix
-does not change the Bevy version or installation directory. Refresh an existing
-installation explicitly:
+- default: `https://github.com/kinkirill/bevy_manual_mcp/releases/download`
+- override with `BEVY_MCP_INDEX_BASE_URL` (mirrors and tests)
+- `BEVY_MCP_OFFLINE=1` refuses all downloads
+
+A bundle contains:
+
+```
+corpus.rkyv             records, interned arena, symbols, name tokens
+tantivy/                text index (ids only)
+corpus.manifest.json    size, SHA-256, counts
+meta.json               build provenance
+metadata/               features.json, error-codes/, compat.json
+```
+
+The metadata is what makes `bevy_check_manifest`, `bevy_explain_error`,
+`bevy_perf_advisor` and `bevy_ecosystem_compat` work after a clean install.
+
+## First-run auto-fetch
+
+With a detected project version and no installed corpus, the server downloads
+the bundle automatically at startup. Progress goes to stderr; MCP stdout stays
+clean. A failed download does not kill the server — it logs the error and the
+tool calls explain that no corpus is installed. Set `BEVY_MCP_OFFLINE=1` to
+disable this.
+
+## Build from a local rustdoc tree
+
+If you already have `cargo doc` output or a docs.rs mirror:
 
 ```bash
-bevy-mcp fetch-index 0.20.0 --force
+bevy-manual-mcp build --doc-dir target/doc --out data/versions/0.20.0
 ```
 
-To test installed bundles through actual MCP tools and resources, run from a
-source checkout:
+`--doc-dir` (or `BEVY_DOC_DIR`) ingests the rustdoc HTML directly: items,
+struct fields, enum variants, methods, associated items and doc examples.
+Website prose, engine examples and error codes are added on top when their
+directories are configured (`BEVY_WEBSITE_DIR`, `BEVY_EXAMPLES_DIR`,
+`BEVY_META_DIR`).
+
+## Rebuild from canonical NDJSON
+
+`records.ndjson` stays the canonical, diffable source. The archive is derived:
 
 ```bash
-npm run test:corpus -- --data data --out data/corpus-questions.json
-# Or test one installed version:
-npm run test:corpus -- --data data 0.20.0
+bevy-manual-mcp build --records records.ndjson --out data/versions/0.20.0
 ```
 
-The optional harness checks sphere questions, event/message communication,
-exact signatures, resources and version provenance. Missing message APIs in
-0.15 and 0.16 are expected. Its JSON report records the returned passages and
-failures; it requires installed indexes and runs separately from `npm test`.
+This path does not parse HTML, so it is much faster, but it depends on a
+previously generated NDJSON file.
 
----
-
-## Build it yourself
-
-### Recommended - mirror from docs.rs
-
-**Use the docs.rs mirror** - it is the source this server is tuned for.
+## Mirror docs.rs yourself
 
 ```bash
-node scripts/fetch-docs.mjs 0.20.0
+bevy-manual-mcp fetch-docs 0.20.0 --out ~/.cache/bevy-mcp/bevy-0.20.0
 ```
 
-```json
-{ "bevyVersion": "0.20.0", "docDir": "~/.cache/bevy-mcp/0.20.0" }
-```
+It discovers item pages from `all.html`, caches the page list, resumes missing
+pages, and uses a shared throttle plus four workers. `FETCH_CONCURRENCY` and
+`FETCH_MIN_INTERVAL_MS` tune the download. If docs.rs rate-limits, wait and
+re-run the same command; only missing pages are fetched.
 
-This downloads ~7,900 rustdoc pages for the `bevy` facade, which re-exports the
-whole public API. Crucially, each page carries rustdoc's *source link* to the
-defining sub-crate (`docs.rs/bevy_app/…`), which the server uses to attribute
-items to `bevy_app`, `bevy_ecs`, … and to filter out dependency boilerplate. The
-download is resumable: re-run after a rate-limit and it fetches only what is
-missing.
-
-Then build the index:
+## Fetch website prose and examples
 
 ```bash
-node scripts/build-index.mjs 0.20.0 --force
+bevy-manual-mcp fetch-website --out vendor/bevy-website --ref main
 ```
 
-That command is headless: it builds and exits. Starting the server
-(`node index.js`) builds lazily too, but it then blocks on stdio, so it is the
-wrong tool for a script or CI.
+This performs a sparse, blob-filtered `git clone` and copies only `.md`, `.rs`
+and `LICENSE` files. Media is never downloaded.
 
-### Rebuild several existing mirrors
+Engine examples are auto-detected from the published `bevy` crate in
+`$CARGO_HOME/registry/src/*/bevy-<version>/examples`, or can be pointed at with
+`BEVY_EXAMPLES_DIR` / `BEVY_SRC_DIR`.
+
+## Harvest metadata
 
 ```bash
-npm run rebuild-all -- 0.19.1 0.20.0
-npm run rebuild-all -- --mirror-root /path/to/mirrors --data /path/to/data
+bevy-manual-mcp harvest-meta 0.20.0 --out vendor/bevy-meta/0.20.0
+bevy-manual-mcp harvest-meta 0.20.0 --tag v0.20.0 --force
 ```
 
-With no versions, this rebuilds 0.15.3, 0.16.1, 0.17.3, 0.18.1, 0.19.1 and
-0.20.0 in that order. Each build runs offline with `--force`; it never downloads
-documentation. Missing mirrors are reported and skipped. Failed builds are
-reported, the remaining versions are attempted, and the command exits nonzero.
+This fetches the feature graph (including implicit optional-dependency
+features), closure, default features, profiles, plugin gates, panic-site codes
+and error-code guides from the Bevy repository at the tag, and writes
+`features.json`, `error-codes/` and `meta.json`.
 
-The command uses `docDir`, `mirrorDir` and `dataDir` from the normal configuration
-(including their environment overrides). It also checks `bevy-docs-<version>`
-inside the package and the legacy `~/.cache/bevy-mcp/bevy-<version>` mirrors.
-`--mirror-root` limits lookup to `<root>/<version>`, `<root>/bevy-<version>` and
-`<root>/bevy-docs-<version>`. `--data` overrides the configured index directory.
-For several versions, a shared configured documentation directory is used only
-for its detected documentation version or the configured project's version;
-untagged shared mirrors require an explicit single version.
-The legacy `scripts/rebuild-all-indexes.sh` command remains available after
-`npm run build`; Windows users can run the npm command or its `.mjs` launcher.
-
-### Add the engine examples (optional)
-
-`bevy_examples` prefers real engine examples. Without an engine checkout you get
-only the Book's quick-start snippets, because the examples are the one thing that
-is not in the rustdoc mirror. A sparse clone is enough:
+Plugin compatibility:
 
 ```bash
-git clone --depth 1 --branch v0.20.0 --filter=blob:none --sparse \
-  https://github.com/bevyengine/bevy.git ~/.cache/bevy-mcp/bevy-src-0.20.0
-git -C ~/.cache/bevy-mcp/bevy-src-0.20.0 sparse-checkout set examples
+bevy-manual-mcp harvest-compat --out vendor/ecosystem
 ```
 
-Point `bevySrcDir` (config) or `BEVY_SRC_DIR` (env) at it before building.
+This uses the crates.io sparse index (one request per plugin crate) and writes
+`compat.json` with a `meta` provenance block.
 
----
+## Produce a release bundle
 
-## `cargo doc` - only with `--no-deps`, and with caveats
+```bash
+bevy-manual-mcp build --doc-dir ~/.cache/bevy-mcp/bevy-0.20.0 \
+  --out data/versions/0.20.0 \
+  --pack dist/bevy-0.20.0-fmt1.tar.zst \
+  --manifest dist/index-manifest.json \
+  --revision 1
+```
 
-`cargo doc -p bevy` documents Bevy **and its entire dependency tree** - roughly
-280 crates and 65,000 pages of `libc`, `ash`, `wayland`, `alsa`, … Pointing the
-server at that output floods the index with dependency APIs, so don't.
+The manifest is what `fetch-index` consumes. Publish the asset and manifest
+under `v<bevy-version>` in GitHub Releases.
 
-`cargo doc -p bevy --no-deps` produces a clean `bevy/` facade (~7,900 pages), but
-because dependency sources are not rendered those defining-crate source links
-are **absent**. The server then cannot tell a `bevy_app` item from a `bevy_ecs`
-one: every record collapses to `crate: "bevy"` and `bevy://crate/…` grouping
-degrades.
+## Data locations
 
-For a project on Bevy's default features the mirror and your own `cargo doc`
-contain the same public API, so **the mirror is strictly better**. Reach for
-`cargo doc` only if you have customised Bevy's features heavily.
+```
+data/versions/<version>/          corpus.rkyv, tantivy/, manifests, metadata/
+data/corpora/<crate>/<version>/   plugin corpora
+~/.cache/bevy-mcp/bevy-<version>/ docs.rs mirror (build input only)
+vendor/bevy-meta/<version>/       vendored feature/error metadata
+vendor/ecosystem/compat.json      plugin compatibility snapshot
+```
 
----
-
-## Startup cost
-
-A cold build of the full corpus takes roughly 13-15 minutes at a 2 GB heap and is
-then persisted. For Bevy 0.19.1 that is ~270k records: 265,741 rustdoc items,
-3,389 website prose chunks and 445 examples. You can skip the build entirely by
-installing a prebuilt index. Later runs validate `records.ndjson` and import
-`text-index.json`; the six current bundles took roughly 7-15 seconds each on
-the Windows validation machine. A changed or damaged text export is repaired
-locally from the validated API records without downloading a rustdoc mirror.
-
-Deleting `data/` forces a cold rebuild. The rustdoc mirrors under
-`~/.cache/bevy-mcp/` are only needed to rebuild - roughly 1.6 GB each - so they
-are safe to delete once the index exists.
-
----
-
-## Publishing an index
-
-Maintainers: see [PUBLISHING.md](PUBLISHING.md) for the release ritual, including
-`scripts/publish-index.mjs`, which packages a built index into the tarball that
-`fetch-index` downloads.
+`data/` is machine-local and git-ignored. The vendored metadata and website
+prose are committed source inputs, not part of the crate package.

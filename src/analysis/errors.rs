@@ -152,11 +152,8 @@ fn find_system_name(message: &str) -> Option<String> {
 }
 
 /// Path to a vendored error-code guide.
-pub fn guide_path(meta_dir: &Path, version: &str, code: &str) -> PathBuf {
-    meta_dir
-        .join(version)
-        .join("error-codes")
-        .join(format!("{code}.md"))
+pub fn guide_path(error_codes_dir: &Path, code: &str) -> PathBuf {
+    error_codes_dir.join(format!("{code}.md"))
 }
 
 /// The short presentation: a section whose heading mentions a fix/solution,
