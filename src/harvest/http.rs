@@ -64,6 +64,9 @@ impl Fetcher {
                         " (harvest; https://github.com/kinkirill/bevy_manual_mcp)"
                     ),
                 )
+                // Some docs.rs edge nodes return truncated gzip streams; the
+                // HTML is cheap enough to fetch uncompressed.
+                .header("Accept-Encoding", "identity")
                 .call()
             {
                 Ok(mut response) => {

@@ -3,7 +3,7 @@
   "name": "io.github.kinkirill/bevy-manual-mcp",
   "title": "Bevy Manual MCP",
   "description": "Version-accurate Bevy API docs, Book, migration guides and examples for AI agents.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "websiteUrl": "https://github.com/kinkirill/bevy_manual_mcp",
   "repository": {
     "url": "https://github.com/kinkirill/bevy_manual_mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "cargo",
       "identifier": "bevy-manual-mcp",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "transport": {
         "type": "stdio"
       },
