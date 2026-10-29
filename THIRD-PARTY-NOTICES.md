@@ -68,7 +68,7 @@ Full license texts:
 requirements that plugin crates (`bevy_egui`, `bevy_rapier3d`,
 `leafwing_input_manager`) publish for each of their releases. It is factual
 registry metadata harvested from the public crates.io API by
-`scripts/harvest-compat.mts` - not a copy of any crate's source. crates.io is
+`bevy-manual-mcp harvest-compat` - not a copy of any crate's source. crates.io is
 operated by the Rust project; the API is subject to its policies at
 <https://crates.io/policies>.
 
@@ -92,8 +92,28 @@ not a copy of the engine source. Full license texts:
 
 ---
 
-## Runtime dependencies
+## Rust dependencies
 
-Dependencies declared in `package.json` (`@modelcontextprotocol/sdk`, `cheerio`,
-`flexsearch`, `zod`, `smol-toml`) are fetched from npm and carry their own licenses, not
-redistributed here.
+Direct Rust dependencies are fetched from crates.io and carry their own
+licenses; they are not vendored in this repository.
+
+| crate | license |
+|---|---|
+| anyhow, chrono, clap, memmap2, percent-encoding, quote, regex, serde, serde_json, sha1, sha2, syn, tar, tokio, toml, ureq | MIT OR Apache-2.0 |
+| rkyv, schemars, tantivy | MIT |
+| rmcp | Apache-2.0 |
+| scraper | ISC |
+| zstd | BSD-3-Clause |
+
+Transitive dependencies are resolved from `Cargo.lock`; `cargo metadata` and
+`cargo deny`/`cargo license` can enumerate their terms for a release audit.
+
+---
+
+## Data and generated artifacts
+
+The compiled index bundles published on GitHub Releases are derived from Bevy's
+public rustdoc, the Bevy website and the engine examples. They contain derived
+API metadata and prose, not a copy of the engine source. The Bevy website and
+engine are MIT/Apache-2.0 dual-licensed; see the sections above for the full
+texts.

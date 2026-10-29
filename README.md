@@ -170,8 +170,8 @@ bevy-manual-mcp build --doc-dir ~/.cache/bevy-mcp/bevy-0.20.0 \
 
 A full 0.20.0 rebuild from 8,665 rustdoc pages takes ~30 s in release mode and
 produces exactly the canonical corpus: 253,196 records, 653,264 symbol keys,
-15.2 MB tantivy index. See [GETTING-API-DOCS.md](GETTING-API-DOCS.md) and
-[HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+15.2 MB tantivy index. See [GETTING-API-DOCS.md](https://github.com/kinkirill/bevy_manual_mcp/blob/main/GETTING-API-DOCS.md) and
+[HOW-IT-WORKS.md](https://github.com/kinkirill/bevy_manual_mcp/blob/main/HOW-IT-WORKS.md).
 
 ## Development
 
@@ -183,10 +183,10 @@ cargo test
 
 The crate is one package; `src/` contains the CLI, MCP surface, rkyv archive,
 tantivy index, analysis tools and ingest/harvest modules. The design record and
-measurements live in [docs/rust-rewrite.md](docs/rust-rewrite.md); the tool
-contract map is [docs/tool-contracts.md](docs/tool-contracts.md).
+measurements live in [docs/rust-rewrite.md](https://github.com/kinkirill/bevy_manual_mcp/blob/main/docs/rust-rewrite.md); the tool
+contract map is [docs/tool-contracts.md](https://github.com/kinkirill/bevy_manual_mcp/blob/main/docs/tool-contracts.md).
 
 ## License
 
 MIT. Vendored Bevy metadata and website prose are covered in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[THIRD-PARTY-NOTICES.md](https://github.com/kinkirill/bevy_manual_mcp/blob/main/THIRD-PARTY-NOTICES.md).

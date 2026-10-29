@@ -225,14 +225,15 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
             config.version_source.as_deref().unwrap_or("n/a")
         ),
         String::new(),
-        "| version | active | records | symbols | vs active |".to_string(),
-        "|---|---|---|---|---|".to_string(),
+        "| version | active | corpus | records | symbols | vs active |".to_string(),
+        "|---|---|---|---|---|---|".to_string(),
     ];
 
     for version in &all {
         let entry = registry.entry(version);
         let meta = registry.meta(version);
         let is_active = active.as_deref() == Some(version.as_str());
+        let compiled = registry.has_compiled(version);
         let records = entry
             .and_then(|e| e.records)
             .or_else(|| meta.as_ref().and_then(|m| m.api_records));
@@ -259,9 +260,10 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
             })
             .unwrap_or_else(|| "-".to_string());
         lines.push(format!(
-            "| {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} |",
             version,
             if is_active { "**yes**" } else { "" },
+            if compiled { "yes" } else { "no" },
             records
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "-".to_string()),
@@ -274,6 +276,7 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
         rows.push(json!({
             "version": version,
             "active": is_active,
+            "compiled": compiled,
             "records": records,
             "symbols": symbols,
             "built_at": built_at,
@@ -285,12 +288,24 @@ pub fn versions(config: &Config, registry: &Registry) -> (String, Value) {
         .iter()
         .filter(|row| row["active"] != json!(true))
         .count();
+    let uncompiled: Vec<&str> = all
+        .iter()
+        .filter(|version| !registry.has_compiled(version))
+        .map(String::as_str)
+        .collect();
     lines.push(String::new());
     if others > 0 {
-        lines.push(
-            "You can pass `version` to `bevy_api` and `bevy_search` to query any of these."
-                .to_string(),
-        );
+        if uncompiled.is_empty() {
+            lines.push(
+                "You can pass `version` to `bevy_api` and `bevy_search` to query any of these."
+                    .to_string(),
+            );
+        } else {
+            lines.push(format!(
+                "Only compiled corpora can be queried. Install the missing ones with `bevy-manual-mcp fetch-index <version>`: {}.",
+                uncompiled.join(", ")
+            ));
+        }
     } else {
         lines.push("_Only one version is indexed. To add another:_".to_string());
         lines.push(String::new());

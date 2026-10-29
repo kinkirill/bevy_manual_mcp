@@ -225,7 +225,7 @@ impl BevyMcp {
     /// Lists every Bevy version this server has an index for.
     #[tool(
         name = "bevy_indexed_versions",
-        description = "Lists every Bevy version this server has an index for, marking which one is active. Use this to discover whether you can compare APIs across versions (for example to show a user how a signature differs between two releases). The active version is the one matching the host project's Cargo.lock."
+        description = "Lists every Bevy version this server knows about, marking the active one and whether its compiled corpus is installed. Use this to discover whether you can compare APIs across versions (for example to show a user how a signature differs between two releases). The active version is the one matching the host project's Cargo.lock; a version marked corpus=no must be installed with fetch-index before it can answer."
     )]
     async fn bevy_indexed_versions(&self) -> CallToolResult {
         let (text, structured) = status::versions(&self.config, &self.registry);
@@ -552,7 +552,7 @@ impl BevyMcp {
         for version in &wanted {
             if !installed.contains(version) {
                 bail!(
-                    "version {version} has no compiled corpus; installed: {}",
+                    "version {version} has no compiled corpus; installed: {}. Run `bevy-manual-mcp fetch-index {version}` first.",
                     installed.join(", ")
                 );
             }
@@ -1755,7 +1755,7 @@ struct EcosystemCompatParams {
 struct GeneratePluginParams {
     /// Template id: plugin-skeleton, plugin-with-systemset.
     template: String,
-    /// Optional slot values: PLUGIN_NAME, RESOURCE_TYPE, SYSTEM_NAME, SYSTEM_SET, UPDATE.
+    /// Optional slot values: PLUGIN_NAME, RESOURCE_TYPE, SYSTEM_NAME, SYSTEM_SET, UPDATE. Identifier slots take a bare Rust identifier (e.g. FooPlugin); UPDATE takes a schedule path.
     #[serde(default)]
     params: Option<BTreeMap<String, String>>,
 }

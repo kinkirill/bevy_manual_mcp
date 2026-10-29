@@ -1013,3 +1013,46 @@ The `explain` CLI verb remains a stub; search exposes total scores, not a
 component breakdown.
 
 Tests: **124** (91 unit, 11 archive, 22 MCP), `clippy -D warnings` clean.
+
+## 30. Step 7 checkpoint: cutover tree
+
+The phase-0/phase-1 contract and correctness work was merged and pushed to
+`origin/main` (`5e6ea09`), then merged into the rewrite branch. The cutover tree
+on top of that deletes the TypeScript/Node line and makes the repository native
+Rust:
+
+- `src/**/*.ts`, `test/`, `scripts/`, `package.json`, `package-lock.json`,
+  `tsconfig.json`, `index.ts`, `server.ts`, `bin/` and the TS performance
+  baseline are gone.
+- Docs are rewritten for `bevy-manual-mcp`: README, getting-started, how it
+  works, publishing, troubleshooting, third-party notices. `server.json` is a
+  cargo package entry, and CI/release workflows are Rust-only.
+- Bundles now carry `metadata/features.json`, `metadata/error-codes/` and
+  `metadata/compat.json`; the resolvers prefer installed metadata over
+  `vendor/`. This fixes the clean-install gap: feature checks, error
+  explanations, perf metadata and compatibility work with no checkout.
+- The server auto-fetches the bundle on first start when the corpus is missing
+  and `BEVY_MCP_OFFLINE` is unset.
+- `build --pack … --manifest … --revision N` writes the release manifest v2, so
+  the release workflow no longer needs a separate TypeScript publishing script.
+- Compatibility data uses the phase-1 `{ meta, plugins }` snapshot shape; the
+  loader still accepts the legacy top-level map.
+- `bevy_indexed_versions` now marks `corpus: yes/no` and the text says that only
+  compiled corpora can be queried. This came out of field testing, where six
+  registry entries with `records.ndjson` but only one `corpus.rkyv` looked like
+  six queryable versions.
+- `bevy_api_diff` points at `fetch-index` when a requested version has no
+  compiled corpus; `bevy_generate_plugin` documents that slot values are bare
+  Rust identifiers (or a schedule path for `UPDATE`).
+
+Field test of all 15 tools on 0.20.0: 13/15 clean, two environmental/known
+limitations (`bevy_check_version` needs network; `bevy_api_diff` needs another
+compiled corpus). `bevy_ecosystem_compat` initially failed because a running
+server predated the snapshot schema; rebuilding the binary fixed it — an old MCP
+process keeps its old executable mapped.
+
+Remaining before publishing 0.1.0: run the TypeScript oracle from the
+`pre-cutover-oracle` tag against the Rust binary (mcp-e2e, resources, corpus and
+ranking snapshots), execute the clean-install gate, merge `cutover` to `main`,
+build and upload the six bundles with manifests, publish the crate and the MCP
+registry entry. See `docs/cutover-handoff.md` for the checklist.

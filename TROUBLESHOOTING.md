@@ -1,159 +1,84 @@
 # Troubleshooting
 
-Back to the [README](README.md).
+Back to the [README](README.md) · [Getting the API docs](GETTING-API-DOCS.md).
 
----
+## The server says no Bevy version was detected
 
-## "Records: 0", or no API results at all
-
-The rustdoc half of the index is empty. Either install a prebuilt index:
-
-```bash
-bevy-mcp fetch-index 0.20.0
-```
-
-or build one from a mirror of your own (see
-[GETTING-API-DOCS.md](GETTING-API-DOCS.md)), then call `bevy_index_status` to
-confirm what is loaded. `bevy_index_status` reports the record count, the
-per-source breakdown and the paths it resolved, which is the fastest way to see
-*which* half is missing.
-
-## "Bevy version: UNKNOWN"
-
-The server could not work out which version to answer for, which defeats the
-whole point, so it says so loudly. Fix it with any one of:
-
-- set `BEVY_VERSION` (e.g. `0.20.0`), or
-- set `BEVY_PROJECT_ROOT` to a Cargo project with a `Cargo.lock`, or
-- put `"bevyVersion": "0.20.0"` in `bevy-mcp.config.json`.
-
-## A version mismatch warning on startup
-
-If the config pins one version but the docs on disk were built from another,
-every answer would be quietly attributed to the wrong release, so the server
-reports the discrepancy instead of hiding it. Point `docDir` at the docs for the
-version you actually target, or change `bevyVersion`.
-
-## `bevy_examples` returns nothing, or only a dozen snippets
-
-The engine `examples/` directory was not found. Clone Bevy at your version and
-point `bevySrcDir` (config) / `BEVY_SRC_DIR` (env) at it:
+Version detection reads `Cargo.lock`, then `Cargo.toml`, starting at
+`BEVY_PROJECT_ROOT` or the client's working directory. Set either:
 
 ```bash
-git clone --depth 1 --branch v0.20.0 --filter=blob:none --sparse \
-  https://github.com/bevyengine/bevy.git ~/.cache/bevy-mcp/bevy-src-0.20.0
-git -C ~/.cache/bevy-mcp/bevy-src-0.20.0 sparse-checkout set examples
+export BEVY_PROJECT_ROOT=/path/to/your/game
+# or
+export BEVY_VERSION=0.20.0
 ```
 
-Without it you still get the Book's quick-start snippets, and the index has to
-be rebuilt for the examples to appear.
+`bevy-manual-mcp status` prints what was detected and from where.
 
-## `bevy_api_diff` says the comparison is ambiguous
+## No corpus / first run did not download
 
-That is deliberate. With more than two versions installed, more than one pair
-could be "the" comparison, and guessing would answer a different question than
-the one asked. Name them:
+- Check `BEVY_MCP_OFFLINE`; `1` disables auto-fetch and `fetch-index`.
+- Run the install explicitly: `bevy-manual-mcp fetch-index 0.20.0`.
+- A mirror can be used with `BEVY_MCP_INDEX_BASE_URL`.
+- A failed download is logged to stderr but does not kill the server; tool calls
+  then explain that no corpus is installed.
 
-```
-bevy_api_diff { "symbol": "Sphere", "versions": "0.15.3,0.20.0" }
-```
+`bevy-manual-mcp status` shows the corpus path, record count and text-index state.
 
-`bevy_indexed_versions` lists what is available.
+## A rebuilt tool still behaves like the old build
 
-## `bevy_api_diff` says "not indexed"
+A running MCP server keeps its old executable mapped. After `cargo build`,
+reconnect/restart the MCP client so it launches the new binary. The same applies
+after replacing `vendor/ecosystem/compat.json`: an old binary that predates the
+snapshot schema will report `invalid compat snapshot`.
 
-Asking about a version the server cannot answer for returns an error rather than
-substituting another version's API. Install that version
-(`bevy-mcp fetch-index <version>`) or point at a local doc tree with
-`BEVY_EXTRA_VERSIONS="0.18.1=/path/to/target/doc"`.
+## `bevy_check_version` fails or times out
 
-## A new version is installed, but the server does not see it
+The tool needs network access (crates.io sparse index, then the API). On a
+blocked host it reports the failure instead of hanging. Set
+`BEVY_MCP_OFFLINE=1` to suppress the check; everything else works offline.
 
-An MCP server is a long-lived child process: it reads the registry once at
-startup. Restart it from your client (in pi, `/mcp reconnect bevy`; most other
-clients re-spawn it when the session restarts) and the new versions appear.
+## `bevy_api_diff` says a version has no compiled corpus
 
-## `npm install -g github:...` fails with `EALLOWGIT`
+Only the active version is loaded eagerly. Other versions must be installed:
+`bevy-manual-mcp fetch-index 0.19.1`. `bevy_indexed_versions` lists what can be
+answered for.
 
-npm 12 disables fetching git dependencies by default. That is the reason for the
-flag in the install command:
+## Feature checks say no feature graph is available
+
+The graph ships in the bundle as `metadata/features.json`; on a checkout it is
+read from `vendor/bevy-meta/<version>/features.json`. Run
+`bevy-manual-mcp harvest-meta <version>` or set `BEVY_META_DIR`. A project that
+does not depend on Bevy is reported as "Cargo.toml (no bevy dependency)", not as
+a missing manifest.
+
+## `bevy_ecosystem_compat` rejects the snapshot
+
+Expects `{ "meta": …, "plugins": … }` (the legacy top-level map is still read).
+Rebuild the binary if it predates the snapshot, and regenerate the snapshot with:
 
 ```bash
-npm install -g --allow-git=all github:kinkirill/bevy_manual_mcp
+bevy-manual-mcp harvest-compat --out vendor/ecosystem
 ```
 
-If you would rather not pass it, clone the repository and run it from the
-checkout - that needs no npm flags at all.
+Unknown requirement operators deliberately produce `compatible: "unknown"`, not
+an error.
 
-## `fetch-index` cannot find a download
+## Plugin corpora are not searched
 
-Two common causes:
+They live under `data/corpora/<crate>/<version>/` and need both `corpus.rkyv` and
+`tantivy/`. Configure them in `bevy-mcp.config.json` (`corpora` array) or let the
+server auto-discover the directory. `bevy_ecosystem_search` lists skipped corpora
+with reasons.
 
-- **No release for that version.** Check `bevy_indexed_versions`, or the
-  Releases page. Build it locally instead
-  ([GETTING-API-DOCS.md](GETTING-API-DOCS.md)).
-- **docs.rs is rate-limiting a `fetch-docs` run.** The mirror is resumable:
-  re-run the same command and it fetches only what is missing.
+## Rebuilds are slow
 
-## The index is stale after upgrading Bevy
+Use a release binary. Debug-mode rustdoc ingest is ~6 minutes; release is ~30 s
+for the full 0.20.0 corpus. If you only have canonical NDJSON, `build --records`
+skips HTML parsing entirely.
 
-A patch upgrade (`0.19.0 → 0.19.1`) does not change APIs, and the existing index
-stays accurate - the server reports this rather than nagging. A minor upgrade
-(`0.19 → 0.20`) needs the new index:
+## Windows
 
-```bash
-bevy-mcp fetch-index 0.20.0
-```
-
-## `bevy_check_manifest` says a feature is "unknown"
-
-An *unknown* feature is one the vendored graph does not list for that version,
-which is deliberately **not** reported as "off" - conflating the two produces
-false alarms. The graph comes from `vendor/bevy-meta/<version>/features.json`
-and includes implicit optional-dependency features (`bevy_audio`, `bevy_log`, …).
-If it looks incomplete, re-harvest it:
-
-```bash
-node scripts/harvest-meta.mjs 0.20.0 --force
-```
-
-## `bevy_validate_systems` is silent, but the system still panics
-
-The tool lints Bevy's **access rules** (B0001/B0002 and the `&mut World` family)
-from the signature alone; it does not type-check or run `cargo`. When it finds
-nothing it says so and lists what it did *not* check. For an actual panic, paste
-the message into `bevy_explain_error`, which resolves it against your version.
-
-## `bevy_explain_error` says the code "does not exist in this version"
-
-The message names a code (for example `B0007`) that was not present at your
-pinned version, so the tool refuses to answer from a neighbouring version's
-docs - the same substitution the rest of the server avoids. Confirm your version
-with `bevy_index_status`, or install the index for the version the panic came
-from.
-
-## `bevy_ecosystem_compat` has no data for a plugin
-
-Only `bevy_egui`, `bevy_rapier3d` and `leafwing_input_manager` ship a vendored
-compatibility snapshot. Calling the tool with no `crate` lists what is
-available. Refresh the snapshot from crates.io with:
-
-```bash
-node scripts/harvest-compat.mjs
-```
-
-`bevy_ecosystem_search` searches the Bevy index always, and any plugin corpora
-that have been registered with the server (plugin indexes are opt-in).
-
-## Server will not start
-
-Run it directly to see the diagnostics; logs go to stderr because stdout is
-reserved for the MCP JSON-RPC stream:
-
-```bash
-node index.js
-```
-
-If your client shows a protocol error, check that nothing else is printing to
-stdout. A stray `console.log` anywhere in the startup path would corrupt the
-stream.
+The binary uses mmap and `std::fs` paths; tests run on Windows in CI. If a build
+directory was copied from another machine, delete `target/` and rebuild. Index
+bundles are platform-independent.

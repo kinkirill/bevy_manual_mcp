@@ -115,6 +115,15 @@ impl Registry {
         versions
     }
 
+    /// A version is queryable only when its compiled archive exists.
+    pub fn has_compiled(&self, version: &str) -> bool {
+        self.data_dir
+            .join("versions")
+            .join(version_dir_name(version))
+            .join(crate::archive::ARCHIVE_FILE)
+            .is_file()
+    }
+
     pub fn meta(&self, version: &str) -> Option<Meta> {
         let path = self
             .data_dir

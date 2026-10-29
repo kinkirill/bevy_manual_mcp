@@ -1,224 +1,95 @@
-# Publishing bevy-mcp
+# Publishing
 
-This is the maintainer's checklist. It assumes you have write access to
-`kinkirill/bevy_manual_mcp`. **Distribution is GitHub-first** - the repository
-and its Release assets are the whole channel, so no npm account is required.
+Back to the [README](README.md).
 
-## The mental model
+Two artifacts are published independently:
 
-Version-accuracy is the whole product, so the project ships **one release per
-Bevy minor**. The `v0.20.x` release answers for any Bevy `0.20.y`, because Bevy's
-patch releases never change the public API.
+1. the **crate** `bevy-manual-mcp` (binary `bevy-manual-mcp`) on crates.io;
+2. **index bundles** for each Bevy version on GitHub Releases.
 
-Three layers, three homes, on purpose:
+The crate version does not track a Bevy version. `0.1.0` is the first real
+release and is published only once the parity gate in
+`docs/rust-rewrite.md` passes. No previews.
 
-| Layer | Where it lives | Why |
-|---|---|---|
-| Code + vendored prose (`.md`/`.rs`) | git repo | small, changes when you change it |
-| Built search index (~74 MiB gzip for 0.20.0) | GitHub Release asset | identical for every user |
-| rustdoc mirror (1.6 GB) | `scripts/fetch-docs.mjs`, on demand | only needed to rebuild the index |
+## Prerequisites
 
-Users install the server with `npm install -g github:kinkirill/bevy_manual_mcp`
-(or run it via `npx --allow-git=all github:…`), and fetch the index from the Release
-asset. The Release asset is what keeps the first run to a ~74 MiB download instead
-of a
-~30 minute docs mirror plus build.
+- a clean checkout of `main`
+- Rust stable, `cargo`, `git`, and network access to crates.io / GitHub
+- a crates.io token with publish rights for `bevy-manual-mcp`
+- write access to `kinkirill/bevy_manual_mcp` for the release assets
 
-The repository contains TypeScript sources. `npm ci` and Git dependency
-installation run `prepare`, which compiles into `build/` and generates the
-legacy JavaScript launchers. Do not commit generated launchers or build output.
-Before releasing, run `npm run typecheck`, `npm test`, and
-`npm run test:package -- --git` on Node.js 22 or newer. The packed artifact
-contains executable JavaScript and vendored prose, with no compiler needed
-at runtime.
-
-## Rebuilding an index that already exists
-
-Keep the Bevy release tag and publish a numbered asset revision when replacing
-an existing bundle:
+## Verify before publishing
 
 ```bash
-npm run rebuild-all -- 0.20.0
-node scripts/publish-index.mjs 0.20.0 --data ./data --out ./dist --revision 1
-gh release upload v0.20.0 dist/bevy-index-0.20.0+1.tar.gz dist/index-manifest.json --clobber
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo package --list
+cargo package --no-verify
 ```
 
-`publish-index` writes `index-manifest.json` next to the bundle (naming the
-bundle, its revision and its SHA-256) and strips any download provenance from
-`registry-entry.json`. **Always upload the manifest with the bundle** - it is how
-`fetch-index` tells users a newer revision exists. The release workflow already
-attaches it.
+`cargo package` must stay small. The `include` list ships only the Rust sources,
+`Cargo.toml`, `Cargo.lock`, `README.md`, `LICENSE` and the design document.
+Vendored corpora and website prose stay out of the crate; they live in bundles
+or inside the binary's ingest path.
 
-The archive still contains `versions/0.20.0/`. `fetch-index` selects the highest
-numeric revision from the manifest. Publish only the current revision and its
-manifest, and delete superseded assets - one bundle per release keeps the
-release page and the digest unambiguous. Use `--revision 3` for the next
-rebuild.
-
-Republishing a revision is only worth it when it changes what a fresh install
-loads. Supplemental inputs (the vendored website, error codes and any examples)
-are fingerprinted by **content**, not by path or mtime, so a bundle built here
-matches the same sources on a user's machine and its first load takes the fast
-path. Republish a `+N` when you have refreshed `vendor/bevy-website`,
-`vendor/bevy-meta` or the error-code set; a code-only change needs no new
-bundle. The published `index-manifest.json` is what makes a republish
-discoverable: `fetch-index` compares the manifest revision with the revision
-recorded at install time and downloads only when it is newer, so bump
-`CACHE_VERSION` only when the record schema or required bundle content actually
-changed.
-
-Bump `CACHE_VERSION` in `src/store.ts` when the record schema or required
-content changes. `fetch-index` replaces stale or unknown installed cache formats
-automatically; `--no-recheck` keeps an unknown local format. To refresh an
-already current format with a newer asset revision, use `--force`. Explain the
-changed content and format in the release notes.
-
-Before uploading, run `npm run test:corpus -- --data data 0.20.0` and check that
-the raw `records.ndjson` line count equals `api_records` in `meta.json`.
-`publish-index` validates the count and provenance before packaging; an intact
-cache version alone does not establish that a bundle is complete.
-
-## Adding a new Bevy minor (e.g. 0.21)
-
-1. **Bump the version**
-   - `package.json` → `"version": "0.21.0"`
-   - `server.json` → `"version": "0.21.0"` (both places: top level and inside
-     `packages[0]`)
-   - `bevy-mcp.config.example.json` → `"bevyVersion": "0.21.0"` and the
-     `~/.cache/bevy-mcp/bevy-0.21.0` paths
-
-2. **Refresh the vendored prose** (picks up new migration guides and Book pages)
-   ```bash
-   node scripts/fetch-website.mjs
-   git add vendor/bevy-website && git commit -m "vendor: refresh bevy-website prose"
-   ```
-   The script uses a partial sparse clone, so the ~270 MB of news media is never
-   downloaded.
-
-3. **Harvest the version metadata** (feature graph, default-plugin gates and
-   error-code guides). This is what `bevy_check_manifest`, `bevy_explain_error`
-   and `bevy_perf_advisor` read, and it includes implicit optional-dependency
-   features such as `bevy_audio`:
-   ```bash
-   node scripts/harvest-meta.mjs 0.21.0 --force
-   git add vendor/bevy-meta/0.21.0 && git commit -m "vendor: harvest bevy-meta 0.21.0"
-   ```
-   `vendor/bevy-meta/0.20.0/` is a golden fixture for the feature-graph tests, so
-   do not hand-edit the committed JSON.
-
-4. **Refresh the plugin compatibility snapshot** (when you want newer plugin
-   releases covered). Requires crates.io access:
-   ```bash
-   node scripts/harvest-compat.mjs
-   git add vendor/ecosystem/compat.json && git commit -m "vendor: refresh plugin compatibility"
-   ```
-
-5. **Tag and push**
-   ```bash
-   git tag v0.21.0
-   git push origin main --tags
-   ```
-
-6. **Done.** The `release` workflow then:
-   - mirrors rustdoc from docs.rs,
-   - sparse-clones the engine `examples/`,
-   - builds the index,
-   - packages `bevy-index-0.21.0.tar.gz`,
-   - attaches it to the `v0.21.0` GitHub Release.
-
-   You can rebuild by hand with `workflow_dispatch` if a step fails. npm
-   publishing is skipped unless you opt in (see *Publishing to npm* below).
-
-## Building and publishing the index manually
-
-If you would rather not wait on CI:
+## Build one index bundle
 
 ```bash
-# 1. mirror rustdoc (resumable; re-run after a rate limit)
-node scripts/fetch-docs.mjs 0.21.0 --out ~/.cache/bevy-mcp/bevy-0.21.0
+VERSION=0.20.0
+REVISION=1
 
-# 2. (optional) engine examples, for bevy_examples
-git clone --depth 1 --branch v0.21.0 --filter=blob:none --sparse \
-  https://github.com/bevyengine/bevy.git ~/.cache/bevy-mcp/bevy-0.21.0-src
-git -C ~/.cache/bevy-mcp/bevy-0.21.0-src sparse-checkout set examples
+bevy-manual-mcp fetch-docs "$VERSION" --out "$HOME/.cache/bevy-mcp/bevy-$VERSION"
+bevy-manual-mcp harvest-meta "$VERSION" --out "$PWD/vendor/bevy-meta/$VERSION" --force
+bevy-manual-mcp harvest-compat --out "$PWD/vendor/ecosystem"
+bevy-manual-mcp fetch-website --out "$PWD/vendor/bevy-website"
 
-# 3. build the index
-BEVY_VERSION=0.21.0 \
-BEVY_DOC_DIR=~/.cache/bevy-mcp/bevy-0.21.0 \
-BEVY_SRC_DIR=~/.cache/bevy-mcp/bevy-0.21.0-src \
-  node scripts/build-index.mjs 0.21.0 --force
-
-# 4. package it
-node scripts/publish-index.mjs 0.21.0
-
-# 5. attach it to the release
-gh release create v0.21.0 dist/bevy-index-0.21.0.tar.gz \
-  --title "Bevy 0.21 index" \
-  --notes "Prebuilt Bevy 0.21 search index for bevy-mcp."
+BEVY_VERSION="$VERSION" \
+BEVY_MCP_DATA_DIR="$PWD/data" \
+BEVY_META_DIR="$PWD/vendor/bevy-meta" \
+BEVY_WEBSITE_DIR="$PWD/vendor/bevy-website" \
+BEVY_EXAMPLES_DIR="${CARGO_HOME:-$HOME/.cargo}/registry/src" \
+bevy-manual-mcp build \
+  --doc-dir "$HOME/.cache/bevy-mcp/bevy-$VERSION" \
+  --out "data/versions/$VERSION" \
+  --pack "dist/bevy-$VERSION-fmt1.tar.zst" \
+  --manifest "dist/index-manifest.json" \
+  --revision "$REVISION"
 ```
 
-## Publishing to npm (optional)
+The example path assumes examples were resolved by the helper; in CI use a
+sparse `bevy` checkout and point `BEVY_EXAMPLES_DIR` at `<checkout>/examples`.
 
-npm is **not** part of the normal flow. Distribution is GitHub-first, and
-`npm install -g github:kinkirill/bevy_manual_mcp` covers installation. Everything
-below is only if you later decide you also want a registry listing.
+Upload `bevy-<version>-fmt1.tar.zst` and `index-manifest.json` to the GitHub
+Release tagged `v<bevy-version>`. `fetch-index` reads the manifest, verifies
+SHA-256 and size, and only then installs.
 
-If you do, prefer **trusted publishing (OIDC)** over a token. npm is retiring
-tokens that bypass 2FA - since July 2026 they cannot manage packages, and they
-are slated to lose direct publish around January 2027.
+The six supported corpora are `0.15.3`, `0.16.1`, `0.17.3`, `0.18.1`, `0.19.1`
+and `0.20.0`. One release per version; bump `--revision` when the same Bevy
+version is rebuilt.
 
-1. **First publish is manual** (a trusted publisher can only be configured on a
-   package that already exists):
-   ```bash
-   npm login
-   npm publish --access public
-   ```
-   npm no longer accepts **new TOTP enrolment** - the CLI rejects it with
-   *"Adding a new TOTP 2FA is no longer supported"* - so a security key is
-   required. A phone passkey works, but the cross-device prompt is browser
-   dependent; if it will not complete, generate a short-lived **bypass-2FA
-   granular token** from the phone (where the passkey resolves locally) and use
-   `npm publish --//registry.npmjs.org/:_authToken=<token>`.
+## Publish the crate
 
-2. **Authorise this repo** - npmjs.com → package → **Settings → Trusted
-   Publisher → GitHub Actions**:
+```bash
+cargo publish --dry-run
+cargo publish
+```
 
-   | Field | Value |
-   |---|---|
-   | Organization or user | `kinkirill` |
-   | Repository | `bevy_manual_mcp` |
-   | Workflow filename | `release.yml` (filename only, with extension) |
-   | Environment name | *(leave empty)* |
-   | Allowed actions | enable **npm publish** |
+After the crate is live:
 
-3. **Enable it in CI** - create the repository variable `PUBLISH_NPM=true`
-   (Settings → Secrets and variables → Actions → Variables). The release job's
-   npm step is gated on it, so tag pushes never fail on npm auth while it is
-   unset.
+- update `server.json` to `registryType: "cargo"`, `identifier:
+  "bevy-manual-mcp"`, version `0.1.0`;
+- publish the MCP registry entry;
+- verify a clean machine: `cargo install bevy-manual-mcp`, point it at a Cargo
+  project, let first-run auto-fetch install the bundle, run one query.
 
-### Repository secrets and variables
+`0.0.1` exists only as a lib-only name reservation; `cargo install
+bevy-manual-mcp` fails with "no binaries" for that version. `0.1.0` is the first
+installable release.
 
-| Name | Used by | Notes |
-|---|---|---|
-| `GITHUB_TOKEN` | `release.yml` (release asset) | provided automatically; `contents: write` is requested in the workflow. |
-| `PUBLISH_NPM` (variable) | `release.yml` (npm step) | unset by default; set to `true` to publish to npm. |
+## CI/release automation
 
-## Registering a release with MCP directories
-
-After a release exists, list the server so people can find it:
-
-- **GitHub topics** - add `mcp`, `model-context-protocol`, `bevy` to the repo so
-  it shows up in GitHub search.
-- **Smithery**, **mcp.so**, **Glama**, **PulseMCP**, **awesome-mcp-servers** -
-  submit the GitHub URL. These accept a GitHub repo without an npm package.
-- **Official MCP registry** - `server.json` currently declares an npm package, so
-  it only validates after a publish to npm. Until then, either leave it alone or
-  point it at the repository.
-
-## Versioning rules
-
-- Tags `vX.Y.*` answer for Bevy `X.Y.*`.
-- Bump the patch (`0.20.0 → 0.20.1`) only for changes to the **tooling** - parser
-  fixes, new tools. The index is unchanged, so users need not upgrade.
-- Never target a pre-release of Bevy; `bevy_check_version` and the docs.rs mirror
-  both expect a stable `X.Y.Z`.
+The `release` workflow builds one bundle per dispatch (version + revision
+inputs), uploads the asset and manifest, and optionally publishes the crate when
+explicitly requested. CI runs formatting, clippy and tests on Linux, macOS and
+Windows. Never publish from a dirty or untested tree.

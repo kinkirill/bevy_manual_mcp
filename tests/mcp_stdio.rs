@@ -264,7 +264,10 @@ fn indexed_versions_marks_the_active_version() {
     let response = server.call_tool("bevy_indexed_versions", json!({}));
     assert_eq!(response["result"]["isError"], false);
     let text = tool_text(&response);
-    assert!(text.contains("| 9.9.9 | **yes** |"), "versions: {text}");
+    assert!(
+        text.contains("| 9.9.9 | **yes** | no |"),
+        "versions: {text}"
+    );
     assert!(text.contains("9.8.0"), "versions: {text}");
 
     let structured = &response["result"]["structuredContent"];
@@ -276,6 +279,7 @@ fn indexed_versions_marks_the_active_version() {
         .iter()
         .find(|row| row["version"] == "9.8.0")
         .expect("9.8.0 row");
+    assert_eq!(older["compiled"], false);
     assert_eq!(older["relative_to_active"]["level"], "downgrade");
     assert_eq!(older["relative_to_active"]["breaksApi"], true);
 }

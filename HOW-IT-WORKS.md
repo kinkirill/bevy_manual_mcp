@@ -1,186 +1,95 @@
 # How it works
 
-Back to the [README](README.md).
+Back to the [README](README.md) · [Getting the API docs](GETTING-API-DOCS.md).
+
+The server is a native Rust process with one job: answer from a corpus pinned to
+the Bevy version in the user's `Cargo.lock`, without parsing JSON at startup.
+
+## Pipeline
 
 ```
-bevy-website/content/**             ─┐  book, migration guides, quick-start, FAQ
-release-content/<ver>/**            ─┤  per-PR migration notes, release notes
-learning-code-examples/**/*.rs      ─┤
-cargo target/doc/**/*.html          ─┼─> ingest ──> records ─┐
-docs.rs mirror (optional)           ─┘                     │
-bevy/examples/**/*.rs              ─┘                     ├─> hybrid index
-vendor/bevy-meta/**                 ─┐  feature graph,      │        │
-                                       │  plugin gates,      ├─> supplement
-                                       │  error codes         │        ▼
-vendor/ecosystem/compat.json        ─┘  plugin ↔ Bevy        ┘  FlexSearch (concepts)
-                                                 exact symbol table ──> API symbols
-                                                 name-token index   ──> subject matches
+rustdoc HTML (docs.rs / cargo doc) ─┐
+website markdown (Book, guides)    ─┤
+engine examples                    ─┼─> records ──> interned arena ──> corpus.rkyv
+error codes + feature metadata     ─┘                                    │
+                                                                         ├─> symbol table
+                                                                         ├─> name tokens
+                                                                         └─> tantivy index
 ```
 
-Seven design decisions worth knowing:
+- **Records.** One record per rustdoc item: structs, fields, variants, methods,
+  associated items, macros, plus website chunks and example files. Every record
+  carries its source, kind, path, owner, crate, module, signature, docs and
+  examples.
+- **Archive.** `corpus.rkyv` stores all records, a single interned string arena,
+  a dense-id ordering and the exact-symbol/name-token tables. It is loaded with
+  `mmap` + `rkyv::access` and `bytecheck` on every load, so a truncated or
+  corrupted file is rejected instead of read.
+- **Text.** `tantivy/` stores ids and postings only; the payload lives once in
+  the archive. A custom tokenizer splits camelCase and snake_case identifiers.
+  Field boosts are `name > signature > docs`.
+- **Search.** Exact symbol matches rank first, then name-token matches, then
+  BM25 text hits. A ranking precision pass canonicalises query subjects and adds
+  module/full-subject evidence, which is why `Events ECS event system` returns
+  `bevy::ecs::event::Event` rather than `AssetEventSystems`.
+- **Bundles.** A version's artifacts are packed as
+  `bevy-<version>-fmt<format>.tar.zst` with a SHA-256 `index-manifest.json`.
+  `fetch-index` verifies and installs atomically; the first server start can do
+  this automatically.
 
-**1. Every rustdoc item is its own record.** rustdoc puts a struct's methods in
-the *parent's* HTML file, so naive scraping buries them. This parser emits one
-record per method and associated item, tagged with its owner, so `Query::iter`
-exists as a record in its own right instead of being buried in a wall of prose
-inside `Query`'s page.
+## Why it is fast
 
-**2. Exact lookup beats fuzzy.** A symbol table resolves `App::add_systems`
-directly; FlexSearch only handles concepts. A purely fuzzy index ranks a
-paragraph above the function you're asking for.
+The TypeScript line parsed 189 MB of NDJSON and imported a 120 MB FlexSearch
+dump on every start (7–15 s per bundle). The Rust server mmaps a validated
+archive (6–8 ms) and opens a 15 MB tantivy index; a query takes 22–30 ms,
+including process start. A full rebuild from 8,665 rustdoc pages is ~30 s in
+release mode and consumes about 125 MB + 15 MB on disk, versus 13–15 minutes and
+a 2 GB heap for the old build.
 
-**3. Version relevance is a ranking weight.** A migration guide whose target
-version equals your pinned version outranks one for 0.4→0.5. Combined with the
-"indexed for Bevy X.Y.Z" line on every result, this makes stale answers visible
-rather than silent.
+Local rebuilds are therefore cheap enough to prefer over maintaining a repair
+path: a damaged archive is rebuilt or re-downloaded, never migrated.
 
-**4. Name matches outrank prose matches.** FlexSearch scores any occurrence in
-the indexed text, so a query word matching a symbol's *name* is weighted well
-above the same word buried in a doc example - and an intent verb ("spawn
-camera") is treated as the question, not its subject. That is why
-`bevy_search "spawn camera"` leads with `Camera` instead of a struct whose
-docblock happens to contain a `spawn_camera` snippet.
+## Versions and metadata
 
-**5. Defaults are part of the answer.** Trait-impl methods from std traits are
-dropped as boilerplate, but a type's *documented* `impl Default` - which often
-states the actual default value, orientation or units - is captured onto the
-type record and surfaced by `bevy_api`. `Type::default` resolves to the type
-rather than to the unrelated free `default()` function. This is deliberate:
-models guess defaults wrong, and a wrong default is as damaging as a wrong
-signature.
+- Version detection is file-based: `Cargo.lock` first, `Cargo.toml` second, then
+  `BEVY_VERSION`.
+- Each Bevy version has its own corpus directory. Only the active version is
+  loaded eagerly; `bevy_api_diff` and `bevy://` reads open another version's
+  archive on demand.
+- Feature graphs, error-code guides and the plugin compatibility snapshot ship
+  inside the bundle under `metadata/`. On a checkout, `vendor/bevy-meta` and
+  `vendor/ecosystem` are the source of truth; installed bundle metadata takes
+  precedence over them.
 
-Results are cached in `data/` and invalidated by a fingerprint of the input
-directories, so startup is fast after the first run.
+## Tools
 
-**6. Metadata supplements stay out of the index.** The feature graph,
-default-plugin gates, error-code guides and panic-site provenance live in
-`vendor/bevy-meta/`, and the plugin ↔ Bevy compatibility matrix in
-`vendor/ecosystem/compat.json`. These are loaded on demand rather than baked
-into the ~78 MB index bundle, so they can be corrected or re-harvested without
-republishing every version. `bevy_check_manifest`, `bevy_explain_error` and
-`bevy_perf_advisor` read them directly, and `bevy_ecosystem_compat` answers
-from the vendored snapshot even offline. Supplemental inputs are fingerprinted
-by file **content** rather than path or mtime, so a prebuilt bundle built on the
-maintainer's machine matches the same sources on a user's machine and the first
-load takes the fast path instead of rebuilding. (`sourceFingerprint` remains the
-path/mtime-sensitive check used for local `docDir` changes; the two serve
-different purposes.)
+The MCP surface is grouped by data source:
 
-**7. The system validator parses; it does not compile.** `bevy_validate_systems`
-splits a signature with a bracket-stack parser, extracts each parameter's access
-pattern and filters, and applies rules R1–R5. Filter disjointness is solved
-properly (including tuple filters and `Or<…>`), so `Without<T>` legalises the
-exact conflict it is meant to legalise. It is deliberately a linter for Bevy's
-*access rules*, not a Rust type checker, and says so in its output.
+| group | tools |
+|---|---|
+| corpus search | `bevy_search`, `bevy_api`, `bevy_examples`, `bevy_migration` |
+| version state | `bevy_index_status`, `bevy_indexed_versions`, `bevy_api_diff`, `bevy_check_version` |
+| project/analysis | `bevy_check_manifest`, `bevy_validate_systems`, `bevy_explain_error`, `bevy_perf_advisor` |
+| ecosystem | `bevy_ecosystem_search`, `bevy_ecosystem_compat`, `bevy_generate_plugin` |
 
-Downloaded API records are reused when local website or example sources change.
-The registry replaces their supplemental postings, merges richer duplicate API
-rows, and validates required name, signature and documentation tokens before
-accepting an unfamiliar search export. Missing or damaged search exports can be
-rebuilt from valid API records without downloading rustdoc again. Persisted
-corpus and search hashes let later loads import a trusted, unchanged text index
-directly - skipping the per-record validation and containment scan - and retain
-repaired postings without rewriting unchanged caches.
+Analysis tools are explicit about their limits: `bevy_validate_systems` is a
+syntax-level linter (no type checking, B0001/B0002 are runtime panics);
+`bevy_generate_plugin` is parsed with `syn` but `compile_verified` stays false;
+`bevy_ecosystem_compat` uses a three-valued verdict and never turns an
+unsupported requirement operator into "incompatible".
 
-The first load builds two in-memory tables, both once per process: the
-exact-symbol alias map (used by `bevy_api`) and a camelCase name-token index
-(used to rank subject names during conceptual search). A warm load of the Bevy
-0.20.0 corpus (252,761 records) takes roughly 16 seconds and searches return in
-140–240 ms; most of the load is parsing `records.ndjson` and building those two
-tables without per-record allocations. The corpus is memory-hungry, so run Node
-with a raised heap limit (for example `--max-old-space-size=4096`); the heap
-setting does not cap total process memory. Startup time varies with the corpus,
-disk and machine.
-
-Each release also carries a small `index-manifest.json` naming the current
-bundle revision and its SHA-256. `fetch-index` reads it (when the install is
-already current) and downloads only when the manifest revision is newer than the
-one recorded at install time, so a republished bundle is discoverable without
-forcing every user to re-download by bumping `CACHE_VERSION`.
-
----
-
-## Repository layout
+## Layout
 
 ```
-index.ts / server.ts          MCP server: resources, wiring, stdio transport
-bin/bevy-mcp.ts               CLI: serve (default), fetch-index, fetch-docs, status
-bevy-mcp.config.example.json  template config (copy to bevy-mcp.config.json)
-server.json                   MCP registry manifest
-PUBLISHING.md                 maintainer release checklist
-vendor/bevy-website/          prose-only bevy-website (Book, guides, release notes)
-vendor/bevy-meta/<version>/   harvested feature graph, plugin gates, error codes, panics
-vendor/ecosystem/compat.json  plugin ↔ Bevy compatibility snapshot (from crates.io)
-src/config.ts                 config-file + path + version resolution
-src/store.ts                  index build, persisted search index, hybrid search, ranking
-src/registry.ts               isolated indexes per version, persistence, corpus registry
-src/types.ts                  record, configuration, metadata and query contracts
-src/resources.ts              bevy:// URI scheme + templates
-src/resources_impl.ts         resource read + completion handlers
-src/pagination.ts             cursor pagination for list resources
-src/versions.ts               crates.io lookup, stable-vs-prerelease split
-src/format.ts                 response rendering (markdown + structuredContent)
-src/tools/                    one module per MCP tool; src/tools/index.ts registers them all
-src/analysis/features.ts      feature graph, transitive closure, path → subcrate/feature
-src/analysis/rust-fn.ts       bracket-stack Rust signature parser
-src/analysis/conflicts.ts     system access-rule rules R1–R5
-src/analysis/filters.ts       Query filter parsing + disjointness solver
-src/analysis/report.ts        system-validation rendering
-src/analysis/compat.ts        caret-range satisfaction + vendored compat loader
-src/ingest/rustdoc.ts         rustdoc HTML parser (one record per item)
-src/ingest/markdown.ts        website markdown, heading chunking, classification
-src/ingest/examples.ts        .rs example sources (engine + book)
-src/ingest/owner.ts           impl-header parsing (owner type, trait)
-scripts/fetch-docs.mts        docs.rs mirror with rate-limit handling
-scripts/fetch-index.mts       download the prebuilt index from GitHub Releases
-scripts/build-index.mts       build the index headlessly (CI / manual)
-scripts/rebuild-all-indexes.mts rebuild existing mirrors sequentially, offline
-scripts/publish-index.mts     package an index bundle for a Release
-scripts/fetch-website.mts     refresh vendor/bevy-website (sparse, prose only)
-scripts/harvest-meta.mts      harvest vendor/bevy-meta from the Bevy repo at a tag
-scripts/harvest-compat.mts    harvest vendor/ecosystem/compat.json from crates.io
-test/run-tests.mts            unit tests (uses real cargo doc output)
-test/tools-test.mts           per-tool behaviour against a fixture index
-test/resources-test.mts        resource conformance over a real MCP client
-test/mcp-e2e.mts              protocol-level test over stdio
-test/compat-test.mts          compatibility range + snapshot regression tests
-test/meta-harvest-test.mts    vendored metadata shape and discoverability
+src/main.rs          CLI dispatch: serve, build, fetch-index, search, harvest…
+src/server.rs        MCP tools, resources and prompt-facing output
+src/archive.rs       rkyv schema, builder, mmap loader
+src/search.rs        hybrid ranking, filters, suggestions, migrations
+src/text.rs          tantivy schema, tokenizer, index build/read
+src/analysis/        features, systems, filters, conflicts, compat, errors, perf
+src/ingest/          rustdoc HTML, website markdown, examples, metadata
+src/harvest/         docs.rs, website, feature graph, compat harvesters
 ```
 
-`npm ci` builds the strict TypeScript sources into `build/`. The build also
-generates compatibility launchers at `index.js`, `bin/bevy-mcp.js`, and the
-previous `scripts/*.mjs` and `test/*.mjs` paths. These launchers are ignored by
-Git. The legacy `scripts/rebuild-all-indexes.sh` path is also generated and
-forwards to the compiled TypeScript maintenance command. Launchers are included
-where needed in the distributable package. Existing MCP
-client commands continue to work; the runtime needs Node.js 22 or newer.
-
----
-
-## Run tests
-
-```bash
-npm test
-npm run typecheck
-npm run bench          # informational startup/search timings, never a gate
-BEVY_VERSION=0.20.0 BEVY_DOC_DIR=... node test/resources-test.mjs
-```
-
-`npm test` builds the TypeScript and runs every suite: unit/ingest/search,
-qualified symbol lookup, duplicate-record merging, natural-language relevance,
-per-tool behaviour (`test/tools-test.mts`, one suite per MCP tool), ecosystem
-compatibility, vendored-metadata harvest, resource conformance, the
-protocol-level MCP end-to-end test, and the Phase 0 contract regressions
-(`test/contract-regressions.mts`). The per-tool suite runs in-process against a
-deterministic fixture index plus the committed `vendor/bevy-meta`, so its
-assertions do not depend on a locally built rustdoc tree.
-
-The contract suite is the executable half of
-[`docs/tool-contracts.md`](docs/tool-contracts.md): passing tests lock in current
-behaviour, while a `todo` test records a confirmed discrepancy and the expected
-fix. A `todo` test is reported as `todo` and does not fail the build until the
-corresponding phase PR removes the marker.
-
-`npm run test:package -- --git` also verifies an installed tarball and a Git
-dependency prepared from TypeScript, using CLI and MCP checks outside the
-checkout. It requires npm registry access to install their dependencies.
+The design record, decisions and measurements are in
+[docs/rust-rewrite.md](docs/rust-rewrite.md).
