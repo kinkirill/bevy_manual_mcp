@@ -464,3 +464,44 @@ Results on the real corpus:
 top-1 outcomes. Further precision work (kind priors for `*Systems`/`*Plugin`,
 PMI relatedness, did-you-mean on misses) needs a larger query set to avoid
 overfitting the 15-query snapshot.
+
+## 21. Near misses instead of kind priors
+
+Rejected from §20 on purpose:
+
+- **Kind/suffix priors** (`*Systems`/`*Plugin` are "supporting types") misfire
+  on legitimate "system set" questions.
+- **Definition-vs-usage intent** ("what is X" → structs) is worse: a question
+  about two composing functions must not be answered with structs.
+
+Added instead: near-miss suggestions when a symbol does not resolve. They are
+sentences in the result, not silent behaviour changes, so the agent decides.
+
+How a suggestion is found:
+
+1. **Lexical candidates** from the prebuilt name-token index (falling back to a
+   bounded edit-distance scan for typos). Ranking is token overlap, with the
+   head noun of a compound weighted highest (`EventReader` shares `reader`),
+   then shared prefix and Levenshtein distance.
+2. **Prose candidates** from the corpus itself. Website records are scanned for
+   the query name; backticked identifiers near the nearest occurrence are
+   resolved through the symbol table. Documents using rename language
+   ("renamed", "now known as", "replaced by", "moved to") get a bonus, and only
+   the strongest document contributes. This is a corpus-derived, version-scoped
+   rename table with no hand curation: the 0.16→0.17 migration guide says
+   "`EventReader` … now known as `MessageReader`", so that is what is suggested.
+
+Measured on the real corpus:
+
+| query | suggestions |
+|---|---|
+| `EventReader` | **MessageReader**, Message, events, MessageWriter, Messages |
+| `EventWriter` | **MessageWriter**, Message, events, MessageReader, Messages |
+| `Commandz` (typo) | Command, Commands, … (edit-distance fallback) |
+
+Both the CLI (`lookup`) and `bevy_api`/`bevy_search` return suggestions; MCP
+structured content carries a `suggestions` array. Tests:
+`missing_symbol_suggests_near_names` (CLI) and
+`missing_symbol_returns_suggestions_over_stdio` (MCP), with a fixture
+migration-guide sentence so the prose path is exercised without downloaded
+indexes.

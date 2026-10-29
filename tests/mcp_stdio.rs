@@ -320,6 +320,30 @@ fn build_corpus(dir: &Path) {
             "bevy_version": "9.9.9"
         }),
         json!({
+            "source": "website",
+            "kind": "migration_guide",
+            "name": "Event trait split",
+            "full_path": "migration_guide:content/learn/migration-guides/0.16-to-0.17.md",
+            "module": "content::learn::migration-guides",
+            "signature": "",
+            "docs": "\"Buffered events\" are now known as messages. `EventWriter`, `EventReader`, and `Events<E>`, are now known as `MessageWriter`, `MessageReader`, and `Messages<M>`.",
+            "file": "content/learn/migration-guides/0.16-to-0.17.md",
+            "bevy_version": "9.9.9",
+            "heading": "`Event` trait split / Rename"
+        }),
+        json!({
+            "source": "rustdoc",
+            "kind": "struct",
+            "name": "MessageReader",
+            "full_path": "demo::MessageReader",
+            "crate": "demo",
+            "module": "demo",
+            "signature": "pub struct MessageReader;",
+            "docs": "Reads messages of a type in order.",
+            "file": "demo/struct.MessageReader.html",
+            "bevy_version": "9.9.9"
+        }),
+        json!({
             "source": "rustdoc",
             "kind": "method",
             "name": "new",
@@ -383,5 +407,29 @@ fn search_and_api_tools_answer_over_stdio() {
     assert!(
         text.contains("Creates a widget"),
         "documentation missing: {text}"
+    );
+}
+
+#[test]
+fn missing_symbol_returns_suggestions_over_stdio() {
+    let dir = fixture();
+    build_corpus(dir.path());
+    let mut server = Server::spawn(dir.path());
+    server.initialize();
+
+    let response = server.call_tool("bevy_api", json!({ "symbol": "EventReader" }));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("No API symbol matched"), "{text}");
+    assert!(text.contains("MessageReader"), "{text}");
+
+    let suggestions = response["result"]["structuredContent"]["suggestions"]
+        .as_array()
+        .expect("suggestions");
+    assert!(
+        suggestions
+            .iter()
+            .any(|row| row["full_path"] == "demo::MessageReader"),
+        "{suggestions:?}"
     );
 }

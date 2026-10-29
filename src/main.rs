@@ -287,6 +287,11 @@ fn main() -> anyhow::Result<()> {
                 limit.clamp(1, 20),
                 &search::SearchFilters::default(),
             );
+            let suggestions = if hits.is_empty() && search::looks_like_symbol(&query) {
+                search::suggestions(state.root(), &query, 5)
+            } else {
+                Vec::new()
+            };
             if json {
                 let rows: Vec<Value> = hits
                     .iter()
@@ -300,7 +305,10 @@ fn main() -> anyhow::Result<()> {
                     }))?
                 );
             } else {
-                println!("{}", format::search_markdown(&state, &hits, &query, None));
+                println!(
+                    "{}",
+                    format::search_markdown(&state, &hits, &query, None, &suggestions)
+                );
             }
             Ok(())
         }
@@ -334,6 +342,14 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else if hits.is_empty() {
                 println!("No symbol matched `{symbol}`.");
+                let suggestions = search::suggestions(corpus.root(), &symbol, 5);
+                if !suggestions.is_empty() {
+                    println!();
+                    println!(
+                        "{}",
+                        format::suggestions_markdown(corpus.root(), &suggestions)
+                    );
+                }
             } else {
                 for record in &hits {
                     let root = corpus.root();

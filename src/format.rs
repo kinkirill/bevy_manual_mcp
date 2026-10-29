@@ -40,16 +40,43 @@ pub fn hit_json(state: &SearchState<'_>, hit: &Hit<'_>) -> Value {
     value
 }
 
+pub fn suggestions_markdown(
+    root: &crate::archive::ArchivedCorpus,
+    suggestions: &[&crate::archive::ArchivedRecord],
+) -> String {
+    if suggestions.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["Did you mean:".to_string()];
+    for record in suggestions {
+        lines.push(format!(
+            "- `{}` ({}) — `{}`",
+            root.string(record.name),
+            root.string(record.kind),
+            root.string(record.full_path)
+        ));
+    }
+    lines.join("\n")
+}
+
 pub fn search_markdown(
     state: &SearchState<'_>,
     hits: &[Hit<'_>],
     query: &str,
     label: Option<&str>,
+    suggestions: &[&crate::archive::ArchivedRecord],
 ) -> String {
     let root = state.root();
     let version = label.unwrap_or_else(|| root.bevy_version.as_str());
     if hits.is_empty() {
-        return format!("# Search results: \"{query}\"\n\nNo match in the Bevy {version} corpus.");
+        let mut text =
+            format!("# Search results: \"{query}\"\n\nNo match in the Bevy {version} corpus.");
+        let hint = suggestions_markdown(root, suggestions);
+        if !hint.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(&hint);
+        }
+        return text;
     }
 
     let mut lines = vec![
@@ -93,13 +120,20 @@ pub fn api_markdown(
     records: &[&ArchivedRecord],
     symbol: &str,
     related: &[&ArchivedRecord],
+    suggestions: &[&ArchivedRecord],
 ) -> String {
     let root = state.root();
     if records.is_empty() {
-        return format!(
+        let mut text = format!(
             "# `{symbol}`\n\nNo API symbol matched in the Bevy {} corpus.",
             root.bevy_version
         );
+        let hint = suggestions_markdown(root, suggestions);
+        if !hint.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(&hint);
+        }
+        return text;
     }
     let mut lines = Vec::new();
     for record in records {

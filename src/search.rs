@@ -468,7 +468,7 @@ fn relevance_boost(
     boost
 }
 
-fn definition_key(root: &ArchivedCorpus, record: &ArchivedRecord) -> String {
+pub(crate) fn definition_key(root: &ArchivedCorpus, record: &ArchivedRecord) -> String {
     let source_ref = root.string(record.source_ref);
     if root.string(record.source) == "rustdoc" && !source_ref.is_empty() {
         format!(
@@ -536,5 +536,300 @@ mod tests {
     fn comma_filters_split_and_trim() {
         let parts: Vec<&str> = split_list("struct, enum ,trait").collect();
         assert_eq!(parts, vec!["struct", "enum", "trait"]);
+    }
+}
+
+/// Suggestions make sense for symbol-shaped queries, not for prose questions.
+pub fn looks_like_symbol(query: &str) -> bool {
+    query.split_whitespace().count() == 1 || query.contains("::")
+}
+
+/// Near misses for a symbol that did not resolve.
+///
+/// Candidates come from the prebuilt name-token index, falling back to a
+/// bounded scan for typos. Ranking is token overlap, shared prefix and edit
+/// distance — deliberately no kind priors: asking for a function should not
+/// return a struct just because structs are common.
+pub fn suggestions<'a>(
+    root: &'a ArchivedCorpus,
+    query: &str,
+    limit: usize,
+) -> Vec<&'a ArchivedRecord> {
+    let leaf_raw = base_name(query);
+    let leaf_norm = norm_key(&leaf_raw);
+    if leaf_norm.len() < 3 {
+        return Vec::new();
+    }
+    let query_tokens = split_name_tokens(&leaf_raw);
+    let qualified = norm_key(query).contains("::");
+    let module_prefix = norm_key(query)
+        .rsplit_once("::")
+        .map(|(prefix, _)| prefix.to_string())
+        .unwrap_or_default();
+
+    let mut candidate_ids: Vec<u32> = Vec::new();
+    for term in &query_tokens {
+        if let Some(token) = root.find_name_token(term) {
+            for id in token.ids.iter() {
+                candidate_ids.push(id.native());
+            }
+        }
+    }
+    candidate_ids.sort_unstable();
+    candidate_ids.dedup();
+
+    let mut candidates: Vec<&ArchivedRecord> = candidate_ids
+        .iter()
+        .filter_map(|id| root.record(*id))
+        .collect();
+
+    // No shared token: allow a bounded edit-distance scan (typos).
+    if candidates.is_empty() {
+        for record in root.records.iter() {
+            let name = norm_key(&base_name(root.string(record.name)));
+            if name.len().abs_diff(leaf_norm.len()) <= 3 && levenshtein(&name, &leaf_norm) <= 3 {
+                candidates.push(record);
+            }
+        }
+    }
+
+    let mut scored: Vec<(i32, &ArchivedRecord)> = Vec::new();
+    for record in candidates {
+        let name_raw = base_name(root.string(record.name));
+        let name_norm = norm_key(&name_raw);
+        let name_tokens = split_name_tokens(&name_raw);
+        let head = query_tokens.last();
+        let head_match = head.is_some_and(|term| name_tokens.iter().any(|word| word == term));
+        let mut score = 0i32;
+        if head_match {
+            // The head noun dominates a compound: EventReader -> MessageReader
+            // is a better near miss than an unrelated string that is closer
+            // by raw edit distance.
+            score += 50;
+        }
+        for term in &query_tokens {
+            if Some(term) == head {
+                continue;
+            }
+            if name_tokens.iter().any(|word| word == term) {
+                score += 12;
+            }
+        }
+        score += 2 * common_prefix_chars(&name_norm, &leaf_norm) as i32;
+        score -= levenshtein(&name_norm, &leaf_norm).min(12) as i32;
+        if qualified {
+            let module = norm_key(root.string(record.module));
+            if module.ends_with(&module_prefix) || module_prefix.ends_with(&module) {
+                score += 10;
+            }
+        }
+        if score > 0 {
+            scored.push((score, record));
+        }
+    }
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    // Prose can name the replacement even when edit distance cannot: migration
+    // guides say "`EventReader` ... is now known as `MessageReader`".
+    for (prose_score, record) in prose_candidates(root, query) {
+        match scored
+            .iter_mut()
+            .find(|(_, existing)| std::ptr::eq(*existing, record))
+        {
+            Some((score, _)) if *score < prose_score => *score = prose_score,
+            Some(_) => {}
+            None => scored.push((prose_score, record)),
+        }
+    }
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    // If a strong rename match exists, drop distant lexical noise.
+    let threshold = scored
+        .first()
+        .map(|(score, _)| score.saturating_sub(60))
+        .unwrap_or(i32::MIN);
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for (score, record) in scored {
+        if score < threshold {
+            continue;
+        }
+        let key = definition_key(root, record);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(record);
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
+}
+
+/// Backticked symbol names near the query in migration guides and release
+/// notes. This is the corpus-derived rename signal, with no hand-written table.
+fn prose_candidates<'a>(root: &'a ArchivedCorpus, query: &str) -> Vec<(i32, &'a ArchivedRecord)> {
+    let leaf = base_name(query);
+    let needle = leaf.to_ascii_lowercase();
+    if needle.len() < 3 {
+        return Vec::new();
+    }
+    let head = split_name_tokens(&leaf).pop();
+    let query_tokens = split_name_tokens(&leaf);
+    let mut out: Vec<(i32, &ArchivedRecord, u32)> = Vec::new();
+
+    for record in root.records.iter() {
+        // Only prose records document renames; rustdoc has no "now known as".
+        if root.string(record.source) != "website" {
+            continue;
+        }
+        let docs = root.string(record.docs);
+        if docs.len() < needle.len() {
+            continue;
+        }
+        let lower = docs.to_ascii_lowercase();
+        let positions: Vec<usize> = lower
+            .match_indices(&needle)
+            .map(|(index, _)| index)
+            .collect();
+        if positions.is_empty() {
+            continue;
+        }
+        let rename_context = ["renamed", "now known as", "replaced by", "moved to"]
+            .iter()
+            .any(|phrase| lower.contains(phrase));
+
+        let mut inside = false;
+        let mut start = 0usize;
+        for (index, ch) in docs.char_indices() {
+            if ch != '`' {
+                continue;
+            }
+            if inside {
+                let segment = &docs[start..index];
+                // Skip the segment holding the query itself.
+                if !segment.to_ascii_lowercase().contains(&needle) {
+                    for token in identifiers(segment) {
+                        let token_lower = token.to_ascii_lowercase();
+                        if token.len() < 3
+                            || token_lower == needle
+                            || query_tokens.iter().any(|part| part == &token_lower)
+                        {
+                            continue;
+                        }
+                        let Some(matched) = root.lookup(&token).into_iter().next() else {
+                            continue;
+                        };
+                        let distance = positions
+                            .iter()
+                            .map(|position| start.abs_diff(*position))
+                            .min()
+                            .unwrap_or(usize::MAX);
+                        if distance > 300 {
+                            continue;
+                        }
+                        let mut score = 200 - (distance / 2) as i32;
+                        if head.as_ref().is_some_and(|head| {
+                            split_name_tokens(&token).iter().any(|part| part == head)
+                        }) {
+                            score += 40;
+                        }
+                        if is_definition(root.string(matched.kind)) {
+                            score += 10;
+                        }
+                        if rename_context {
+                            score += 30;
+                        }
+                        out.push((score, matched, record.dense_id.native()));
+                    }
+                }
+            } else {
+                start = index + 1;
+            }
+            inside = !inside;
+        }
+    }
+    // Keep the document that produced the strongest hit; other guides mention
+    // the same word in unrelated contexts.
+    let best_doc = out
+        .iter()
+        .max_by_key(|(score, _, doc)| (*score, *doc))
+        .map(|(_, _, doc)| *doc);
+    out.into_iter()
+        .filter(|(_, _, doc)| Some(*doc) == best_doc)
+        .map(|(score, record, _)| (score, record))
+        .collect()
+}
+
+fn identifiers(segment: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in segment.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out.into_iter()
+        .filter(|token| {
+            token
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        })
+        .collect()
+}
+
+fn common_prefix_chars(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    let mut current = vec![0usize; b.len() + 1];
+    for (i, left) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, right) in b.iter().enumerate() {
+            let cost = usize::from(left != right);
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + cost);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
+}
+
+#[cfg(test)]
+mod suggestion_tests {
+    use super::*;
+
+    #[test]
+    fn edit_distance_is_standard() {
+        assert_eq!(levenshtein("eventreader", "eventreader"), 0);
+        assert_eq!(levenshtein("commandz", "command"), 1);
+        assert_eq!(levenshtein("", "abc"), 3);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn shared_prefix_is_counted() {
+        assert_eq!(common_prefix_chars("command", "commands"), 7);
+        assert_eq!(common_prefix_chars("event", "message"), 0);
     }
 }

@@ -481,6 +481,34 @@ fn build_ranking_fixture() -> (TempDir, PathBuf) {
             None,
             "Flags describing whether an asset is used in the render world.",
         ),
+        record(
+            "struct",
+            "MessageReader",
+            "bevy::ecs::message::MessageReader",
+            "bevy::ecs::message",
+            None,
+            "Reads messages of a type in order.",
+        ),
+        record(
+            "struct",
+            "MessageWriter",
+            "bevy::ecs::message::MessageWriter",
+            "bevy::ecs::message",
+            None,
+            "Writes messages of a type.",
+        ),
+        serde_json::json!({
+            "source": "website",
+            "kind": "migration_guide",
+            "name": "Event trait split",
+            "full_path": "migration_guide:content/learn/migration-guides/0.16-to-0.17.md",
+            "module": "content::learn::migration-guides",
+            "signature": "",
+            "docs": "\"Buffered events\" are now known as messages. `EventWriter`, `EventReader`, and `Events<E>`, are now known as `MessageWriter`, `MessageReader`, and `Messages<M>`.",
+            "file": "content/learn/migration-guides/0.16-to-0.17.md",
+            "bevy_version": "9.9.9",
+            "heading": "`Event` trait split / Rename"
+        }),
     ];
     let records = records
         .iter()
@@ -558,4 +586,31 @@ fn ranking_puts_the_named_concept_first() {
             .map(String::as_str),
         Some("bevy::asset::RenderAssetUsages::RENDER_WORLD")
     );
+}
+
+#[test]
+fn missing_symbol_suggests_near_names() {
+    let (_dir, data_dir) = build_ranking_fixture();
+    let output = command(&data_dir)
+        .args(["lookup", "EventReader"])
+        .output()
+        .expect("run lookup");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No symbol matched"), "{stdout}");
+    assert!(stdout.contains("Did you mean"), "{stdout}");
+    let first = stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("Did you mean"))
+        .nth(1)
+        .unwrap_or_default();
+    assert!(first.contains("MessageReader"), "{stdout}");
+
+    // A typo with no shared token still resolves through edit distance.
+    let output = command(&data_dir)
+        .args(["lookup", "Commandz"])
+        .output()
+        .expect("run lookup");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Command"), "{stdout}");
 }

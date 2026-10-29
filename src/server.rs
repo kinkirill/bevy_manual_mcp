@@ -174,10 +174,19 @@ impl BevyMcp {
         };
         let limit = params.limit.unwrap_or(self.config.max_results).clamp(1, 20);
         let hits = search::search(&state, &params.query, limit, &filters);
-        let text = format::search_markdown(&state, &hits, &params.query, None);
+        let suggestions = if hits.is_empty() && search::looks_like_symbol(&params.query) {
+            search::suggestions(state.root(), &params.query, 5)
+        } else {
+            Vec::new()
+        };
+        let text = format::search_markdown(&state, &hits, &params.query, None, &suggestions);
         let results: Vec<Value> = hits
             .iter()
             .map(|hit| format::hit_json(&state, hit))
+            .collect();
+        let suggestion_values: Vec<Value> = suggestions
+            .iter()
+            .map(|record| format::record_json(&state, record))
             .collect();
         Ok((
             text,
@@ -186,6 +195,7 @@ impl BevyMcp {
                 "queried_version": self.config.bevy_version,
                 "version_indexed": true,
                 "results": results,
+                "suggestions": suggestion_values,
             }),
         ))
     }
@@ -209,7 +219,16 @@ impl BevyMcp {
         } else {
             Vec::new()
         };
-        let text = format::api_markdown(&state, &records, &params.symbol, &related);
+        let suggestions = if records.is_empty() {
+            search::suggestions(state.root(), &params.symbol, 5)
+        } else {
+            Vec::new()
+        };
+        let text = format::api_markdown(&state, &records, &params.symbol, &related, &suggestions);
+        let suggestion_values: Vec<Value> = suggestions
+            .iter()
+            .map(|record| format::record_json(&state, record))
+            .collect();
         let values: Vec<Value> = records
             .iter()
             .map(|record| format::record_json(&state, record))
@@ -224,6 +243,7 @@ impl BevyMcp {
                 "symbol": params.symbol,
                 "results": values,
                 "related": related_values,
+                "suggestions": suggestion_values,
             }),
         ))
     }
