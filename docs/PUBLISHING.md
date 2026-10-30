@@ -92,6 +92,20 @@ After the crate is live:
   project, run `fetch-index` (or let the background fetch finish), then run one
   query.
 
+## Registry metadata workflow
+
+The `registry-version-bump` workflow is independent from normal CI and from
+`index-release`. Dispatch it manually after a crate release:
+
+1. read the version from `Cargo.toml`
+2. update both version fields in `server.json`
+3. commit and push `server.json` if it changed
+4. verify that the crate version exists on crates.io
+5. validate and publish the MCP Registry entry using GitHub OIDC
+
+Use `dry_run: true` to validate the metadata and inspect the diff without
+committing or publishing.
+
 ## CI/release automation
 
 The `index-release` workflow builds one bundle per dispatch (version + revision

@@ -1,0 +1,116 @@
+name: registry-version-bump
+
+# Synchronise the MCP Registry entry with the crate version in Cargo.toml.
+# This is deliberately separate from normal CI and from index-release:
+# it only updates server.json and publishes registry metadata.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate and show the diff without committing or publishing"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: registry-version-bump
+  cancel-in-progress: false
+
+env:
+  CRATE: bevy-manual-mcp
+  MCP_PUBLISHER_VERSION: v1.8.6
+
+jobs:
+  registry_version_bump:
+    runs-on: ubuntu-latest
+    environment: mcp-registry-publish
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read crate version
+        id: version
+        run: |
+          version=$(python3 - <<'PY'
+          import pathlib, tomllib
+          manifest = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+          print(manifest["package"]["version"])
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Crate version: $version"
+
+      - name: Sync server.json version fields
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          version = os.environ["VERSION"]
+          path = pathlib.Path("server.json")
+          data = json.loads(path.read_text())
+
+          data["version"] = version
+          for package in data.get("packages", []):
+              if package.get("identifier") == os.environ["CRATE"]:
+                  package["version"] = version
+
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+          git diff -- server.json
+
+      - name: Commit server.json if it changed
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git diff --quiet -- server.json; then
+            echo "server.json is already in sync with Cargo.toml."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.json
+          git commit -m "chore(registry): sync server.json to ${VERSION}"
+          git push
+
+      - name: Verify the crate version is published
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          curl -fsS \
+            -A "bevy-manual-mcp-registry-workflow" \
+            "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" \
+            > /dev/null
+          echo "crates.io has ${CRATE} ${VERSION}."
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Validate registry metadata
+        run: ./mcp-publisher validate
+
+      - name: Authenticate with the MCP Registry
+        if: ${{ !inputs.dry_run }}
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        if: ${{ !inputs.dry_run }}
+        run: ./mcp-publisher publish
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run: server.json was validated but not committed or published."
+          git diff -- server.json || true
+
